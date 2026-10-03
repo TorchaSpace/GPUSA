@@ -33,7 +33,7 @@ from database.exceptions import (
     NotAllowedError,
     SignInFailedError,
 )
-from shared import auth, recovery_code
+from shared import auth, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
 from shared.models import Account
@@ -364,6 +364,7 @@ def reset_admin_access(badge_id: str, new_pin: str, terminal: str = "Admin") -> 
 # once, replaced on request, and guessing it is rate-limited.
 
 _RC_HASH, _RC_FAILED, _RC_LOCKED = "recovery.code_hash", "recovery.failed", "recovery.locked_until"
+_SQ_QUESTION, _SQ_HASH = "recovery.question", "recovery.answer_hash"
 
 
 def has_recovery_code() -> bool:
@@ -396,13 +397,64 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
     """Set a new PIN for administrator `badge_id` using the recovery code.
     Wrong codes are counted; after MAX_FAILED_ATTEMPTS recovery locks for
     LOCK_MINUTES. Raises AuthError with a message fit to show."""
-    _check_pin(new_pin, "admin")
     normalized = recovery_code.normalize(code)
+    _reset_with_secret(
+        _RC_HASH, normalized, len(normalized) == recovery_code.CODE_LENGTH, badge_id, new_pin, terminal,
+        "Reset with the recovery code", "This installation has no recovery code yet.",
+        "That recovery code is not right.",
+    )
+
+
+def get_security_question() -> str | None:
+    """The question to ask on the sign-in screen, or None if none is set."""
+    with connection_scope() as conn:
+        row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (_SQ_QUESTION,)).fetchone()
+    return row["value"] if row and row["value"] else None
+
+
+def set_security_question(session: Session, current_pin: str, question: str, answer: str) -> None:
+    """An administrator sets (or replaces) the installation's security
+    question. Needs their current PIN, so a walk-up can't swap it."""
+    if session.role != "admin":
+        raise AuthError("Only an administrator can set the security question.")
+    question, answer = security_question.validate(question, answer)
+    row = get(session.badge_id)
+    with connection_scope() as conn:
+        stored = conn.execute("SELECT pin_hash FROM accounts WHERE id = ?", (row.id,)).fetchone()[0]
+    if not auth.verify_pin(current_pin or "", stored):
+        raise SignInFailedError()
+    answer_hash = auth.hash_pin(security_question.normalize_answer(answer))
+
+    def run(conn):
+        for key, value in ((_SQ_QUESTION, question), (_SQ_HASH, answer_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
+            conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
+                         "SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                         (key, value))
+        _log(conn, "security_question_set", session.badge_id, auth.AREA_ADMIN, session.terminal, None)
+
+    _write(run)
+
+
+def reset_with_security_answer(answer: str, badge_id: str, new_pin: str, terminal: str = "Admin") -> None:
+    """Set a new PIN for administrator `badge_id` after the security
+    question is answered. Shares the wrong-guess counter (and lock) with
+    the recovery code, so trying both doesn't double the guesses."""
+    normalized = security_question.normalize_answer(answer)
+    _reset_with_secret(
+        _SQ_HASH, normalized, len(normalized) >= security_question.MIN_ANSWER_LENGTH, badge_id, new_pin, terminal,
+        "Reset by answering the security question", "No security question has been set yet.",
+        "That answer is not right.",
+    )
+
+
+def _reset_with_secret(hash_key, secret, plausible, badge_id, new_pin, terminal, success_detail, none_message,
+                       wrong_message) -> None:
+    _check_pin(new_pin, "admin")
     new_hash = auth.hash_pin(new_pin)
 
     def settings(conn):
         return {r["key"]: r["value"] for r in conn.execute(
-            "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)", (_RC_HASH, _RC_FAILED, _RC_LOCKED))}
+            "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)", (hash_key, _RC_FAILED, _RC_LOCKED))}
 
     def put(conn, key, value):
         conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
@@ -411,14 +463,14 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
     def run(conn):
         now = _now()
         values = settings(conn)
-        stored = values.get(_RC_HASH)
+        stored = values.get(hash_key)
         if not stored:
             return "none", None
         locked = values.get(_RC_LOCKED) or ""
         if locked and parse_db_timestamp(locked) > now:
             return "locked", locked
-        # Always do the (slow) hash work, so a wrong code and a right one cost the same.
-        ok = len(normalized) == recovery_code.CODE_LENGTH and auth.verify_pin(normalized, stored)
+        # Always do the (slow) hash work, so a wrong secret and a right one cost the same.
+        ok = auth.verify_pin(secret, stored) and plausible
         if not ok:
             failed = int(values.get(_RC_FAILED) or 0) + 1
             expiry = recovery_code.lock_expiry(failed, now)
@@ -434,19 +486,19 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
                      "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (new_hash, row["id"]))
         put(conn, _RC_FAILED, "0")
         put(conn, _RC_LOCKED, "")
-        _log(conn, "pin_reset", badge_id, auth.AREA_ADMIN, terminal, "Reset with the recovery code")
+        _log(conn, "pin_reset", badge_id, auth.AREA_ADMIN, terminal, success_detail)
         return "ok", None
 
     status, extra = _write(run)  # failed guesses must be COMMITTED, so the error is raised after
     if status == "ok":
         return
     if status == "none":
-        raise AuthError("This installation has no recovery code yet.")
+        raise AuthError(none_message)
     if status == "locked":
-        raise AuthError(f"Too many wrong codes - recovery is locked until {local_datetime_text(extra)}.")
+        raise AuthError(f"Too many wrong tries - recovery is locked until {local_datetime_text(extra)}.")
     if status == "not_admin":
         raise AuthError("That account is not an active administrator.")
-    raise AuthError("That recovery code is not right.")
+    raise AuthError(wrong_message)
 
 
 def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:

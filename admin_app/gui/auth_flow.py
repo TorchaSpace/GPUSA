@@ -17,7 +17,7 @@ from PySide6.QtWidgets import (
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
 from database.exceptions import DATABASE_ERRORS, DataAccessError
-from shared import auth, paths, recovery
+from shared import auth, paths, recovery, security_question
 from shared.i18n import tr
 from shared.auth import Session
 from shared.gui_kit.sign_in_dialog import SignInDialog
@@ -76,7 +76,20 @@ class FirstAdminDialog(QDialog):
         form.addRow("Badge ID", self.badge_input)
         form.addRow(f"PIN ({auth.MIN_ADMIN_PIN_LENGTH}+ digits)", self.pin_input)
         form.addRow("PIN again", self.pin_again_input)
+        # The way back in if the PIN is ever forgotten ("Forgot your PIN?").
+        self.question_input = QComboBox()
+        self.question_input.setEditable(True)
+        for key in security_question.PRESET_KEYS:
+            self.question_input.addItem(tr(key))
+        self.question_input.setCurrentIndex(0)
+        self.answer_input = QLineEdit()
+        form.addRow(tr("question.label"), self.question_input)
+        form.addRow(tr("question.answer"), self.answer_input)
         layout.addLayout(form)
+        hint = QLabel(tr("question.first_admin_hint"))
+        hint.setWordWrap(True)
+        hint.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
+        layout.addWidget(hint)
 
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
@@ -101,8 +114,13 @@ class FirstAdminDialog(QDialog):
             self._fail("The two PINs don't match.")
             return
         try:
+            # Checked first, so a bad answer doesn't leave an admin without a way back in.
+            security_question.validate(self.question_input.currentText(), self.answer_input.text())
             self.session = account_repository.create_first_admin(
                 self.badge_input.text(), self.name_input.text(), self.pin_input.text(), terminal_name()
+            )
+            account_repository.set_security_question(
+                self.session, self.pin_input.text(), self.question_input.currentText(), self.answer_input.text()
             )
         except (ValueError, DataAccessError) as exc:
             self._fail(str(exc))
@@ -112,6 +130,65 @@ class FirstAdminDialog(QDialog):
     def _fail(self, message: str) -> None:
         self.error_label.setText(message)
         self.error_label.show()
+
+
+class SecurityQuestionDialog(QDialog):
+    """Settings > My account > Security question: choose (or write) a
+    question, answer it, and confirm with the current PIN."""
+
+    def __init__(self, session: Session, parent=None):
+        super().__init__(parent)
+        p = CLASSICAL_PALETTE
+        self._session = session
+        self.saved = False
+        self.setWindowTitle(tr("settings.security_question_title"))
+        self.setMinimumWidth(460)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(28, 24, 28, 24)
+        layout.setSpacing(10)
+        heading = QLabel(tr("settings.security_question_title"))
+        heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 24px; color: {p['text_primary']};")
+        layout.addWidget(heading)
+        form = QFormLayout()
+        self.question_input = QComboBox()
+        self.question_input.setEditable(True)
+        for key in security_question.PRESET_KEYS:
+            self.question_input.addItem(tr(key))
+        current = account_repository.get_security_question()
+        self.question_input.setEditText(current or tr(security_question.PRESET_KEYS[0]))
+        self.answer_input = QLineEdit()
+        self.pin_input = _pin_field()
+        form.addRow(tr("question.label"), self.question_input)
+        form.addRow(tr("question.answer"), self.answer_input)
+        form.addRow(tr("settings.security_question_pin"), self.pin_input)
+        layout.addLayout(form)
+        self.message = QLabel()
+        self.message.setWordWrap(True)
+        self.message.setStyleSheet(f"font-size: 13px; color: {p['alert_critical']};")
+        self.message.hide()
+        layout.addWidget(self.message)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        cancel = QPushButton(tr("common.cancel"))
+        cancel.clicked.connect(self.reject)
+        save = QPushButton(tr("common.save"))
+        save.setDefault(True)
+        save.clicked.connect(self.save)
+        row.addWidget(cancel)
+        row.addWidget(save)
+        layout.addLayout(row)
+
+    def save(self) -> bool:
+        try:
+            account_repository.set_security_question(
+                self._session, self.pin_input.text(), self.question_input.currentText(), self.answer_input.text())
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self.message.setText(str(exc))
+            self.message.show()
+            return False
+        self.saved = True
+        self.accept()
+        return True
 
 
 class RecoveryCodeDialog(QDialog):
@@ -168,7 +245,13 @@ class ResetAdminAccessDialog(QDialog):
             self._has_code = account_repository.has_recovery_code()
         except DATABASE_ERRORS:
             self._has_code = False
-        self._mode = "code" if self._has_code else "file"
+        try:
+            self._question = account_repository.get_security_question()
+        except DATABASE_ERRORS:
+            self._question = None
+        # Ways back in, most everyday first; "Try another way" cycles through them.
+        self._modes = [m for m, on in (("question", bool(self._question)), ("code", self._has_code), ("file", True)) if on]
+        self._mode = self._modes[0]
         self.setWindowTitle(tr("recovery.title"))
         self.setMinimumWidth(480)
         layout = QVBoxLayout(self)
@@ -252,27 +335,40 @@ class ResetAdminAccessDialog(QDialog):
 
     def _show_mode(self) -> None:
         self._say("")
-        if self._mode == "code":
+        self.code_input.setEchoMode(QLineEdit.Normal)
+        if self._mode == "question":
+            self._intro.setText(tr("recovery.question_intro"))
+            self._file_host.hide()
+            self._code_caption.setText(self._question or "")
+            self._code_caption.setWordWrap(True)
+            self._code_caption.show()
+            self.code_input.setPlaceholderText(tr("question.answer"))
+            self.code_input.setMaxLength(120)
+            self.code_input.show()
+            self._form_host.setVisible(self._load_admins(show_badge=False))
+        elif self._mode == "code":
             self._intro.setText(tr("recovery.code_intro"))
             self._file_host.hide()
+            self._code_caption.setText(tr("recovery.code"))
             self._code_caption.show()
+            self.code_input.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
+            self.code_input.setMaxLength(24)
             self.code_input.show()
             if not self._load_admins(show_badge=False):
                 self._form_host.hide()
             else:
                 self._form_host.show()
-            self.switch_button.setText(tr("recovery.no_code"))
         else:
             self._intro.setText(tr("recovery.step1").format(name=recovery.RECOVERY_FILENAME))
             self._file_host.show()
             self._form_host.hide()
             self._code_caption.hide()
             self.code_input.hide()
-            self.switch_button.setText(tr("recovery.have_code"))
-        self.switch_button.setVisible(self._has_code or self._mode == "code")
+        self.switch_button.setText(tr("recovery.another_way"))
+        self.switch_button.setVisible(len(self._modes) > 1)
 
     def switch_mode(self) -> None:
-        self._mode = "file" if self._mode == "code" else "code"
+        self._mode = self._modes[(self._modes.index(self._mode) + 1) % len(self._modes)]
         self._show_mode()
 
     def _load_admins(self, show_badge: bool) -> bool:
@@ -319,7 +415,10 @@ class ResetAdminAccessDialog(QDialog):
             return False
         badge = self.admin_input.currentData()
         try:
-            if self._mode == "code":
+            if self._mode == "question":
+                account_repository.reset_with_security_answer(
+                    self.code_input.text(), badge, self.pin_input.text(), terminal_name())
+            elif self._mode == "code":
                 account_repository.reset_with_recovery_code(
                     self.code_input.text(), badge, self.pin_input.text(), terminal_name())
             else:
@@ -376,7 +475,4 @@ def sign_in(parent=None) -> Session | None:
         dialog = FirstAdminDialog(parent)
     else:
         dialog = admin_sign_in_dialog(parent)
-    accepted = dialog.exec() == QDialog.Accepted
-    if accepted and isinstance(dialog, FirstAdminDialog) and dialog.session is not None:
-        show_new_recovery_code(dialog.session, parent)
-    return dialog.session if accepted else None
+    return dialog.session if dialog.exec() == QDialog.Accepted else None

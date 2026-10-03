@@ -222,3 +222,32 @@ def test_a_new_recovery_code_cancels_the_old_one(people):
     assert old != new
     with pytest.raises(AuthError):
         accounts.reset_with_recovery_code(old, "B-1", "739184")
+
+
+def test_security_question_flow_shares_the_lockout_with_the_code(people):
+    accounts.set_security_question(people, "482913", "Name of my first pet?", "Pamuk")
+    code = accounts.create_recovery_code(people)
+    assert accounts.get_security_question() == "Name of my first pet?"
+    for _ in range(3):
+        with pytest.raises(AuthError):
+            accounts.reset_with_security_answer("wrong", "B-1", "739184")
+    for _ in range(2):
+        with pytest.raises(AuthError):
+            accounts.reset_with_recovery_code("AAAA-BBBB-CCCC-DDDD", "B-1", "739184")
+    with pytest.raises(AuthError) as locked:  # five wrong tries across both ways: locked
+        accounts.reset_with_security_answer("Pamuk", "B-1", "739184")
+    assert "locked" in str(locked.value)
+    assert code  # unchanged by the lock
+
+
+def test_security_answer_resets_the_pin_and_ignores_case_and_accents(people):
+    accounts.set_security_question(people, "482913", "Hangi şehirde doğdun?", "Şişli")
+    accounts.reset_with_security_answer(" SISLI ", "B-1", "739184")
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+
+
+def test_only_an_admin_with_the_right_pin_can_set_the_question(people):
+    with pytest.raises(SignInFailedError):
+        accounts.set_security_question(people, "000000", "Name of my first pet?", "Pamuk")
+    with pytest.raises(ValueError):
+        accounts.set_security_question(people, "482913", "Name of my first pet?", "a")

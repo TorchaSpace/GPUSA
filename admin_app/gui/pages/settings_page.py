@@ -49,7 +49,7 @@ _EVENT_TEXT = {
     "sign_in": "Signed in", "sign_out": "Signed out", "failed": "Failed sign-in", "locked": "Locked out",
     "refused": "Refused", "pin_confirmed": "Portal unlocked", "pin_changed": "PIN changed",
     "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked", "pin_reset": "PIN reset (recovery)", "recovery_code_created": "Recovery code made",
-    "recovery_failed": "Wrong recovery code",
+    "recovery_failed": "Wrong recovery attempt", "security_question_set": "Security question set",
 }
 
 
@@ -93,6 +93,9 @@ class SettingsPage(AdminPage):
         change_pin = CompactButton("Change my PIN")
         change_pin.clicked.connect(self.change_my_pin)
         self._me.add_header_control(change_pin)
+        question_button = CompactButton(tr("settings.security_question"))
+        question_button.clicked.connect(self.set_security_question)
+        self._me.add_header_control(question_button)
         recovery_button = CompactButton(tr("settings.recovery_code"))
         recovery_button.clicked.connect(self.make_recovery_code)
         self._me.add_header_control(recovery_button)
@@ -271,6 +274,17 @@ class SettingsPage(AdminPage):
                                 f"Remove {account.name}'s sign-in account? They stay in Workforce.") != QMessageBox.Yes:
             return
         self._run(lambda: account_repository.delete(account.badge_id, by=current_session.actor()))
+
+    def set_security_question(self) -> None:
+        session = current_session.get()
+        if session is None or session.role != "admin":
+            return
+        from admin_app.gui.auth_flow import SecurityQuestionDialog
+
+        dialog = SecurityQuestionDialog(session, self)
+        if dialog.exec() and dialog.saved:
+            QMessageBox.information(self, tr("settings.security_question"), tr("settings.security_question_saved"))
+            self.reload()
 
     def make_recovery_code(self) -> None:
         session = current_session.get()

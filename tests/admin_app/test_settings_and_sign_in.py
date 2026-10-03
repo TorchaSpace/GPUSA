@@ -30,7 +30,12 @@ def test_first_run_dialog_creates_the_admin(qapp):
     assert "don't match" in dialog.error_label.text() and dialog.session is None
     dialog.pin_again_input.setText("482913")
     dialog.create()
+    assert dialog.session is None and dialog.error_label.text()  # an answer is required too
+    dialog.question_input.setEditText("Name of my first pet?")
+    dialog.answer_input.setText("Pamuk")
+    dialog.create()
     assert dialog.session.name == "Erol Boz" and account_repository.admin_exists()
+    assert account_repository.get_security_question() == "Name of my first pet?"
 
 
 def test_sign_in_dialog_shows_the_reason_and_keeps_the_badge(qapp):
@@ -160,3 +165,34 @@ def test_forgot_pin_can_switch_to_the_file_way_when_a_code_exists(qapp, tmp_path
     assert dialog.mode == "file"
     dialog.switch_mode()
     assert dialog.mode == "code"
+
+
+def test_forgot_pin_with_the_security_question(qapp, tmp_path):
+    from database import account_repository as accounts
+    from shared import auth
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    session = accounts.create_first_admin("B-1", "Erol", "482913")
+    accounts.set_security_question(session, "482913", "Name of my first pet?", "Pamuk")
+    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
+    assert dialog.mode == "question" and dialog._code_caption.text() == "Name of my first pet?"
+    dialog.code_input.setText("Karamel")
+    dialog.pin_input.setText("739184")
+    dialog.pin_again_input.setText("739184")
+    assert not dialog.save() and "not right" in dialog.message.text()
+    dialog.code_input.setText(" pamuk ")
+    assert dialog.save() and dialog.reset_badge == "B-1"
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+
+
+def test_settings_security_question_needs_the_current_pin(qapp):
+    from database import account_repository as accounts
+    from database.exceptions import AuthError
+
+    session = accounts.create_first_admin("B-1", "Erol", "482913")
+    try:
+        accounts.set_security_question(session, "000000", "Name of my first pet?", "Pamuk")
+        raise AssertionError("a wrong PIN must be refused")
+    except AuthError:
+        pass
+    assert accounts.get_security_question() is None
