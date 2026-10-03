@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from PySide6.QtCore import QRegularExpression
+from PySide6.QtCore import QRegularExpression, Qt
 from PySide6.QtGui import QRegularExpressionValidator
 from PySide6.QtWidgets import (
     QDialog,
@@ -42,6 +42,7 @@ class SignInDialog(QDialog):
         fixed_badge: str | None = None,
         cancel_text: str = "Cancel",
         parent=None,
+        extra_action: tuple[str, Callable[["SignInDialog"], None]] | None = None,
     ):
         super().__init__(parent)
         p = palette
@@ -99,6 +100,20 @@ class SignInDialog(QDialog):
         self.error_label.setStyleSheet(f"font-size: 13px; color: {p['alert_critical']};")
         self.error_label.hide()
         layout.addWidget(self.error_label)
+
+        if extra_action is not None:
+            # A quiet link under the fields, e.g. "Forgot your PIN?".
+            label, callback = extra_action
+            self.extra_button = QPushButton(label)
+            self.extra_button.setFlat(True)
+            self.extra_button.setCursor(Qt.PointingHandCursor)
+            self.extra_button.setStyleSheet(
+                f"QPushButton {{ background: transparent; border: none; color: {p['accent']}; "
+                f"text-align: left; padding: 2px 0; font-size: 13px; }}"
+                f"QPushButton:hover {{ text-decoration: underline; }}"
+            )
+            self.extra_button.clicked.connect(lambda: callback(self))
+            layout.addWidget(self.extra_button)
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)

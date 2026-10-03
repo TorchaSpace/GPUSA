@@ -175,3 +175,22 @@ def test_who_did_it_is_recorded(people):
     assert order.raised_by == "Erol Admin · B-1" and order.status == "pending"
     decided = purchase_order_repository.approve(order.id, decided_by=people.actor)
     assert decided.decided_by == "Erol Admin · B-1"
+
+
+def test_reset_admin_access_sets_a_new_pin_and_clears_the_lockout(people):
+    for _ in range(auth.MAX_FAILED_ATTEMPTS):
+        with pytest.raises(AuthError):
+            accounts.authenticate("B-1", "000000", auth.AREA_ADMIN, "t")
+    accounts.reset_admin_access("B-1", "739184", "Admin · test")
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+    with pytest.raises(AuthError):
+        accounts.authenticate("B-1", "482913", auth.AREA_ADMIN, "t")  # the old PIN no longer works
+    assert "pin_reset" in [e["event"] for e in accounts.list_events()]
+
+
+def test_reset_admin_access_refuses_non_admins_and_short_pins(people):
+    accounts.create_account("B-2", "cashier", "5821")
+    with pytest.raises(AuthError):
+        accounts.reset_admin_access("B-2", "739184")
+    with pytest.raises(ValueError):
+        accounts.reset_admin_access("B-1", "1234")  # admins need MIN_ADMIN_PIN_LENGTH digits

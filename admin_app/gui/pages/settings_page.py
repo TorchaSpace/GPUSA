@@ -48,7 +48,7 @@ _WHERE = {
 _EVENT_TEXT = {
     "sign_in": "Signed in", "sign_out": "Signed out", "failed": "Failed sign-in", "locked": "Locked out",
     "refused": "Refused", "pin_confirmed": "Portal unlocked", "pin_changed": "PIN changed",
-    "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked",
+    "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked", "pin_reset": "PIN reset (recovery)",
 }
 
 

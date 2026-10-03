@@ -334,6 +334,30 @@ def set_pin(badge_id: str, new_pin: str, by: Actor | None = None) -> None:
     _write(run)
 
 
+def list_active_admins() -> list[Account]:
+    """Active administrator accounts, for the "forgot PIN" screen."""
+    return [a for a in list_accounts() if a.role == "admin" and a.is_active and a.employee_active]
+
+
+def reset_admin_access(badge_id: str, new_pin: str, terminal: str = "Admin") -> None:
+    """Set a new PIN for an administrator and clear any lockout, WITHOUT the
+    old PIN. Only for the recovery flow (shared/recovery.py), which has
+    already checked proof of access to the data folder. Refuses anyone who
+    is not an active administrator, and is written to the sign-in log."""
+    account = get(badge_id)
+    if account.role != "admin" or not account.is_active:
+        raise AuthError("That account is not an active administrator.")
+    _check_pin(new_pin, "admin")
+    pin_hash = auth.hash_pin(new_pin)
+
+    def run(conn):
+        conn.execute("UPDATE accounts SET pin_hash = ?, failed_attempts = 0, locked_until = NULL, "
+                     "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (pin_hash, account.id))
+        _log(conn, "pin_reset", badge_id, auth.AREA_ADMIN, terminal, "Reset with the recovery file")
+
+    _write(run)
+
+
 def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:
     """Signed-in person changes their own PIN; the current one must match."""
     row = get(session.badge_id)

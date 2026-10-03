@@ -109,3 +109,24 @@ def test_locked_accounts_show_and_unlock(settings):
     assert settings._buttons["unlock"].isEnabled()
     settings.unlock()
     assert not account_repository.is_locked(account_repository.get("B-2"))
+
+
+def test_forgot_pin_needs_the_proof_file_then_resets(qapp, tmp_path):
+    from database import account_repository as accounts
+    from shared import auth, recovery
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    accounts.create_first_admin("B-1", "Erol", "482913")
+    flag = tmp_path / recovery.RECOVERY_FILENAME
+    dialog = ResetAdminAccessDialog(flag_path=flag)
+    assert not dialog.check_file()  # no file yet: stays on step 1
+    assert "isn't in that folder" in dialog.message.text()
+    flag.write_text("")
+    assert dialog.check_file() and dialog.admin_input.count() == 1
+    dialog.pin_input.setText("739184")
+    dialog.pin_again_input.setText("739185")
+    assert not dialog.save() and "match" in dialog.message.text()
+    dialog.pin_again_input.setText("739184")
+    assert dialog.save() and dialog.reset_badge == "B-1"
+    assert not flag.exists()  # one use only
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
