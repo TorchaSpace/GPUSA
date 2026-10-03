@@ -34,13 +34,15 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QMessageBox, QVBoxLay
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.employee_form_popup import EmployeeFormPopup
-from admin_app.gui.components.employee_table import WorkforceTable, status_color
+from admin_app.gui.components.employee_table import WorkforceTable, hours_text, location_text, status_color
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
-from shared.i18n import tr
+from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import attendance_repository, employee_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
+from shared import current_session
+from shared.formatting import local_clock_text
 from shared.models import EMPLOYEE_ROLES, Employee
 
 
@@ -48,7 +50,7 @@ class WorkforcePage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(tr("page.workforce.title"), parent, subtitle=tr("page.workforce.subtitle"))
 
-        add_button = CompactButton("Add Employee", variant="primary")
+        add_button = CompactButton(tr("admin.workforce.add"), variant="primary")
         add_button.clicked.connect(self._open_add_popup)
         self.add_header_action(add_button)
 
@@ -65,7 +67,7 @@ class WorkforcePage(AdminPage):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
 
-        table_section = Section("People & records", "Staff Roster & Attendance · today")
+        table_section = Section(tr("admin.workforce.kicker"), tr("admin.workforce.roster"))
         self._table = WorkforceTable()
         self._table.setMinimumHeight(380)
         self._table.doubleClicked.connect(lambda _index: self._open_edit_popup())
@@ -90,13 +92,13 @@ class WorkforcePage(AdminPage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        self._total_card = StatCard("Total Employees", "—")
-        self._on_shift_card = StatCard("On Shift Now", "—")
+        self._total_card = StatCard(tr("admin.workforce.kpi_total"), "—")
+        self._on_shift_card = StatCard(tr("admin.workforce.kpi_on_shift"), "—")
 
-        self._role_card = StatCard("By Role", "—")
+        self._role_card = StatCard(tr("admin.workforce.kpi_role"), "—")
         self._role_breakdown_items: dict[str, QWidget] = {}
         for role in EMPLOYEE_ROLES:
-            item = stat_breakdown_item(role, "0")
+            item = stat_breakdown_item(enum_label("role", role), "0")
             self._role_breakdown_items[role] = item
             self._role_card.footer_layout().addWidget(item)
 
@@ -136,11 +138,7 @@ class WorkforcePage(AdminPage):
         self._detail_rows_container.setSpacing(6)
         layout.addLayout(self._detail_rows_container)
 
-        note = QLabel(
-            "Weekly shift schedules and week-over-week attendance rates aren't tracked yet - "
-            "the mockup fabricates those figures rather than persisting them. Status/hours "
-            "above are today's real badge check-in/out data, logged from depot_app Console."
-        )
+        note = QLabel(tr("admin.workforce.detail_note"))
         note.setWordWrap(True)
         note.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         layout.addWidget(note)
@@ -148,9 +146,9 @@ class WorkforcePage(AdminPage):
         layout.addStretch(1)
 
         button_row = QHBoxLayout()
-        self._detail_edit_button = CompactButton("Edit")
+        self._detail_edit_button = CompactButton(tr("admin.workforce.edit"))
         self._detail_edit_button.clicked.connect(self._open_edit_popup)
-        self._detail_delete_button = CompactButton("Delete")
+        self._detail_delete_button = CompactButton(tr("admin.workforce.delete"))
         self._detail_delete_button.clicked.connect(self._delete_selected)
         button_row.addWidget(self._detail_edit_button)
         button_row.addWidget(self._detail_delete_button)
@@ -184,33 +182,40 @@ class WorkforcePage(AdminPage):
         self._detail_delete_button.setEnabled(has_selection)
 
         if entry is None:
-            self._detail_name.setText("No employee selected")
-            self._detail_badge.setText("Click a row to see its detail.")
+            self._detail_name.setText(tr("admin.workforce.none_selected"))
+            self._detail_badge.setText(tr("admin.workforce.click_row"))
             return
 
         self._detail_name.setText(entry["name"])
         self._detail_badge.setText(entry["badge_id"] + (f" · {entry['title']}" if entry["title"] else ""))
 
-        self._detail_rows_container.addWidget(self._detail_row("Role", entry["role"]))
+        self._detail_rows_container.addWidget(self._detail_row(tr("admin.workforce.role"), enum_label("role", entry["role"])))
         self._detail_rows_container.addWidget(
-            self._detail_row("Location", f"{entry['location_name']} ({entry['location_type']})")
+            self._detail_row(tr("admin.workforce.location"), location_text(entry))
         )
         self._detail_rows_container.addWidget(
-            self._detail_row("Status today", entry["status"], color=status_color(entry["status"]))
+            self._detail_row(
+                tr("admin.workforce.status_today"), enum_label("attendance", entry["status"]), color=status_color(entry["status"])
+            )
         )
         if entry["check_in_at"]:
             self._detail_rows_container.addWidget(
-                self._detail_row("Checked in", entry["check_in_at"].split("T")[-1][:8])
+                self._detail_row(tr("admin.workforce.checked_in"), local_clock_text(entry["check_in_at"]))  # local time, not UTC
             )
         if entry["check_out_at"]:
             self._detail_rows_container.addWidget(
-                self._detail_row("Checked out", entry["check_out_at"].split("T")[-1][:8])
+                self._detail_row(tr("admin.workforce.checked_out"), local_clock_text(entry["check_out_at"]))
+            )
+        if entry.get("long_open"):
+            self._detail_rows_container.addWidget(
+                self._detail_row(tr("admin.workforce.shift"), tr("admin.workforce.long_open"),
+                                 color=CLASSICAL_PALETTE["alert_critical"])
             )
         if entry["hours"] is not None:
-            self._detail_rows_container.addWidget(self._detail_row("Hours", f"{entry['hours']:.1f}h"))
+            self._detail_rows_container.addWidget(self._detail_row(tr("admin.workforce.hours"), hours_text(entry["hours"])))
         if not entry["is_active"]:
             self._detail_rows_container.addWidget(
-                self._detail_row("Account", "Inactive", color=CLASSICAL_PALETTE["text_secondary"])
+                self._detail_row(tr("admin.workforce.account"), tr("admin.workforce.status_inactive"), color=CLASSICAL_PALETTE["text_secondary"])
             )
 
     def _on_selection_changed(self) -> None:
@@ -219,15 +224,20 @@ class WorkforcePage(AdminPage):
     # --- Data + actions --------------------------------------------------
 
     def reload(self) -> None:
+        """Re-read everything (MainWindow calls this each time the page is
+        shown). The selected person stays selected - with a fresh detail
+        panel - if they still exist; otherwise the panel is cleared."""
+        selected = self._table.selected_row()
         try:
             self._all_employees = employee_repository.list_all()
             self._roster = attendance_repository.list_roster()
             on_shift = len(attendance_repository.list_open())
-        except DataAccessError:
+        except DATABASE_ERRORS:
             self._all_employees = []
             self._roster = []
             on_shift = 0
         self._table.set_roster(self._roster)
+        self.show_employee(selected["badge_id"] if selected else None)
 
         self._total_card.set_value(str(len(self._all_employees)))
         self._on_shift_card.set_value(str(on_shift))
@@ -237,55 +247,65 @@ class WorkforcePage(AdminPage):
             item = self._role_breakdown_items[role]
             item.layout().itemAt(1).widget().setText(str(count))
 
+    def show_employee(self, badge_id: str | None) -> None:
+        """Select `badge_id`'s row and refresh the detail panel from the
+        current roster, or clear the panel (None / no longer there)."""
+        if badge_id and self._table.select_badge(badge_id):
+            self._show_detail(self._table.selected_row())
+        else:
+            self._table.clearSelection()
+            self._show_detail(None)
+
+    def _location_choices(self) -> dict[str, list[str]] | None:
+        try:
+            return employee_repository.location_choices()
+        except DATABASE_ERRORS:
+            return None
+
     def _open_add_popup(self) -> None:
-        self._popup.open_or_refresh(employee=None)
+        self._popup.open_or_refresh(employee=None, locations=self._location_choices())
 
     def _open_edit_popup(self) -> None:
         entry = self._table.selected_row()
         if entry is None:
-            QMessageBox.information(self, "No employee selected", "Select an employee in the table first.")
+            QMessageBox.information(self, tr("admin.workforce.none_selected"), tr("admin.workforce.select_first"))
             return
         try:
             employee = employee_repository.get_by_badge_id(entry["badge_id"])
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't load", str(exc))
+        except DATABASE_ERRORS as exc:
+            QMessageBox.warning(self, tr("admin.workforce.load_failed"), str(exc))
             return
-        self._popup.open_or_refresh(employee=employee)
+        self._popup.open_or_refresh(employee=employee, locations=self._location_choices())
 
     def _save_popup(self) -> None:
         employee = self._popup.result_employee()
         try:
             if self._popup.is_editing():
-                employee_repository.update(employee)
+                employee_repository.update(employee, by=current_session.actor(), check_location=True)
             else:
-                employee_repository.create(employee)
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
-            return
-        except ValueError as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+                employee_repository.create(employee, check_location=True)
+        except (*DATABASE_ERRORS, ValueError) as exc:
+            self._popup.show_error(str(exc))  # popup comes back with everything typed
             return
         self.reload()
+        self.show_employee(employee.badge_id)  # fresh detail for the person just saved
 
     def _delete_selected(self) -> None:
         entry = self._table.selected_row()
         if entry is None:
-            QMessageBox.information(self, "No employee selected", "Select an employee in the table first.")
+            QMessageBox.information(self, tr("admin.workforce.none_selected"), tr("admin.workforce.select_first"))
             return
 
         confirm = QMessageBox.question(
-            self, "Delete employee?", f"Delete {entry['name']}? This cannot be undone."
+            self, tr("admin.workforce.delete_title"), tr("admin.workforce.delete_confirm").format(name=entry["name"])
         )
         if confirm != QMessageBox.Yes:
             return
 
         try:
-            employee_repository.delete(entry["badge_id"])
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't delete", str(exc))
-            return
-        except ValueError as exc:
-            QMessageBox.warning(self, "Couldn't delete", str(exc))
+            employee_repository.delete(entry["badge_id"], by=current_session.actor())
+        except (*DATABASE_ERRORS, ValueError) as exc:
+            QMessageBox.warning(self, tr("admin.workforce.delete_failed"), str(exc))
             return
         self.reload()
-        self._show_detail(None)
+        self.show_employee(None)

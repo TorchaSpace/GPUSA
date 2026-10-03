@@ -72,7 +72,16 @@ class GeneralSection(Section):
         save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
+        self._baseline: tuple[str, str, object] = ("", "", None)
         self.reload()
+
+    def _current(self) -> tuple[str, str, object]:
+        return (self._name_input.text(), self._address_input.toPlainText(), self._language_input.currentData())
+
+    def is_dirty(self) -> bool:
+        """True when the fields differ from what was last loaded or saved
+        (unsaved edits)."""
+        return self._current() != self._baseline
 
     def reload(self) -> None:
         profile = settings_repository.safe_store_profile()
@@ -80,17 +89,20 @@ class GeneralSection(Section):
         self._address_input.setPlainText("\n".join(profile.address_lines))
         index = self._language_input.findData(settings_repository.safe_language())
         self._language_input.setCurrentIndex(max(0, index))
+        self._error.setText("")
+        self._baseline = self._current()
 
     def save(self) -> bool:
         try:
             profile = ss.validate_profile(self._name_input.text(), self._address_input.toPlainText())
-            settings_repository.save_store_profile(profile)
-            settings_repository.save_language(self._language_input.currentData())
+            # Name, address and language in ONE transaction: all saved or none.
+            settings_repository.save_profile_and_language(profile, self._language_input.currentData())
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._error.setText(str(exc))
             return False
         self._error.setText("")
         self._name_input.setText(profile.name)
+        self._baseline = self._current()
         self.saved.emit()
         return True
 
@@ -111,20 +123,30 @@ class NotificationsSection(Section):
         save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
+        self._baseline: tuple[bool, bool] = (True, True)
         self.reload()
+
+    def _current(self) -> tuple[bool, bool]:
+        return (self._low_stock.isChecked(), self._pending.isChecked())
+
+    def is_dirty(self) -> bool:
+        """True when a switch differs from what was last loaded or saved."""
+        return self._current() != self._baseline
 
     def reload(self) -> None:
         prefs = settings_repository.safe_notifications()
         self._low_stock.setChecked(prefs.low_stock_alerts)
         self._pending.setChecked(prefs.pending_approvals)
+        self._baseline = self._current()
 
     def save(self) -> bool:
         prefs = ss.NotificationPrefs(self._low_stock.isChecked(), self._pending.isChecked())
         try:
             settings_repository.save_notifications(prefs)
         except DATABASE_ERRORS as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+            QMessageBox.warning(self, tr("admin.settings.save_failed"), str(exc))
             return False
+        self._baseline = self._current()
         self.changed.emit()
         return True
 
@@ -138,10 +160,7 @@ class DataLocationSection(Section):
         self._path_label.setStyleSheet(f"font-size: 13px; color: {CLASSICAL_PALETTE['text_primary']};")
         form = _form_host(self)
         form.addRow(self._path_label)
-        form.addRow(_note(
-            "All apps read and write this one database file. To move it, pick a folder: a copy is made there "
-            "and every app uses it after its next restart. The old file is left untouched."
-        ))
+        form.addRow(_note(tr("admin.settings.data_note")))
         change = CompactButton(tr("settings.change_folder"))
         change.clicked.connect(self.choose_folder)
         self.add_header_control(change)
@@ -151,7 +170,7 @@ class DataLocationSection(Section):
         self._path_label.setText(str(paths.get_db_path()))
 
     def choose_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, "Choose the new data folder", str(paths.get_db_path().parent))
+        folder = QFileDialog.getExistingDirectory(self, tr("admin.settings.choose_folder"), str(paths.get_db_path().parent))
         if folder:
             self.move_to(Path(folder))
 
@@ -162,19 +181,18 @@ class DataLocationSection(Section):
         try:
             if target.exists():
                 if QMessageBox.question(
-                    self, "Database already there",
-                    f"{target} already holds a database. Use that one instead of copying the current data?",
+                    self, tr("admin.settings.db_there_title"),
+                    tr("admin.settings.db_there_body").format(target=target),
                 ) != QMessageBox.Yes:
                     return False
             else:
                 connection.copy_database_to(target)
             paths.set_db_path(target)
         except (OSError, *DATABASE_ERRORS) as exc:
-            QMessageBox.warning(self, "Couldn't move the data", str(exc))
+            QMessageBox.warning(self, tr("admin.settings.move_failed"), str(exc))
             return False
         self.reload()
         QMessageBox.information(
-            self, "Restart the apps",
-            "The new location is saved. Close and reopen Admin, depot and POS on every computer so they all use it.",
+            self, tr("admin.settings.restart_title"), tr("admin.settings.restart_body"),
         )
         return True

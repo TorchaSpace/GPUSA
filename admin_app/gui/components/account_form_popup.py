@@ -12,6 +12,7 @@ from __future__ import annotations
 from PySide6.QtWidgets import QComboBox, QDialog, QDialogButtonBox, QFormLayout, QLabel, QLineEdit
 
 from shared import auth
+from shared.i18n import tr
 
 
 def _pin_field() -> QLineEdit:
@@ -44,7 +45,7 @@ class _Base(QDialog):
 
     def _check_new_pin(self, role: str) -> bool:
         if self.pin.text() != self.pin_again.text():
-            self._fail("The two PINs don't match.")
+            self._fail(tr("admin.settings.pin_mismatch"))
             return False
         problem = auth.pin_problem(self.pin.text(), role)
         if problem:
@@ -55,7 +56,7 @@ class _Base(QDialog):
 
 class AddAccountPopup(_Base):
     def __init__(self, employees: list[tuple[str, str]], parent=None):
-        super().__init__("Add sign-in account", parent)
+        super().__init__(tr("admin.settings.add_title"), parent)
         self.employee = QComboBox()
         for badge, name in employees:
             self.employee.addItem(f"{name} · {badge}", badge)
@@ -65,18 +66,20 @@ class AddAccountPopup(_Base):
         self.role.setCurrentIndex(auth.ROLES.index("cashier"))
         self.pin = _pin_field()
         self.pin_again = _pin_field()
-        hint = QLabel(f"PIN: digits only, {auth.MIN_PIN_LENGTH}+ ({auth.MIN_ADMIN_PIN_LENGTH}+ for an administrator).")
+        hint = QLabel(
+            tr("admin.settings.pin_hint").format(min=auth.MIN_PIN_LENGTH, admin_min=auth.MIN_ADMIN_PIN_LENGTH)
+        )
         hint.setWordWrap(True)
-        self.form.addRow("Employee", self.employee)
-        self.form.addRow("Role", self.role)
-        self.form.addRow("PIN", self.pin)
-        self.form.addRow("PIN again", self.pin_again)
+        self.form.addRow(tr("admin.settings.employee"), self.employee)
+        self.form.addRow(tr("admin.settings.role"), self.role)
+        self.form.addRow(tr("admin.settings.pin"), self.pin)
+        self.form.addRow(tr("admin.settings.pin_again"), self.pin_again)
         self.form.addRow(hint)
         self._finish()
 
     def _try_accept(self) -> None:
         if self.employee.currentData() is None:
-            self._fail("Everyone active in Workforce already has an account - add the employee there first.")
+            self._fail(tr("admin.settings.all_have_accounts"))
             return
         if self._check_new_pin(self.role.currentData()):
             self.accept()
@@ -87,20 +90,20 @@ class AddAccountPopup(_Base):
 
 class PinPopup(_Base):
     def __init__(self, who: str, role: str, ask_current: bool, parent=None):
-        super().__init__(f"New PIN · {who}", parent)
+        super().__init__(tr("admin.settings.new_pin_title").format(who=who), parent)
         self._role = role
         self.current = _pin_field() if ask_current else None
         if self.current is not None:
-            self.form.addRow("Current PIN", self.current)
+            self.form.addRow(tr("admin.settings.current_pin"), self.current)
         self.pin = _pin_field()
         self.pin_again = _pin_field()
-        self.form.addRow("New PIN", self.pin)
-        self.form.addRow("New PIN again", self.pin_again)
+        self.form.addRow(tr("admin.settings.new_pin"), self.pin)
+        self.form.addRow(tr("admin.settings.new_pin_again"), self.pin_again)
         self._finish()
 
     def _try_accept(self) -> None:
         if self.current is not None and not self.current.text():
-            self._fail("Enter your current PIN.")
+            self._fail(tr("admin.settings.enter_current"))
             return
         if self._check_new_pin(self._role):
             self.accept()

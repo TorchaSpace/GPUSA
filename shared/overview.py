@@ -12,6 +12,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from shared.search import fold
 from shared.models import Dealership, Product, StockLevel, StockLocation, Warehouse
 from shared.warehousing import STATUS_INACTIVE, STATUS_NEAR, capacity_fraction, capacity_status
 
@@ -151,13 +152,13 @@ def stock_grid(
         if road_any:
             keys.append(("road", "On the road"))
 
-    needle = query.strip().lower()
+    needle = fold(query).strip()  # case- and accent-insensitive: "cay" finds "Çay", "ipek" finds "İpek"
     rows: list[StockRow] = []
     for product in products:
         status = product_status(product)
         if below_reorder_only and status == STATUS_IN:
             continue
-        if needle and needle not in f"{product.barcode} {product.name}".lower():
+        if needle and needle not in fold(f"{product.barcode} {product.name}"):
             continue
         cells = [
             on_the_road(product) if key == "road" else held.get((product.barcode, key), 0) for key, _ in keys

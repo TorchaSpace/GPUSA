@@ -9,9 +9,12 @@ mockups' data does) would make every row wrong the morning after.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date, timedelta
 
+from shared.formatting import localize_number
+from shared.i18n import tr
 from shared.models import LedgerEntry
 
 DUE_SOON_DAYS = 7
@@ -45,13 +48,13 @@ def display_status(entry: LedgerEntry, today: date) -> str:
 def due_relative_text(entry: LedgerEntry, today: date) -> str:
     """"Settled", "Today", "in 1 day", "in 5 days", "3 days overdue"."""
     if not entry.is_open:
-        return "Settled"
+        return tr("treasury.due_settled")
     days = days_until_due(entry, today)
     if days == 0:
-        return "Today"
+        return tr("treasury.due_today")
     if days < 0:
-        return f"{-days} day{'s' if days != -1 else ''} overdue"
-    return f"in {days} day{'s' if days != 1 else ''}"
+        return tr("treasury.due_overdue_one" if days == -1 else "treasury.due_overdue_other").format(n=-days)
+    return tr("treasury.due_in_one" if days == 1 else "treasury.due_in_other").format(n=days)
 
 
 def matches_status_filter(entry: LedgerEntry, status_filter: str, today: date) -> bool:
@@ -159,11 +162,32 @@ def milestones(entries: list[LedgerEntry], today: date, days: int = MILESTONE_DA
 
 def compact_amount(value: float) -> str:
     """The mockups' compact money style ("212k", "1.84M") without a
-    currency symbol, which the app doesn't invent anywhere else either."""
-    sign = "-" if value < 0 else ""
-    value = abs(value)
-    if value >= 1_000_000:
-        return f"{sign}{value / 1_000_000:.2f}M"
-    if value >= 1_000:
-        return f"{sign}{value / 1_000:.1f}k".replace(".0k", "k")
-    return f"{sign}{value:,.0f}"
+    currency symbol, which the app doesn't invent anywhere else either.
+
+    Rounds to the DISPLAY precision first (half-up) and only then picks
+    the unit, so 999_950 reads "1.00M" (not "1000k"), 999.6 reads "1k"
+    (not "1000"), and a value that rounds to nothing reads "0" (never
+    "-0"). Under 1000 it keeps cents only when there are some ("12.50", "950");
+    under 1 it shows "0"/"1". Non-finite shows "—"."""
+    from decimal import ROUND_HALF_UP, Decimal
+
+    if not math.isfinite(value):
+        return "—"
+    amount = Decimal(str(value))
+    sign = "-" if amount < 0 else ""
+    amount = abs(amount)
+
+    def q(number: Decimal, step: str) -> Decimal:
+        return number.quantize(Decimal(step), rounding=ROUND_HALF_UP)
+
+    cents = q(amount, "0.01")
+    if cents < 1000:
+        if cents < 1:  # sub-unit noise reads as a whole number: "0", never "-0" or "0.40"
+            whole = q(amount, "1")
+            return "0" if whole == 0 else f"{sign}{whole}"
+        return f"{sign}{cents:.0f}" if cents == cents.to_integral_value() else localize_number(f"{sign}{cents:.2f}")
+    thousands = q(amount / 1000, "0.1")
+    if thousands < 1000:
+        text = f"{thousands:.1f}"
+        return localize_number(f"{sign}{text[:-2] if text.endswith('.0') else text}k")
+    return localize_number(f"{sign}{q(amount / 1_000_000, '0.01'):.2f}M")

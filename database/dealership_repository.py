@@ -19,9 +19,58 @@ from __future__ import annotations
 
 import sqlite3
 
+from shared.i18n import UserError
 from database.connection import connection_scope
 from database.exceptions import DealershipNotFoundError, DuplicateDealershipCodeError, LocationHasStockError
 from shared.models import DEALERSHIP_REGIONS, Dealership
+
+
+MAX_CODE_LENGTH = 24
+MAX_NAME_LENGTH = 120
+MAX_CITY_LENGTH = 120
+MAX_MANAGER_LENGTH = 120
+
+
+def normalize_code(code: str | None) -> str:
+    """A typed dealership code as stored: trimmed, upper-case ("cst-04 " is
+    "CST-04"). Rows saved before this rule may be lower-case; lookups
+    match those too (see _find_row)."""
+    return (code or "").strip().upper()
+
+
+def _find_row(conn, code: str) -> sqlite3.Row | None:
+    raw = (code or "").strip()
+    return conn.execute(
+        "SELECT * FROM dealerships WHERE code = ? OR upper(code) = ? ORDER BY (code = ?) DESC, id LIMIT 1",
+        (raw, raw.upper(), raw.upper()),
+    ).fetchone()
+
+
+def validate_fields(dealership: Dealership, *, require_code: bool = True) -> None:
+    """Raise ValueError (message fit to show) for an empty or over-long
+    code / name / city / manager. Pure - no database."""
+    if require_code:
+        code = normalize_code(dealership.code)
+        if not code:
+            raise UserError("err.dealership_code_required")
+        if len(code) > MAX_CODE_LENGTH:
+            raise UserError("err.code_too_long", n=MAX_CODE_LENGTH)
+    name = (dealership.name or "").strip()
+    if not name:
+        raise UserError("err.dealership_name_required")
+    if len(name) > MAX_NAME_LENGTH:
+        raise UserError("err.name_too_long", n=MAX_NAME_LENGTH)
+    if len((dealership.city or "").strip()) > MAX_CITY_LENGTH:
+        raise UserError("err.city_too_long", n=MAX_CITY_LENGTH)
+    if len((dealership.manager_name or "").strip()) > MAX_MANAGER_LENGTH:
+        raise UserError("err.manager_too_long", n=MAX_MANAGER_LENGTH)
+
+
+def _clean(dealership: Dealership) -> None:
+    dealership.code = normalize_code(dealership.code)
+    dealership.name = " ".join((dealership.name or "").split())
+    dealership.city = " ".join((dealership.city or "").split())
+    dealership.manager_name = " ".join((dealership.manager_name or "").split()) or None
 
 
 def _validate_region(region: str) -> None:
@@ -42,13 +91,12 @@ def _row_to_dealership(row: sqlite3.Row) -> Dealership:
 
 
 def get_by_code(code: str) -> Dealership:
-    """Return the Dealership for `code`, or raise DealershipNotFoundError."""
+    """Return the Dealership for `code` (any letter case, stray spaces
+    ignored), or raise DealershipNotFoundError."""
     with connection_scope() as conn:
-        row = conn.execute(
-            "SELECT * FROM dealerships WHERE code = ?", (code,)
-        ).fetchone()
+        row = _find_row(conn, code)
     if row is None:
-        raise DealershipNotFoundError(code)
+        raise DealershipNotFoundError(normalize_code(code))
     return _row_to_dealership(row)
 
 
@@ -60,53 +108,76 @@ def list_all() -> list[Dealership]:
 
 
 def create(dealership: Dealership) -> None:
-    """Insert a new dealership. Raises DuplicateDealershipCodeError if the
-    code exists, ValueError if region isn't one of DEALERSHIP_REGIONS."""
+    """Insert a new dealership; its code is stored trimmed and upper-case.
+    Raises DuplicateDealershipCodeError if the code exists (in any letter
+    case), ValueError if region isn't one of DEALERSHIP_REGIONS or the
+    code / name is empty or a field is too long."""
     _validate_region(dealership.region)
+    _clean(dealership)
+    validate_fields(dealership)
     with connection_scope() as conn:
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute(
-                "INSERT INTO dealerships (code, name, region, city, manager_name, is_active) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    dealership.code,
-                    dealership.name,
-                    dealership.region,
-                    dealership.city,
-                    dealership.manager_name,
-                    int(dealership.is_active),
-                ),
-            )
-        except sqlite3.IntegrityError as exc:
-            raise DuplicateDealershipCodeError(dealership.code) from exc
+            if _find_row(conn, dealership.code) is not None:
+                raise DuplicateDealershipCodeError(dealership.code)
+            try:
+                conn.execute(
+                    "INSERT INTO dealerships (code, name, region, city, manager_name, is_active) "
+                    "VALUES (?, ?, ?, ?, ?, ?)",
+                    (
+                        dealership.code,
+                        dealership.name,
+                        dealership.region,
+                        dealership.city,
+                        dealership.manager_name,
+                        int(dealership.is_active),
+                    ),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise DuplicateDealershipCodeError(dealership.code) from exc
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
 
 def update(dealership: Dealership) -> None:
-    """Update an existing dealership's fields, keyed by its (fixed) code.
-    Raises ValueError if region isn't one of DEALERSHIP_REGIONS."""
+    """Update an existing dealership's fields, keyed by its (fixed) code
+    (any letter case). Raises ValueError if region isn't one of
+    DEALERSHIP_REGIONS or a field is empty / too long,
+    DealershipNotFoundError."""
     _validate_region(dealership.region)
+    _clean(dealership)
+    validate_fields(dealership)
     with connection_scope() as conn:
-        cursor = conn.execute(
+        row = _find_row(conn, dealership.code)
+        if row is None:
+            raise DealershipNotFoundError(dealership.code)
+        conn.execute(
             "UPDATE dealerships SET name = ?, region = ?, city = ?, manager_name = ?, "
             "is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
-            "WHERE code = ?",
+            "WHERE id = ?",
             (
                 dealership.name,
                 dealership.region,
                 dealership.city,
                 dealership.manager_name,
                 int(dealership.is_active),
-                dealership.code,
+                row["id"],
             ),
         )
-    if cursor.rowcount == 0:
-        raise DealershipNotFoundError(dealership.code)
 
 
 def delete(code: str) -> None:
     """Remove a dealership. Raises DealershipNotFoundError if it doesn't
     exist, LocationHasStockError if stock is still on its shelves (the
-    units would be lost track of - move or count them out first)."""
+    units would be lost track of - move or count them out first),
+    LocationInUseError while a scheduled / in-transit shipment is headed
+    there (deactivate it instead)."""
+    from database.exceptions import LocationInUseError  # local: keeps this edit clear of the file's imports
+    from database.shipment_repository import active_count_for
+
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -117,6 +188,9 @@ def delete(code: str) -> None:
             ).fetchone()[0]
             if held:
                 raise LocationHasStockError(code, int(held))
+            open_shipments = active_count_for(conn, dealership_code=code)
+            if open_shipments:
+                raise LocationInUseError("dealership", code, open_shipments)
             cursor = conn.execute("DELETE FROM dealerships WHERE code = ?", (code,))
             if cursor.rowcount == 0:
                 raise DealershipNotFoundError(code)

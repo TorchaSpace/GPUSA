@@ -106,3 +106,55 @@ def test_home_badge_counts_incoming_for_this_dealership(qapp, shipment):
 
     home = HomePage("Cashier", dealership_code="001")
     assert home._receive_badge.text() == "1 arriving"
+
+
+def test_plus_button_never_goes_above_the_shipped_quantity(qapp, shipment):
+    page = _page(qapp)
+    page._toggle_report()
+    page.change_received("B", -3)
+    assert page._received_for(page.selected(), "B") == 15
+    for _ in range(10):  # tap + far more times than there are missing units
+        page.change_received("B", 1)
+    assert page._received_for(page.selected(), "B") == 18  # capped at what was shipped
+    page.change_received("A", 5)
+    assert page._received_for(page.selected(), "A") == 24
+    assert page._complete_button.isEnabled()  # both lines were touched, so both are checked
+    page._complete()
+    assert product_repository.get_by_barcode("A").stock_quantity == 50  # no stock from nothing
+    assert product_repository.get_by_barcode("B").stock_quantity == 50
+
+
+def test_short_is_still_a_discrepancy_path(qapp, shipment):
+    page = _page(qapp)
+    page._toggle_report()
+    for _ in range(100):
+        page.change_received("A", -1)
+    assert page._received_for(page.selected(), "A") == 0  # floor at zero
+    page.toggle_line("B")
+    page._complete()
+    assert ships.get(shipment.id).lines[0].received_qty == 0
+
+
+def test_a_shipment_that_has_not_left_the_depot_cannot_be_received(qapp, shipment):
+    waiting = ships.create("WH-01", "001", "Later", datetime.now() + timedelta(hours=5), [("A", 5)])
+    page = _page(qapp)
+    page.select(waiting.id)
+
+    assert not page._accept_button.isEnabled() and not page._report_button.isEnabled()
+    assert not page._complete_button.isEnabled()
+    assert page._complete_button.text() == "Not dispatched yet"
+    page.toggle_line("A")  # ignored
+    page.change_received("A", -1)  # ignored
+    page._accept_all()  # ignored
+    page._complete()  # ignored
+    assert ships.get(waiting.id).status == "scheduled"
+    assert product_repository.get_by_barcode("A").stock_quantity == 50
+    assert page._complete_button.text() != "Complete receipt"
+
+
+def test_a_repository_refusal_is_shown_not_raised(qapp, shipment):
+    page = _page(qapp)
+    page._accept_all()
+    ships.cancel(shipment.id)  # the depot cancelled it while the cashier was counting
+    page._complete()
+    assert "Couldn't complete" in page._message.text()

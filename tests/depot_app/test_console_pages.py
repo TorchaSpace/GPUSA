@@ -37,6 +37,11 @@ def world():
     dealership_repository.create(Dealership(code="001", name="Harbor Point", region="Coastal", city="Norfolk"))
     product_repository.create(Product("BOX", "Carton", 40, 300, 40))
     product_repository.create(Product("TAPE", "Tape", 5, 0, 5))
+    # TAPE was stocked here before and is now at zero (a level row exists): THAT is what makes this
+    # warehouse alert on it - a product it never carried is not "low" here.
+    with connection.connection_scope() as conn:
+        conn.execute("INSERT INTO stock_levels (location_kind, location_code, product_barcode, quantity) "
+                     "VALUES ('warehouse', 'WH-01', 'TAPE', 0)")
     account_repository.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(Employee("M-1", "Murat", "Operations", "Warehouse", "merkez"))
     account_repository.create_account("M-1", "depot_manager", "7351")
@@ -144,3 +149,18 @@ def test_portal_unlock_checks_the_pin(qapp, world):
     dialog.try_sign_in()
     assert dialog.session == session
     assert account_repository.list_events(1)[0]["event"] == "pin_confirmed"
+
+
+def test_inventory_does_not_call_a_never_stocked_product_out(qapp, world):
+    from depot_app.gui.inventory_page import InventoryPage, status_here
+
+    w, _ = world
+    product_repository.create(Product("GLUE", "Glue", 3, 0, 5))  # this warehouse never carried it
+    page = InventoryPage(w)
+    page.reload()
+    rows = {page.table.item(r, 0).text(): page.table.item(r, 4).text() for r in range(page.table.rowCount())}
+    assert rows["GLUE"] == "Not stocked" and rows["TAPE"] == "Out"
+    page.set_filter("Out")
+    assert [page.table.item(r, 0).text() for r in range(page.table.rowCount())] == ["TAPE"]
+    assert status_here(Product("X", "x", 1, 0, 5, stocked_here=False)) == "Not stocked"
+    assert status_here(Product("X", "x", 1, 0, 5)) == "Out"

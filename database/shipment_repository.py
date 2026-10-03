@@ -20,13 +20,15 @@ The workflow:
   have it). The goods are now on the truck: still counted in the
   company total, at no location (`stock_moved` = 1).
 - Cancelling a dispatched shipment puts the goods back at the origin.
-- Completing the receipt puts the RECEIVED quantities on the
-  dealership's shelf. A difference from what was shipped is a
-  discrepancy: a shortfall is written off (lost / damaged in transit), a
-  surplus is added - both move the company total, logged as a
-  'discrepancy' movement at the dealership naming the shipment.
-- A shipment received without ever being dispatched (a scheduled one
-  checked in directly) is taken off the origin at receipt time instead.
+- Completing the receipt puts the units on the dealership's shelf. Only
+  a SHORTFALL is a discrepancy: the units that never arrived are written
+  off (lost / damaged in transit), moving the company total and logged as
+  a 'discrepancy' movement at the dealership naming the shipment. You
+  can't receive MORE than was shipped (ValueError) - that would create
+  stock from nothing; a surplus is a supplier/count matter.
+- A shipment that was never dispatched can't be received
+  (ShipmentNotDispatchedError): the depot must dispatch it first, so the
+  goods have really left the origin and the company total is conserved.
 - Shipments planned before warehouses existed have no origin_code and
   draw from UNASSIGNED stock.
 Every stock step is inside the same BEGIN IMMEDIATE transaction as the
@@ -37,17 +39,48 @@ from __future__ import annotations
 
 import sqlite3
 
+from shared.i18n import UserError
 from database.connection import connection_scope
+from datetime import datetime, timedelta
+
 from database.exceptions import (
     DealershipNotFoundError,
-    ProductNotFoundError,
+    ShipmentNotDispatchedError,
     ShipmentNotFoundError,
     ShipmentStateError,
 )
-from database.stock_repository import change_level, level_in, log_movement, require_location
+from database.stock_repository import change_level, log_movement, require_location, resolve_product
 from shared.auth import Actor
-from shared.formatting import now_db_timestamp, to_db_timestamp
+from shared.formatting import now_db_timestamp, parse_db_timestamp, to_db_timestamp
 from shared.models import UNASSIGNED, Shipment, ShipmentLine, StockLocation
+from shared.warehousing import whole_number
+
+# An ETA this far before "now" (or before the departure) is still accepted:
+# a form's "now" is a few seconds old by the time it is saved.
+_ETA_GRACE = timedelta(minutes=5)
+
+
+def _utc(value) -> datetime:
+    """`value` (a datetime, naive = local, or a db timestamp string) as an aware UTC datetime."""
+    return parse_db_timestamp(value if isinstance(value, str) else to_db_timestamp(value))
+
+
+def _check_eta(eta, earliest, what: str) -> None:
+    """ValueError unless `eta` is not before `earliest` (a datetime or db text, None = no limit)."""
+    if earliest is not None and _utc(eta) < _utc(earliest) - _ETA_GRACE:
+        raise UserError("err.eta_before", what=what)
+
+
+def active_count_for(conn: sqlite3.Connection, *, origin_code: str | None = None,
+                     dealership_code: str | None = None) -> int:
+    """Scheduled / in-transit shipments leaving from warehouse `origin_code`
+    or going to dealership `dealership_code` - what stops a location being
+    deleted. Takes the caller's connection (it runs inside their transaction)."""
+    if origin_code is not None:
+        sql, param = "SELECT COUNT(*) FROM shipments WHERE status IN ('scheduled', 'in_transit') AND origin_code = ?", origin_code
+    else:
+        sql, param = "SELECT COUNT(*) FROM shipments WHERE status IN ('scheduled', 'in_transit') AND dealership_code = ?", dealership_code
+    return int(conn.execute(sql, (param,)).fetchone()[0])
 
 
 def _row_to_shipment(row: sqlite3.Row, lines: list[ShipmentLine]) -> Shipment:
@@ -148,30 +181,38 @@ def create(
     lines: list[tuple[str, int]],
     driver: str | None = None,
     origin_code: str | None = None,
+    departure=None,
 ) -> Shipment:
     """Plan a shipment ("scheduled"). `origin` is the site label shown
     everywhere ("WH-01 · İstanbul Merkez"); `origin_code` the warehouse
     whose stock it will come out of (None: unassigned stock). `eta` is a
-    datetime (naive = local time). `lines` is [(barcode, quantity), ...];
-    the same product twice is merged. Raises ValueError for blank fields /
-    no lines / a non-positive quantity, DealershipNotFoundError,
-    ProductNotFoundError, UnknownLocationError for an unknown origin_code.
+    datetime (naive = local time) and can't be in the past or before
+    `departure` (the planned departure time, if known). `lines` is
+    [(barcode, quantity), ...]; quantities must be whole numbers above 0
+    (2.7 is an error, not 2); the same product twice is merged. Raises
+    ValueError for blank fields / no lines / a bad quantity / a bad ETA,
+    DealershipNotFoundError, ProductNotFoundError (ProductInactiveError for
+    a deactivated product), UnknownLocationError for an unknown origin_code.
     Stock isn't checked here - it's taken (and checked) on dispatch."""
     origin, carrier = (origin or "").strip(), (carrier or "").strip()
     driver = (driver or "").strip() or None
     origin_code = (origin_code or "").strip() or None
     if not origin:
-        raise ValueError("A shipment needs an origin.")
+        raise UserError("err.shipment_origin")
     if not carrier:
-        raise ValueError("Enter a carrier.")
+        raise UserError("err.carrier_required")
     merged: dict[str, int] = {}
     for barcode, quantity in lines:
-        if int(quantity) <= 0:
-            raise ValueError("Every line needs a quantity above 0.")
-        merged[barcode] = merged.get(barcode, 0) + int(quantity)
+        quantity = whole_number(quantity, "Every line's quantity")
+        if quantity <= 0:
+            raise UserError("err.line_qty")
+        key = str(barcode).strip()
+        merged[key] = merged.get(key, 0) + quantity
     if not merged:
-        raise ValueError("Add at least one product.")
+        raise UserError("err.add_product")
     eta_text = to_db_timestamp(eta)
+    _check_eta(eta, departure if departure is not None else datetime.now().astimezone(),
+               "the departure" if departure is not None else "now")
 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -184,11 +225,12 @@ def create(
             if dealership is None:
                 raise DealershipNotFoundError(dealership_code)
             names = {}
-            for barcode in merged:
-                product = conn.execute("SELECT name FROM products WHERE barcode = ?", (barcode,)).fetchone()
-                if product is None:
-                    raise ProductNotFoundError(barcode)
-                names[barcode] = product["name"]
+            canonical: dict[str, int] = {}
+            for barcode, qty in merged.items():
+                stored, name = resolve_product(conn, barcode, active_only=True)
+                names[stored] = name
+                canonical[stored] = canonical.get(stored, 0) + qty
+            merged = canonical
             cursor = conn.execute(
                 "INSERT INTO shipments (origin, origin_code, dealership_code, dealership_name, carrier, driver, "
                 "planned_eta, eta) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -241,6 +283,7 @@ def dispatch(shipment_id: int, actor: Actor | None = None) -> Shipment:
         if shipment.status != "scheduled":
             raise ShipmentStateError(shipment.number, shipment.status, "dispatched")
         origin = origin_location(shipment)
+        require_location(conn, origin)
         for line in shipment.lines:
             change_level(conn, origin, line.product_barcode, -line.expected_qty, change_total=False)
             log_movement(conn, origin, line.product_barcode, "dispatch", line.expected_qty, reason="shipment",
@@ -252,12 +295,18 @@ def dispatch(shipment_id: int, actor: Actor | None = None) -> Shipment:
 
 def update_eta(shipment_id: int, eta) -> Shipment:
     """New arrival estimate for a shipment that hasn't arrived. The
-    original promise stays in planned_eta, so the lateness is visible."""
+    original promise stays in planned_eta, so the lateness is visible. The
+    new ETA can't be before the shipment was planned or, once it left,
+    before it departed (ValueError)."""
     eta_text = to_db_timestamp(eta)
 
     def run(conn, shipment):
         if not shipment.is_active:
             raise ShipmentStateError(shipment.number, shipment.status, "re-timed")
+        if shipment.departed_at:
+            _check_eta(eta, shipment.departed_at, "the departure")
+        else:
+            _check_eta(eta, shipment.created_at, "when the shipment was planned")
         _touch(conn, shipment.id, "eta = ?", (eta_text,))
 
     return _write(shipment_id, run)
@@ -272,6 +321,7 @@ def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
             raise ShipmentStateError(shipment.number, shipment.status, "cancelled")
         if shipment.stock_moved:
             origin = origin_location(shipment)
+            require_location(conn, origin)  # goods can't go back to a deleted warehouse
             for line in shipment.lines:
                 change_level(conn, origin, line.product_barcode, line.expected_qty, change_total=False)
                 log_movement(conn, origin, line.product_barcode, "receive", line.expected_qty, reason="shipment",
@@ -288,57 +338,58 @@ def complete_receipt(shipment_id: int, received: dict[str, int], note: str | Non
     received in full). Marks it delivered and puts the received units on
     the dealership's shelf; see the module docstring for discrepancies.
 
+    Raises ValueError for a negative or non-whole quantity, or MORE than
+    the line's expected quantity (nothing is written); ShipmentNotDispatchedError
+    for a shipment that never left the origin; ShipmentStateError if it is
+    already delivered / cancelled.
+
     One BEGIN IMMEDIATE transaction, with the status check inside it, so
     two terminals completing the same receipt can't both move stock: the
     second gets ShipmentStateError.
     """
     note = (note or "").strip() or None
+    counts: dict[str, int] = {}
     for barcode, quantity in received.items():
-        if int(quantity) < 0:
-            raise ValueError("Received quantities can't be negative.")
+        quantity = whole_number(quantity, "Received quantities")
+        if quantity < 0:
+            raise UserError("err.received_negative")
+        counts[str(barcode).strip().upper()] = quantity
 
     def run(conn, shipment):
         if not shipment.is_active:
             raise ShipmentStateError(shipment.number, shipment.status, "received")
-        unknown = set(received) - {line.product_barcode for line in shipment.lines}
+        if shipment.status != "in_transit" or not shipment.stock_moved:
+            raise ShipmentNotDispatchedError(shipment.number, shipment.status)
+        expected = {line.product_barcode.upper(): line for line in shipment.lines}
+        unknown = set(counts) - set(expected)
         if unknown:
-            raise ValueError(f"{', '.join(sorted(unknown))} isn't on {shipment.number}.")
+            raise UserError("err.not_on_shipment", names=', '.join(sorted(unknown)), number=shipment.number)
+        for key, count in counts.items():
+            if count > expected[key].expected_qty:
+                raise UserError(
+                    "err.over_receive", product=expected[key].product_name, count=count,
+                    expected=expected[key].expected_qty, number=shipment.number,
+                )
 
-        origin = origin_location(shipment)
         shelf = StockLocation.dealership(shipment.dealership_code)
+        require_location(conn, shelf)  # the dealership still exists (it can't be deleted mid-shipment)
         for line in shipment.lines:
             barcode = line.product_barcode
-            got = int(received.get(barcode, line.expected_qty))
+            got = counts.get(barcode.upper(), line.expected_qty)
             conn.execute("UPDATE shipment_lines SET received_qty = ? WHERE id = ?", (got, line.id))
 
-            on_truck = line.expected_qty
-            short_note = None
-            if not shipment.stock_moved:
-                # Never dispatched: take it off the origin now, as far as
-                # the origin's records go.
-                on_truck = min(line.expected_qty, level_in(conn, origin, barcode))
-                if on_truck:
-                    change_level(conn, origin, barcode, -on_truck, change_total=False)
-                    log_movement(conn, origin, barcode, "dispatch", on_truck, reason="shipment",
-                                 reference=shipment.number, note=f"Loaded for {shipment.dealership_name}", actor=actor)
-                if on_truck < line.expected_qty:
-                    short_note = f"{origin.label} had only {on_truck} of {line.expected_qty} on record"
-
-            if on_truck:
-                change_level(conn, shelf, barcode, on_truck, change_total=False)
-                log_movement(conn, shelf, barcode, "receive", on_truck, reason="shipment",
-                             reference=shipment.number, note=f"From {shipment.origin}", actor=actor)
-            diff = got - on_truck
-            if diff:
-                change_level(conn, shelf, barcode, diff, change_total=True)
-                if diff < 0:
-                    text = f"Short {-diff} of {line.expected_qty} shipped"
-                else:
-                    text = f"Over by {diff} ({got} received, {line.expected_qty} shipped)"
-                if short_note:
-                    text += f" - {short_note}"
-                log_movement(conn, shelf, barcode, "dispatch" if diff < 0 else "receive", abs(diff),
-                             reason="discrepancy", reference=shipment.number, note=text, actor=actor)
+            # The whole shipped quantity arrives on the shelf (it is on the
+            # truck, counted in the company total), then anything short is
+            # written off as lost / damaged in transit.
+            change_level(conn, shelf, barcode, line.expected_qty, change_total=False)
+            log_movement(conn, shelf, barcode, "receive", line.expected_qty, reason="shipment",
+                         reference=shipment.number, note=f"From {shipment.origin}", actor=actor)
+            short = line.expected_qty - got
+            if short:
+                change_level(conn, shelf, barcode, -short, change_total=True)
+                log_movement(conn, shelf, barcode, "dispatch", short, reason="discrepancy",
+                             reference=shipment.number,
+                             note=f"Short {short} of {line.expected_qty} shipped", actor=actor)
         now = now_db_timestamp()
         _touch(conn, shipment.id,
                "status = 'delivered', delivered_at = ?, receipt_note = ?, departed_at = COALESCE(departed_at, ?), "

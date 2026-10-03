@@ -21,7 +21,9 @@ from PySide6.QtCore import QPointF, QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QFont, QPainter, QPainterPath, QPen
 from PySide6.QtWidgets import QWidget
 
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
+from shared.formatting import month_abbr
 from shared.treasury import DayMilestones
 
 _LINE_BAND = 40  # px reserved at the top for the running-net line
@@ -119,9 +121,9 @@ class MilestoneStrip(QWidget):
                 QColor("#7d7979") if weekend else QColor("#d7d3d3")
             )
             painter.setPen(QPen(QColor(p["text_secondary"])))
-            painter.drawText(QRectF(x, top + 2, width, 14), Qt.AlignCenter, day.day.strftime("%a")[:2].upper())
+            painter.drawText(QRectF(x, top + 2, width, 14), Qt.AlignCenter, tr(f"format.weekday.{day.day.weekday()}")[:2].upper())
             painter.setPen(QPen(label_color))
-            number = day.day.strftime("%b") if day.day.day == 1 else str(day.day.day)
+            number = month_abbr(day.day) if day.day.day == 1 else str(day.day.day)
             painter.drawText(QRectF(x, top + 16, width, 16), Qt.AlignCenter, number)
 
             y = top + _HEADER + 6

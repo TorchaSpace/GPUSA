@@ -14,7 +14,7 @@ from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.data_table import DataTable
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from database import product_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared.gui_kit.visual_tab import VisualTab
 from shared.i18n import tr
 
@@ -67,7 +67,7 @@ class ProductManagementTab(VisualTab):
                 product_repository.update(product)
             else:
                 product_repository.create(product)
-        except DataAccessError as exc:
+        except (DataAccessError, ValueError, *DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, tr("admin.save_failed_title"), str(exc))
             return
         self.refresh()
@@ -88,7 +88,7 @@ class ProductManagementTab(VisualTab):
 
         try:
             product_repository.delete(product.barcode)
-        except DataAccessError as exc:
+        except (DataAccessError, ValueError, *DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, tr("admin.save_failed_title"), str(exc))
             return
         self.refresh()

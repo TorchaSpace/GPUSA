@@ -34,9 +34,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database.exceptions import DataAccessError, InsufficientStockError, ProductNotFoundError
+from database.exceptions import DATABASE_ERRORS, InsufficientStockError, ProductInactiveError, ProductNotFoundError
 from database.inventory_repository import list_recent_movements
 from shared.models import UNASSIGNED, StockLocation
+from shared.warehousing import tr_or
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.services import dispatch_service, receiving_service
@@ -201,13 +202,16 @@ class MovementPanel(QWidget):
         action = service.receive if self._direction == "receive" else service.dispatch
         try:
             action(barcode, quantity, note, location=self._location)
+        except ProductInactiveError:
+            self._show_error(tr_or("depot.sku_inactive", 'SKU "{sku}" is deactivated - it can\'t be received. Reactivate it in Admin first.').format(sku=barcode))
+            return
         except ProductNotFoundError:
             self._show_error(f'Unknown SKU "{barcode}". Scan again.')
             return
         except InsufficientStockError as exc:
             self._show_error(f"Only {exc.available} on hand at {self._location.label} for {barcode}. Not logged.")
             return
-        except (ValueError, DataAccessError) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:  # e.g. over capacity, inactive warehouse, bad quantity
             self._show_error(str(exc))
             return
 
@@ -227,10 +231,14 @@ class MovementPanel(QWidget):
     def reload(self) -> None:
         # This warehouse's own Floor log only - not shipment loading,
         # transfers or counts (those show in the Console / Admin logs).
-        movements = [
-            m for m in list_recent_movements(limit=80, movement_type=self._direction, location=self._location)
-            if m["reason"] in (None, self._direction)
-        ][:50]
+        try:
+            movements = [
+                m for m in list_recent_movements(limit=80, movement_type=self._direction, location=self._location)
+                if m["reason"] in (None, self._direction)
+            ][:50]
+        except DATABASE_ERRORS as exc:  # a locked database on a refresh must not crash the Floor
+            self._show_error(f"Couldn't load the log: {exc}")
+            return
         total_units = sum(m["quantity"] for m in movements)
         self._summary_label.setText(f"{total_units} units · {len(movements)} {self._spec['unit_noun']}")
 

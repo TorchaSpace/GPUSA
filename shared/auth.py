@@ -26,14 +26,17 @@ import hmac
 import secrets
 from dataclasses import dataclass
 
+from shared.i18n import LazyLabels, tr
+
 ROLES = ("admin", "depot_manager", "cashier")
-ROLE_LABELS = {"admin": "Administrator", "depot_manager": "Depot manager", "cashier": "Cashier"}
+ROLE_LABELS = LazyLabels("auth.role", ROLES)
 
 # Which roles may open which part of the system.
 AREA_ADMIN = "admin"
 AREA_DEPOT_CONSOLE = "depot_console"
 AREA_POS = "pos"
-AREA_LABELS = {AREA_ADMIN: "the Admin dashboard", AREA_DEPOT_CONSOLE: "the depot Manager Console", AREA_POS: "the till"}
+AREA_LABELS = LazyLabels("auth.area", (AREA_ADMIN, AREA_DEPOT_CONSOLE, AREA_POS))  # as in "can't open ..."
+AREA_NAMES = LazyLabels("auth.area_name", (AREA_ADMIN, AREA_DEPOT_CONSOLE, AREA_POS))  # as a column value
 ALLOWED_ROLES = {
     AREA_ADMIN: frozenset({"admin"}),
     AREA_DEPOT_CONSOLE: frozenset({"admin", "depot_manager"}),
@@ -52,6 +55,14 @@ DEFAULT_PBKDF2_ITERATIONS = 200_000
 PBKDF2_ITERATIONS = DEFAULT_PBKDF2_ITERATIONS  # tests lower this; the apps never do
 
 
+def normalize_badge_id(text: str | None) -> str:
+    """What was typed or scanned -> the badge ID as stored: surrounding
+    spaces dropped, upper case. ("b-7 " and "B-7" are the same badge.)
+    Lookups of rows saved before this rule also match them
+    case-insensitively - see employee_repository.find_row()."""
+    return (text or "").strip().upper()
+
+
 def role_label(role: str) -> str:
     return ROLE_LABELS.get(role, role)
 
@@ -65,13 +76,13 @@ def pin_problem(pin: str, role: str) -> str | None:
     pin = pin or ""
     minimum = MIN_ADMIN_PIN_LENGTH if role == "admin" else MIN_PIN_LENGTH
     if not pin.isdigit() or not pin.isascii():
-        return "A PIN is digits only."
+        return tr("auth.pin_digits")
     if len(pin) < minimum:
-        return f"A {role_label(role).lower()} PIN needs at least {minimum} digits."
+        return tr("auth.pin_short").format(role=role_label(role).lower(), n=minimum)
     if len(pin) > MAX_PIN_LENGTH:
-        return f"A PIN can't be longer than {MAX_PIN_LENGTH} digits."
+        return tr("auth.pin_long").format(n=MAX_PIN_LENGTH)
     if len(set(pin)) == 1 or pin in "0123456789012" or pin in "9876543210987":
-        return "Pick a PIN that isn't a repeated or running sequence."
+        return tr("auth.pin_sequence")
     return None
 
 

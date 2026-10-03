@@ -4,6 +4,7 @@ import sys
 
 from PySide6.QtWidgets import QApplication, QMessageBox
 
+from shared.i18n import tr
 from admin_app.gui.app_style import admin_extra_qss
 from admin_app.gui.auth_flow import sign_in
 from admin_app.gui.main_window import MainWindow
@@ -35,7 +36,7 @@ def main() -> int:
     try:
         session = sign_in()
     except DataAccessError as exc:
-        QMessageBox.critical(None, "Can't open the database", str(exc))
+        QMessageBox.critical(None, i18n.tr("admin.main.db_error"), str(exc))
         return 1
     if session is None:
         return 0

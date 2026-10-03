@@ -21,10 +21,20 @@ class Product:
     price: float
     stock_quantity: int
     critical_stock_level: int = 0
+    # Deactivated products stay in history and in Admin (dimmed) but can't be
+    # sold, received or put on a shipment. (products.is_active, migration v3.)
+    is_active: bool = True
+    # Only meaningful on rows from stock_repository.products_at/product_at:
+    # whether that location has (or had) a stock level row for the product.
+    # A location is never alerted about a product it has never stocked.
+    stocked_here: bool = True
 
     @property
     def is_below_critical_stock(self) -> bool:
-        return self.stock_quantity <= self.critical_stock_level
+        """At/below the reorder level. A reorder level of 0 means "none
+        set" - such a product (a brand-new one with no stock, say) is never
+        flagged; "out of stock" is a separate status."""
+        return self.critical_stock_level > 0 and self.stock_quantity <= self.critical_stock_level
 
 
 @dataclass
@@ -213,7 +223,12 @@ class PurchaseOrder:
 
     @property
     def total(self) -> float:
-        return round(self.unit_price * self.quantity, 2)
+        """unit_price x quantity, rounded half-up to cents (via Decimal, so
+        0.125 x 1 is 0.13 and float noise like 1.005 x 3 can't tip it)."""
+        from decimal import ROUND_HALF_UP, Decimal
+
+        exact = Decimal(str(self.unit_price)) * Decimal(self.quantity)
+        return float(exact.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP))
 
     @property
     def was_approved(self) -> bool:
@@ -274,7 +289,11 @@ class LedgerEntry:
 
     @property
     def type_label(self) -> str:
-        return LEDGER_DOC_TYPE_LABELS.get(self.doc_type, self.doc_type)
+        from shared.i18n import enum_label
+
+        english = LEDGER_DOC_TYPE_LABELS.get(self.doc_type, self.doc_type)
+        label = enum_label("doc_type", self.doc_type)
+        return english if label == self.doc_type else label
 
 
 # --- Shipments / Distribution --------------------------------------------

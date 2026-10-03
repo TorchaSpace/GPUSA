@@ -23,9 +23,12 @@ page does the database call, so this widget stays presentation-only.
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from shared.i18n import tr
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.formatting import age_text, format_amount
@@ -38,16 +41,16 @@ def deviation_text(order: PurchaseOrder) -> str:
     if order.range_min is None or order.range_max is None:
         return ""
     if order.unit_price > order.range_max and order.range_max > 0:
-        return f"+{round((order.unit_price / order.range_max - 1) * 100)}% over"
+        return tr("admin.purchase.dev_over").format(pct=round((order.unit_price / order.range_max - 1) * 100))
     if order.unit_price < order.range_min and order.range_min > 0:
-        return f"{round((1 - order.unit_price / order.range_min) * 100)}% under"
-    return "within band"
+        return tr("admin.purchase.dev_under").format(pct=round((1 - order.unit_price / order.range_min) * 100))
+    return tr("admin.purchase.dev_within")
 
 
 def band_text(order: PurchaseOrder) -> str:
     if order.range_min is None or order.range_max is None:
-        return "no safe band set for this product"
-    return f"band {format_amount(order.range_min)}–{format_amount(order.range_max)} / unit"
+        return tr("admin.purchase.band_unset")
+    return tr("admin.purchase.band_line").format(min=format_amount(order.range_min), max=format_amount(order.range_max))
 
 
 class _PrimaryButton(QPushButton):
@@ -85,18 +88,22 @@ class ApprovalCard(QFrame):
 
         left = QVBoxLayout()
         left.setSpacing(2)
+        # Rich text: every user-supplied value (the site is free text) is escaped.
         meta = QLabel(
-            f"<span style='color:{p['accent']}'>{order.number}</span>"
-            f" · {order.site} · {age_text(order.created_at)}"
+            f"<span style='color:{p['accent']}'>{html.escape(order.number)}</span>"
+            f" · {html.escape(order.site or '')} · {html.escape(age_text(order.created_at))}"
         )
+        meta.setTextFormat(Qt.RichText)
         meta.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         left.addWidget(meta)
         item = QLabel(f"{order.quantity} × {order.product_name}  ({order.product_barcode})")
+        item.setTextFormat(Qt.PlainText)  # product names are free text: never read as markup
         item.setWordWrap(True)
         item.setMinimumHeight(20)
         item.setStyleSheet(f"font-size: 14px; color: {p['text_primary']};")
         left.addWidget(item)
-        detail = QLabel(f"{format_amount(order.unit_price)} / unit from {order.supplier}")
+        detail = QLabel(tr("admin.purchase.card_detail").format(unit=format_amount(order.unit_price), supplier=order.supplier))
+        detail.setTextFormat(Qt.PlainText)
         detail.setWordWrap(True)
         detail.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         left.addWidget(detail)
@@ -122,9 +129,9 @@ class ApprovalCard(QFrame):
 
         buttons = QHBoxLayout()
         buttons.setSpacing(8)
-        self.approve_button = _PrimaryButton("Approve")
+        self.approve_button = _PrimaryButton(tr("admin.purchase.approve"))
         self.approve_button.clicked.connect(lambda: self.approve_clicked.emit(order.id))
-        self.reject_button = CompactButton("Reject")
+        self.reject_button = CompactButton(tr("admin.purchase.reject"))
         self.reject_button.clicked.connect(lambda: self.reject_clicked.emit(order.id))
         buttons.addWidget(self.approve_button)
         buttons.addWidget(self.reject_button)
@@ -140,6 +147,7 @@ class ApprovalQueue(QWidget):
     approve_requested = Signal(int)
     reject_requested = Signal(int)
 
+    EMPTY_TEXT = "All requests reviewed."
     DEFAULT_FOOTER = "Orders priced outside a product's safe band are held for admin sign-off."
 
     def __init__(self, parent: QWidget | None = None):
@@ -154,15 +162,23 @@ class ApprovalQueue(QWidget):
         self._cards_layout.setSpacing(0)
         outer.addLayout(self._cards_layout)
 
-        self._empty_label = QLabel("All requests reviewed.")
-        self._empty_label.setStyleSheet(
+        self._empty_label = QLabel(tr("admin.purchase.queue_empty"))
+        self._empty_label.setTextFormat(Qt.PlainText)
+        self._empty_label.setWordWrap(True)
+        self._empty_style = (
             f"font-family: {FONT_HEADING_CSS}; font-size: 18px; color: {p['text_secondary']}; "
             f"padding: 28px 16px; border: none;"
         )
+        self._error_style = (
+            f"font-size: 13px; color: {p['alert_critical']}; padding: 28px 16px; border: none;"
+        )
+        self._empty_label.setStyleSheet(self._empty_style)
         self._empty_label.setAlignment(Qt.AlignCenter)
         outer.addWidget(self._empty_label)
+        self._error: str | None = None
 
-        self._footer = QLabel(self.DEFAULT_FOOTER)
+        self._footer = QLabel(tr("admin.purchase.queue_footer"))
+        self._footer.setTextFormat(Qt.PlainText)
         self._footer.setWordWrap(True)
         self._footer.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']}; padding: 8px 16px; border: none;")
         outer.addWidget(self._footer)
@@ -184,7 +200,26 @@ class ApprovalQueue(QWidget):
             card.reject_clicked.connect(self.reject_requested.emit)
             self._cards_layout.addWidget(card)
             self._cards.append(card)
-        self._empty_label.setVisible(not orders)
+        self._set_message(None if orders else tr("admin.purchase.queue_empty"), error=False)
+
+    def set_error(self, text: str) -> None:
+        """The orders couldn't be read: show `text` (in the alert colour)
+        instead of the cards AND instead of "All requests reviewed."."""
+        for card in self._cards:
+            self._cards_layout.removeWidget(card)
+            card.hide()
+            card.deleteLater()
+        self._cards = []
+        self._set_message(text, error=True)
+
+    def _set_message(self, text: str | None, error: bool) -> None:
+        self._error = text if error else None
+        self._empty_label.setText(text or "")
+        self._empty_label.setStyleSheet(self._error_style if error else self._empty_style)
+        self._empty_label.setVisible(text is not None)
+
+    def error_text(self) -> str | None:
+        return self._error
 
     def cards(self) -> list[ApprovalCard]:
         return list(self._cards)

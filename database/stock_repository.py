@@ -27,10 +27,19 @@ from __future__ import annotations
 
 import sqlite3
 
+from shared.i18n import UserError
 from database.connection import connection_scope
-from database.exceptions import InsufficientStockError, ProductNotFoundError, UnknownLocationError
+from database.exceptions import (
+    CapacityExceededError,
+    InsufficientStockError,
+    LocationInactiveError,
+    ProductInactiveError,
+    ProductNotFoundError,
+    UnknownLocationError,
+)
 from shared.auth import Actor, actor_label
 from shared.models import UNASSIGNED, Product, StockLevel, StockLocation
+from shared.warehousing import whole_number
 
 _TABLE_FOR_KIND = {"warehouse": "warehouses", "dealership": "dealerships"}
 
@@ -47,12 +56,51 @@ def require_location(conn: sqlite3.Connection, location: StockLocation) -> None:
         raise UnknownLocationError(location.kind, location.code)
 
 
-def require_product(conn: sqlite3.Connection, barcode: str) -> str:
-    """Return the product's name, or raise ProductNotFoundError."""
-    row = conn.execute("SELECT name FROM products WHERE barcode = ?", (barcode,)).fetchone()
+def resolve_product(conn: sqlite3.Connection, barcode: str, active_only: bool = False) -> tuple[str, str]:
+    """(stored barcode, name) for `barcode` in any letter case. Raises
+    ProductNotFoundError, or - with `active_only` - ProductInactiveError for
+    a deactivated product (stock coming IN or going on a shipment must not
+    use one; stock going out may)."""
+    text = str(barcode).strip()
+    row = conn.execute(
+        "SELECT barcode, name, is_active FROM products WHERE barcode = ? COLLATE NOCASE ORDER BY barcode = ? DESC",
+        (text, text),
+    ).fetchone()
     if row is None:
         raise ProductNotFoundError(barcode)
-    return row["name"]
+    if active_only and not row["is_active"]:
+        raise ProductInactiveError(row["barcode"])
+    return row["barcode"], row["name"]
+
+
+def require_product(conn: sqlite3.Connection, barcode: str, active_only: bool = False) -> str:
+    """Return the product's name, or raise ProductNotFoundError."""
+    return resolve_product(conn, barcode, active_only)[1]
+
+
+def require_can_hold(conn: sqlite3.Connection, location: StockLocation, units: int) -> None:
+    """Refuse inbound stock a warehouse can't take: LocationInactiveError
+    for a deactivated one, CapacityExceededError if `units` more would go
+    past its capacity (no capacity set = no limit). Other places always
+    pass. Stock returning to its own origin (a cancelled shipment) and
+    count corrections deliberately skip this: the units exist."""
+    if location.kind != "warehouse":
+        return
+    row = conn.execute(
+        "SELECT capacity_units, is_active FROM warehouses WHERE code = ?", (location.code,)
+    ).fetchone()
+    if row is None:
+        raise UnknownLocationError(location.kind, location.code)
+    if not row["is_active"]:
+        raise LocationInactiveError(location.code)
+    capacity = row["capacity_units"]
+    if capacity is not None:
+        used = int(conn.execute(
+            "SELECT COALESCE(SUM(quantity), 0) FROM stock_levels WHERE location_kind = 'warehouse' "
+            "AND location_code = ?", (location.code,)
+        ).fetchone()[0])
+        if used + int(units) > capacity:
+            raise CapacityExceededError(location.code, int(capacity), used, int(units))
 
 
 def level_in(conn: sqlite3.Connection, location: StockLocation, barcode: str) -> int:
@@ -129,7 +177,7 @@ def _write(fn):
 
 
 def _positive(quantity: int) -> int:
-    quantity = int(quantity)
+    quantity = whole_number(quantity, "Quantity")
     if quantity <= 0:
         raise ValueError("quantity must be greater than 0")
     return quantity
@@ -149,9 +197,10 @@ def receive(location: StockLocation, barcode: str, quantity: int, note: str | No
 
     def run(conn):
         require_location(conn, location)
-        require_product(conn, barcode)
-        new = change_level(conn, location, barcode, quantity, change_total=True)
-        log_movement(conn, location, barcode, "receive", quantity, reason="receive", note=_clean(note), actor=actor)
+        code = resolve_product(conn, barcode, active_only=True)[0]
+        require_can_hold(conn, location, quantity)
+        new = change_level(conn, location, code, quantity, change_total=True)
+        log_movement(conn, location, code, "receive", quantity, reason="receive", note=_clean(note), actor=actor)
         return new
 
     return _write(run)
@@ -167,9 +216,9 @@ def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | N
 
     def run(conn):
         require_location(conn, location)
-        require_product(conn, barcode)
-        new = change_level(conn, location, barcode, -quantity, change_total=True)
-        log_movement(conn, location, barcode, "dispatch", quantity, reason="dispatch", note=_clean(note), actor=actor)
+        code = resolve_product(conn, barcode)[0]
+        new = change_level(conn, location, code, -quantity, change_total=True)
+        log_movement(conn, location, code, "dispatch", quantity, reason="dispatch", note=_clean(note), actor=actor)
         return new
 
     return _write(run)
@@ -184,18 +233,19 @@ def transfer(
     doesn't change. For goods that travel by truck, use a shipment."""
     quantity = _positive(quantity)
     if source == destination:
-        raise ValueError("Pick two different locations.")
+        raise UserError("err.two_locations")
 
     def run(conn):
         require_location(conn, source)
         require_location(conn, destination)
-        require_product(conn, barcode)
-        change_level(conn, source, barcode, -quantity, change_total=False)
-        change_level(conn, destination, barcode, quantity, change_total=False)
+        code = resolve_product(conn, barcode)[0]
+        require_can_hold(conn, destination, quantity)
+        change_level(conn, source, code, -quantity, change_total=False)
+        change_level(conn, destination, code, quantity, change_total=False)
         note_text = _clean(note)
-        log_movement(conn, source, barcode, "dispatch", quantity, reason="transfer", note=note_text,
+        log_movement(conn, source, code, "dispatch", quantity, reason="transfer", note=note_text,
                      reference=destination.label, actor=actor)
-        log_movement(conn, destination, barcode, "receive", quantity, reason="transfer", note=note_text,
+        log_movement(conn, destination, code, "receive", quantity, reason="transfer", note=note_text,
                      reference=source.label, actor=actor)
 
     _write(run)
@@ -207,17 +257,17 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
     level is set to that and the difference is written as a 'count'
     movement (and moves the company total - the units were found or
     lost). Returns the difference (counted - previous level)."""
-    counted = int(counted)
+    counted = whole_number(counted, "Count")
     if counted < 0:
-        raise ValueError("A count can't be negative.")
+        raise UserError("err.count_negative")
 
     def run(conn):
         require_location(conn, location)
-        require_product(conn, barcode)
-        diff = counted - level_in(conn, location, barcode)
+        code = resolve_product(conn, barcode)[0]
+        diff = counted - level_in(conn, location, code)
         if diff:
-            change_level(conn, location, barcode, diff, change_total=True)
-            log_movement(conn, location, barcode, "receive" if diff > 0 else "dispatch", abs(diff),
+            change_level(conn, location, code, diff, change_total=True)
+            log_movement(conn, location, code, "receive" if diff > 0 else "dispatch", abs(diff),
                          reason="count", note=_clean(note) or f"Counted {counted}", actor=actor)
         return diff
 
@@ -229,7 +279,7 @@ def place_all_unassigned(destination: StockLocation, actor: Actor | None = None)
     one-click "these are all in the main warehouse" after upgrading).
     Returns the number of units moved."""
     if destination.is_unassigned:
-        raise ValueError("Pick a warehouse or dealership.")
+        raise UserError("err.pick_location")
 
     def run(conn):
         require_location(conn, destination)
@@ -237,6 +287,7 @@ def place_all_unassigned(destination: StockLocation, actor: Actor | None = None)
             "SELECT product_barcode, quantity FROM stock_levels "
             "WHERE location_kind = 'unassigned' AND quantity > 0"
         ).fetchall()
+        require_can_hold(conn, destination, sum(int(r["quantity"]) for r in rows))
         moved = 0
         for row in rows:
             qty = int(row["quantity"])
@@ -265,43 +316,64 @@ def quantity_at(location: StockLocation, barcode: str) -> int:
         return level_in(conn, location, barcode)
 
 
-def products_at(location: StockLocation) -> list[Product]:
+_PRODUCT_AT_SQL = (
+    "SELECT p.barcode, p.name, p.price, p.critical_stock_level, p.is_active, COALESCE(l.quantity, 0) AS qty, "
+    "(l.product_barcode IS NOT NULL) AS stocked "
+    "FROM products p LEFT JOIN stock_levels l ON l.product_barcode = p.barcode "
+    "AND l.location_kind = ? AND l.location_code = ? "
+)
+
+
+def _product_here(r: sqlite3.Row) -> Product:
+    return Product(barcode=r["barcode"], name=r["name"], price=r["price"], stock_quantity=r["qty"],
+                   critical_stock_level=r["critical_stock_level"], is_active=bool(r["is_active"]),
+                   stocked_here=bool(r["stocked"]))
+
+
+def products_at(location: StockLocation, include_inactive: bool = False) -> list[Product]:
     """Every product, with `stock_quantity` set to what's at `location`
     (0 where nothing is) - what POS and the depot show as "my stock".
     `critical_stock_level` is the product's own (one threshold applies
-    at every location)."""
+    at every location); `stocked_here` says whether this location has (or
+    had) a level row for it.
+
+    Deactivated products are left out - except those still holding units
+    here, so physical stock never disappears from the list (callers that
+    SELL or RECEIVE must still skip `not p.is_active`). `include_inactive`
+    returns all of them."""
+    sql = _PRODUCT_AT_SQL
+    if not include_inactive:
+        sql += "WHERE p.is_active = 1 OR COALESCE(l.quantity, 0) > 0 "
     with connection_scope() as conn:
-        rows = conn.execute(
-            "SELECT p.barcode, p.name, p.price, p.critical_stock_level, COALESCE(l.quantity, 0) AS qty "
-            "FROM products p LEFT JOIN stock_levels l ON l.product_barcode = p.barcode "
-            "AND l.location_kind = ? AND l.location_code = ? ORDER BY p.name",
-            (location.kind, location.code),
-        ).fetchall()
-    return [
-        Product(barcode=r["barcode"], name=r["name"], price=r["price"], stock_quantity=r["qty"],
-                critical_stock_level=r["critical_stock_level"])
-        for r in rows
-    ]
+        rows = conn.execute(sql + "ORDER BY p.name", (location.kind, location.code)).fetchall()
+    return [_product_here(r) for r in rows]
 
 
-def product_at(location: StockLocation, barcode: str) -> Product:
-    """One product with its local quantity. Raises ProductNotFoundError."""
+def product_at(location: StockLocation, barcode: str, active_only: bool = False) -> Product:
+    """One product (barcode in any letter case) with its local quantity.
+    Raises ProductNotFoundError; with `active_only` a deactivated product
+    raises ProductInactiveError - the POS sale lookup."""
+    text = str(barcode).strip()
     with connection_scope() as conn:
         row = conn.execute(
-            "SELECT p.barcode, p.name, p.price, p.critical_stock_level, COALESCE(l.quantity, 0) AS qty "
-            "FROM products p LEFT JOIN stock_levels l ON l.product_barcode = p.barcode "
-            "AND l.location_kind = ? AND l.location_code = ? WHERE p.barcode = ?",
-            (location.kind, location.code, barcode),
+            _PRODUCT_AT_SQL + "WHERE p.barcode = ? COLLATE NOCASE ORDER BY p.barcode = ? DESC",
+            (location.kind, location.code, text, text),
         ).fetchone()
     if row is None:
         raise ProductNotFoundError(barcode)
-    return Product(barcode=row["barcode"], name=row["name"], price=row["price"], stock_quantity=row["qty"],
-                   critical_stock_level=row["critical_stock_level"])
+    if active_only and not row["is_active"]:
+        raise ProductInactiveError(row["barcode"])
+    return _product_here(row)
 
 
 def critical_at(location: StockLocation) -> list[Product]:
-    """products_at(location) filtered to those at/below their critical level."""
-    return [p for p in products_at(location) if p.is_below_critical_stock]
+    """Products at/below their reorder level AT `location` - only active
+    products this location actually has a stock level row for (it has
+    stocked them before). A shop that never carried a product is not
+    alerted about it, and a product with no reorder level set (0) is never
+    listed. The network-wide equivalent is
+    product_repository.get_critical_stock_list()."""
+    return [p for p in products_at(location) if p.is_active and p.stocked_here and p.is_below_critical_stock]
 
 
 def levels_for_product(barcode: str) -> list[StockLevel]:

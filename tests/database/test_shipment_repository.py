@@ -12,6 +12,8 @@ from database import stock_repository as stock, warehouse_repository
 from database.exceptions import (
     DealershipNotFoundError,
     InsufficientStockError,
+    LocationInUseError,
+    ShipmentNotDispatchedError,
     UnknownLocationError,
     ProductNotFoundError,
     ShipmentNotFoundError,
@@ -21,7 +23,7 @@ from shared.formatting import parse_db_timestamp
 from shared.models import UNASSIGNED, Dealership, Product, StockLocation, Warehouse
 from tests.stock_invariant import assert_totals_consistent
 
-ETA = datetime(2026, 9, 26, 15, 0, tzinfo=timezone.utc)
+ETA = datetime.now(timezone.utc).replace(microsecond=0) + timedelta(days=2)  # always in the future
 
 
 @pytest.fixture(autouse=True)
@@ -171,50 +173,60 @@ def test_receipt_in_full_puts_everything_on_the_dealership_shelf(world):
     assert_totals_consistent()
 
 
-def test_shortfall_and_surplus_adjust_company_stock(world):
+def test_shortfall_is_written_off_and_moves_the_company_total(world):
     shipment = _new()
     ships.dispatch(shipment.id)
 
-    received = ships.complete_receipt(shipment.id, {"BOX-2218": 20, "PLT-4410": 7}, note="4 cartons crushed")
+    received = ships.complete_receipt(shipment.id, {"BOX-2218": 20, "PLT-4410": 6}, note="4 cartons crushed")
 
     assert received.receipt_note == "4 cartons crushed"
-    assert [(l.product_barcode, l.discrepancy) for l in received.discrepancies] == [("BOX-2218", -4), ("PLT-4410", 1)]
+    assert [(l.product_barcode, l.discrepancy) for l in received.discrepancies] == [("BOX-2218", -4)]
     assert stock.quantity_at(SHELF, "BOX-2218") == 20
-    assert stock.quantity_at(SHELF, "PLT-4410") == 7
+    assert stock.quantity_at(SHELF, "PLT-4410") == 6
     assert product_repository.get_by_barcode("BOX-2218").stock_quantity == 296
-    assert product_repository.get_by_barcode("PLT-4410").stock_quantity == 51
+    assert product_repository.get_by_barcode("PLT-4410").stock_quantity == 50
     notes = {m["note"] for m in stock.list_movements(location=SHELF) if m["reason"] == "discrepancy"}
     assert any("Short 4" in n for n in notes)
-    assert any("Over by 1" in n for n in notes)
     assert_totals_consistent()
 
 
-def test_receiving_a_never_dispatched_shipment_takes_it_off_the_origin(world):
+def test_cannot_receive_more_than_was_shipped(world):
+    shipment = _new()
+    ships.dispatch(shipment.id)
+
+    with pytest.raises(ValueError, match="only 24"):
+        ships.complete_receipt(shipment.id, {"BOX-2218": 25})
+
+    assert ships.get(shipment.id).status == "in_transit"  # nothing written
+    assert stock.quantity_at(SHELF, "BOX-2218") == 0
+    assert product_repository.get_by_barcode("BOX-2218").stock_quantity == 300
+    assert_totals_consistent()
+
+
+def test_receiving_a_never_dispatched_shipment_is_refused_and_creates_no_stock(world):
     shipment = _new()  # depot forgot to press Dispatch
-    received = ships.complete_receipt(shipment.id, {})
-    assert received.departed_at is not None
-    assert stock.quantity_at(WH, "BOX-2218") == 276
-    assert stock.quantity_at(SHELF, "BOX-2218") == 24
+
+    with pytest.raises(ShipmentNotDispatchedError):
+        ships.complete_receipt(shipment.id, {})
+
+    assert ships.get(shipment.id).status == "scheduled"
+    assert stock.quantity_at(WH, "BOX-2218") == 300
+    assert stock.quantity_at(SHELF, "BOX-2218") == 0
+    assert product_repository.get_by_barcode("BOX-2218").stock_quantity == 300
     assert_totals_consistent()
 
 
-def test_never_dispatched_receipt_when_origin_records_are_short(world):
-    product_repository.create(Product("LBL-0091", "Labels", 450, 2, 10))
-    stock.place_all_unassigned(WH)  # only 2 on record at WH-01
-    shipment = _new(lines=[("LBL-0091", 6)])
-
-    ships.complete_receipt(shipment.id, {})  # 6 arrived anyway
-
-    assert stock.quantity_at(WH, "LBL-0091") == 0
-    assert stock.quantity_at(SHELF, "LBL-0091") == 6
-    assert product_repository.get_by_barcode("LBL-0091").stock_quantity == 6  # 4 more than was on record
-    [extra] = [m for m in stock.list_movements(location=SHELF) if m["reason"] == "discrepancy"]
-    assert extra["quantity"] == 4 and "had only 2 of 6" in extra["note"]
-    assert_totals_consistent()
+def test_received_quantities_must_be_whole_numbers(world):
+    shipment = _new()
+    ships.dispatch(shipment.id)
+    with pytest.raises(ValueError):
+        ships.complete_receipt(shipment.id, {"BOX-2218": 2.7})
+    assert ships.get(shipment.id).status == "in_transit"
 
 
 def test_a_shipment_can_only_be_received_once(world):
     shipment = _new()
+    ships.dispatch(shipment.id)
     ships.complete_receipt(shipment.id, {"BOX-2218": 20})
 
     with pytest.raises(ShipmentStateError):
@@ -225,11 +237,12 @@ def test_a_shipment_can_only_be_received_once(world):
 
 def test_receipt_rejects_unknown_products_and_negatives(world):
     shipment = _new()
+    ships.dispatch(shipment.id)
     with pytest.raises(ValueError):
         ships.complete_receipt(shipment.id, {"ZZZ": 1})
     with pytest.raises(ValueError):
         ships.complete_receipt(shipment.id, {"BOX-2218": -1})
-    assert ships.get(shipment.id).status == "scheduled"
+    assert ships.get(shipment.id).status == "in_transit"
 
 
 def test_list_filters_and_incoming_count(world):
@@ -237,6 +250,7 @@ def test_list_filters_and_incoming_count(world):
     a = _new(eta=ETA + timedelta(hours=1))
     b = _new(dealership_code="002", eta=ETA)
     c = _new(origin="WH-02")  # (site text only; stock still from WH-01)
+    ships.dispatch(c.id)
     ships.complete_receipt(c.id, {})
 
     assert [s.id for s in ships.list_shipments()] == [b.id, c.id, a.id]  # soonest ETA first
@@ -256,5 +270,106 @@ def test_missing_shipment():
 
 def test_deleting_the_dealership_keeps_shipment_history(world):
     shipment = _new()
+    ships.cancel(shipment.id)
     dealership_repository.delete("001")
     assert ships.get(shipment.id).dealership_name == "Harbor Point"
+
+
+# --- validation ---------------------------------------------------------------
+
+@pytest.mark.parametrize("bad", [2.7, 0.5, float("nan"), "3.5", True, -1, 0])
+def test_create_rejects_non_whole_or_non_positive_quantities(world, bad):
+    with pytest.raises(ValueError):
+        _new(lines=[("BOX-2218", bad)])
+    assert ships.list_shipments() == []
+
+
+def test_create_accepts_whole_valued_floats_and_digit_strings(world):
+    shipment = _new(lines=[("BOX-2218", 3.0), ("PLT-4410", "4")])
+    assert [l.expected_qty for l in shipment.lines] == [3, 4]
+
+
+def test_create_rejects_an_eta_in_the_past_or_before_departure(world):
+    with pytest.raises(ValueError, match="before now"):
+        _new(eta=datetime.now(timezone.utc) - timedelta(hours=1))
+    with pytest.raises(ValueError, match="departure"):
+        _new(eta=ETA, departure=ETA + timedelta(hours=1))
+    assert _new(eta=ETA, departure=ETA - timedelta(hours=1)).status == "scheduled"
+    assert len(ships.list_shipments()) == 1
+
+
+def test_update_eta_cannot_precede_the_departure_or_the_planning(world):
+    shipment = _new()
+    with pytest.raises(ValueError):
+        ships.update_eta(shipment.id, datetime.now(timezone.utc) - timedelta(days=1))  # before it was planned
+    dispatched = ships.dispatch(shipment.id)
+    departed = parse_db_timestamp(dispatched.departed_at)
+    with pytest.raises(ValueError, match="departure"):
+        ships.update_eta(shipment.id, departed - timedelta(hours=2))
+    assert ships.update_eta(shipment.id, departed + timedelta(hours=1)).status == "in_transit"
+
+
+def test_create_refuses_a_deactivated_product(world):
+    from database.exceptions import ProductInactiveError
+
+    product_repository.set_active("BOX-2218", False)
+    with pytest.raises(ProductInactiveError):
+        _new()
+    assert ships.list_shipments() == []
+
+
+# --- locations -----------------------------------------------------------------
+
+def test_cancel_and_receipt_refuse_a_vanished_location(world):
+    """A location deleted behind a shipment's back (a raw delete here, since
+    the repositories refuse it) must make cancel/receipt fail, never write
+    stock to a place that no longer exists."""
+    cancel_me, receive_me = _new(), _new()
+    ships.dispatch(cancel_me.id)
+    ships.dispatch(receive_me.id)
+    with connection.connection_scope() as conn:
+        conn.execute("DELETE FROM warehouses WHERE code = 'WH-01'")
+        conn.execute("DELETE FROM dealerships WHERE code = '001'")
+    with pytest.raises(UnknownLocationError):
+        ships.cancel(cancel_me.id)
+    with pytest.raises(UnknownLocationError):
+        ships.complete_receipt(receive_me.id, {})
+    assert ships.get(cancel_me.id).status == "in_transit"
+    assert_totals_consistent()
+
+
+def _empty_the_warehouse():
+    for barcode in ("BOX-2218", "PLT-4410"):
+        left = stock.quantity_at(WH, barcode)
+        if left:
+            stock.transfer(WH, UNASSIGNED, barcode, left)
+
+
+def test_a_warehouse_or_dealership_with_open_shipments_cannot_be_deleted(world):
+    shipment = _new()
+    _empty_the_warehouse()  # isolates the shipment rule from the has-stock rule
+
+    with pytest.raises(LocationInUseError, match="Deactivate"):
+        warehouse_repository.delete("WH-01")
+    with pytest.raises(LocationInUseError, match="Deactivate"):
+        dealership_repository.delete("001")
+    assert warehouse_repository.get_by_code("WH-01") and dealership_repository.get_by_code("001")
+
+    ships.cancel(shipment.id)  # no longer open: both can go
+    warehouse_repository.delete("WH-01")
+    dealership_repository.delete("001")
+    assert ships.get(shipment.id).dealership_name == "Harbor Point"  # history stays
+
+
+def test_in_transit_shipments_also_block_the_delete(world):
+    shipment = _new(lines=[("BOX-2218", 300)])
+    ships.dispatch(shipment.id)  # BOX is off the shelf; PLT is still there
+    stock.transfer(WH, UNASSIGNED, "PLT-4410", 50)
+
+    with pytest.raises(LocationInUseError):
+        warehouse_repository.delete("WH-01")
+    with pytest.raises(LocationInUseError):
+        dealership_repository.delete("001")
+
+    ships.complete_receipt(shipment.id, {})  # delivered: the warehouse is free to go
+    warehouse_repository.delete("WH-01")

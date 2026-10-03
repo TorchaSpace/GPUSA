@@ -41,12 +41,12 @@ from admin_app.gui.components.route_tracker import GOLD, STATUS_COLORS, WARN, Ro
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard
 from admin_app.gui.components.styled_table import cell, styled_table
-from shared.i18n import tr
+from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import shipment_repository
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import duration_text, eta_text, lateness, live_status, summarize
-from shared.formatting import local_datetime_text, parse_db_timestamp
+from shared.formatting import format_int, local_datetime_text, parse_db_timestamp
 from shared.gui_kit.polling import PollingTimer
 from shared.models import Shipment
 
@@ -86,12 +86,9 @@ class DistributionPage(AdminPage):
 
         self.body_layout().addWidget(self._build_kpis())
 
-        self._routes_section = Section("Route tracker", "Active routes, warehouse to dealership")
+        self._routes_section = Section(tr("admin.distribution.route_kicker"), tr("admin.distribution.route_heading"))
         p = CLASSICAL_PALETTE
-        legend = QLabel(
-            f"<span style='color:{GOLD}'>━</span> In transit &nbsp; <span style='color:#eae7e7'>━</span> Arriving "
-            f"&nbsp; <span style='color:{WARN}'>━</span> Delayed &nbsp; <span style='color:{p['border']}'>┅</span> Remaining"
-        )
+        legend = QLabel(tr("admin.distribution.legend").format(gold=GOLD, warn=WARN, border=p["border"]))
         legend.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         self._routes_section.add_header_control(legend)
         self._tracker = RouteTracker()
@@ -126,11 +123,11 @@ class DistributionPage(AdminPage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        self._transit_card = StatCard("In transit", "—")
+        self._transit_card = StatCard(tr("admin.distribution.kpi_transit"), "—")
         self._transit_note = QLabel()
         self._transit_card.footer_layout().addWidget(self._transit_note)
 
-        self._today_card = StatCard("Deliveries today", "—")
+        self._today_card = StatCard(tr("admin.distribution.kpi_today"), "—")
         self._today_bar = QProgressBar()
         self._today_bar.setTextVisible(False)
         self._today_bar.setFixedHeight(4)
@@ -141,7 +138,7 @@ class DistributionPage(AdminPage):
         self._today_note = QLabel()
         self._today_card.footer_layout().addWidget(self._today_note)
 
-        self._delayed_card = StatCard("Delayed shipments", "—")
+        self._delayed_card = StatCard(tr("admin.distribution.kpi_delayed"), "—")
         self._delayed_note = QLabel()
         self._delayed_card.footer_layout().addWidget(self._delayed_note)
 
@@ -158,18 +155,19 @@ class DistributionPage(AdminPage):
 
     def _build_ledger(self) -> Section:
         p = CLASSICAL_PALETTE
-        section = Section("Live", "Live Transit Ledger")
+        section = Section(tr("admin.distribution.live_kicker"), tr("admin.distribution.live_heading"))
         self._filter_group = QButtonGroup(self)
         self._filter_buttons: dict[str, _Segment] = {}
         for name in _FILTERS:
-            button = _Segment(name)
+            button = _Segment(enum_label("ship_filter", name))
             button.clicked.connect(lambda _c=False, n=name: self.set_filter(n))
             self._filter_group.addButton(button)
             self._filter_buttons[name] = button
             section.add_header_control(button)
         self._filter_buttons["All"].setChecked(True)
 
-        self._table = styled_table(["Tracking ID", "Origin (warehouse)", "Destination (dealership)", "Carrier", "Items", "Status", "ETA"])
+        self._table = styled_table([tr(f"admin.distribution.col_{key}") for key in (
+            "tracking", "origin_wh", "dest_dealer", "carrier", "items", "status", "eta")])
         header = self._table.horizontalHeader()
         header.setStretchLastSection(False)
         for column in range(7):
@@ -183,7 +181,7 @@ class DistributionPage(AdminPage):
         row = QHBoxLayout(footer)
         row.setContentsMargins(16, 8, 16, 10)
         self._ledger_count = QLabel()
-        honest = QLabel("Progress and ETAs come from each shipment's schedule - there's no live carrier tracking.")
+        honest = QLabel(tr("admin.distribution.honest"))
         for label in (self._ledger_count, honest):
             label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         row.addWidget(self._ledger_count)
@@ -193,8 +191,9 @@ class DistributionPage(AdminPage):
         return section
 
     def _build_delivered(self) -> Section:
-        section = Section("Delivered · last 7 days", "Receipts & discrepancies")
-        self._delivered_table = styled_table(["Tracking ID", "Destination", "Delivered", "Items", "Late", "Discrepancies"])
+        section = Section(tr("admin.distribution.delivered_kicker"), tr("admin.distribution.delivered_heading"))
+        self._delivered_table = styled_table([tr(f"admin.distribution.col_{key}") for key in (
+            "tracking", "destination", "delivered", "items", "late", "discrepancies")])
         header = self._delivered_table.horizontalHeader()
         header.setStretchLastSection(False)
         for column in range(6):
@@ -224,24 +223,30 @@ class DistributionPage(AdminPage):
         self._active = [s for s in shipments if s.is_active]
 
         summary = summarize(shipments, now)
-        self._transit_card.set_value(f"{summary.in_transit_items:,}")
+        self._transit_card.set_value(format_int(summary.in_transit_items))
         origins = len(summary.origins)
         self._transit_note.setText(
-            f"items · {summary.in_transit_shipments} shipment{'s' if summary.in_transit_shipments != 1 else ''} on the road"
-            f" · {origins} origin{'s' if origins != 1 else ''}"
+            tr("admin.distribution.transit_note").format(
+                shipments=plural("admin.distribution.shipments", summary.in_transit_shipments),
+                origins=plural("admin.distribution.origins", origins),
+            )
         )
         self._today_card.set_value(str(summary.delivered_today))
         self._today_bar.setMaximum(max(summary.due_today, 1))
         self._today_bar.setValue(summary.delivered_today)
-        self._today_note.setText(f"of {summary.due_today} due today completed")
+        self._today_note.setText(tr("admin.distribution.today_note").format(n=summary.due_today))
         self._delayed_card.set_value(str(len(summary.delayed)))
         if summary.delayed:
             carriers = Counter(s.carrier for s in summary.delayed)
             carrier_text = " · ".join(f"{name} {count}" if count > 1 else name for name, count in carriers.most_common(3))
-            self._delayed_note.setText(f"avg. {duration_text(summary.average_delay).lstrip('+')} late · {carrier_text}")
+            self._delayed_note.setText(
+                tr("admin.distribution.delayed_note").format(
+                    delay=duration_text(summary.average_delay).lstrip("+"), carriers=carrier_text
+                )
+            )
             self._delayed_note.setStyleSheet(f"font-size: 12px; color: {WARN};")
         else:
-            self._delayed_note.setText("Everything on schedule")
+            self._delayed_note.setText(tr("admin.distribution.on_schedule"))
             self._delayed_note.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
 
         if self._selected_id not in {s.id for s in self._active}:
@@ -265,7 +270,7 @@ class DistributionPage(AdminPage):
 
     def _render_routes(self) -> None:
         now_local = self.now().astimezone()
-        self._tracker.set_routes(self._active, self._selected_id, f"Now · {now_local.strftime('%H:%M')}")
+        self._tracker.set_routes(self._active, self._selected_id, tr("admin.distribution.now_at").format(time=now_local.strftime("%H:%M")))
 
     def _render_table(self) -> None:
         now = self.now()
@@ -283,14 +288,15 @@ class DistributionPage(AdminPage):
                 cell(f"{shipment.dealership_name} · {shipment.dealership_code}"),
                 cell(shipment.carrier),
                 cell(str(shipment.item_count), right=True),
-                cell(f"● {status}", color=STATUS_COLORS.get(status, GOLD)),
+                cell(f"● {enum_label('ship_status', status)}", color=STATUS_COLORS.get(status, GOLD)),
                 cell(eta, right=True, color=WARN if status == "Delayed" else None),
             ]
             for column, item in enumerate(values):
                 self._table.setItem(index, column, item)
         self._table.blockSignals(False)
-        noun = "shipment" if len(rows) == 1 else "shipments"
-        self._ledger_count.setText(f"{len(rows)} {noun} · select a row to trace its route")
+        self._ledger_count.setText(
+            tr("admin.distribution.ledger_count").format(n=plural("admin.distribution.shipments", len(rows)))
+        )
         self._sync_table_selection()
 
     def _sync_table_selection(self) -> None:
@@ -326,10 +332,12 @@ class DistributionPage(AdminPage):
                 cell(shipment.number, color=GOLD),
                 cell(f"{shipment.dealership_name} · {shipment.dealership_code}"),
                 cell(local_datetime_text(shipment.delivered_at)),
-                cell(str(shipment.item_count), right=True),
-                cell(duration_text(late) if late.total_seconds() >= 60 else "on time",
+                # what actually arrived (a shortfall is written off), not what was shipped
+                cell(str(sum(l.expected_qty if l.received_qty is None else l.received_qty for l in shipment.lines)),
+                     right=True),
+                cell(duration_text(late) if late.total_seconds() >= 60 else tr("admin.distribution.on_time"),
                      color=WARN if late.total_seconds() >= 900 else None),
-                cell(issues or "none", color=WARN if shipment.discrepancies else CLASSICAL_PALETTE["text_secondary"]),
+                cell(issues or tr("admin.distribution.none"), color=WARN if shipment.discrepancies else CLASSICAL_PALETTE["text_secondary"]),
             ]
             for column, item in enumerate(values):
                 self._delivered_table.setItem(index, column, item)

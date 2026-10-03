@@ -107,3 +107,9 @@ TR = {
     "common.cancel": "\u0130ptal",
     "common.total": "Toplam",
 }
+
+# Admin-panel and sign-in strings live in their own module to keep this one
+# readable; they are part of the same table.
+from shared.i18n_admin_tr import TR_ADMIN  # noqa: E402
+
+TR.update(TR_ADMIN)

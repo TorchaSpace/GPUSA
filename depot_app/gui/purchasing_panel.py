@@ -38,6 +38,8 @@ Differences from the mockup, deliberately:
 
 from __future__ import annotations
 
+import html
+
 from PySide6.QtCore import QPointF, QRectF, Qt
 from PySide6.QtGui import QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
@@ -55,16 +57,18 @@ from PySide6.QtWidgets import (
 
 import depot_app.gui.icons as icons
 from database import product_repository, purchase_order_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
-from shared.formatting import format_amount, local_time_text, parse_amount
+from shared.formatting import format_amount, local_datetime_text, local_time_text, parse_amount, round_money
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
 from shared.models import PriceRange, Product, PurchaseOrder, hold_reason_for
 from shared import current_session
 
+MAX_QUANTITY = purchase_order_repository.MAX_QUANTITY  # same cap the repository enforces
+_MAX_QUANTITY_DIGITS = len(str(MAX_QUANTITY))
 STATUS_POLL_INTERVAL_MS = 5000
 _TABLE_LIMIT = 20
 
@@ -73,6 +77,38 @@ _STATUS_TEXT = {
     "sent": "Sent",
     "rejected": "Rejected",
 }
+
+
+def _order_total(price: float, quantity: int) -> float:
+    """price x quantity, half-up to cents - the same arithmetic as
+    PurchaseOrder.total, so the preview equals the stored order."""
+    return PurchaseOrder("", "", "", quantity, price, "", "pending").total
+
+
+def parse_quantity(text: str) -> int | None:
+    """A typed quantity: ASCII digits only (str.isdigit() alone accepts
+    "²" and Arabic-Indic digits that int() then rejects or misreads),
+    bounded length, 1..MAX_QUANTITY. None for anything else."""
+    text = (text or "").strip()
+    if not text or len(text) > _MAX_QUANTITY_DIGITS + 4:  # tolerate leading zeros, not megabyte pastes
+        return None
+    if not (text.isascii() and text.isdigit()):
+        return None
+    value = int(text)
+    return value if 1 <= value <= MAX_QUANTITY else None
+
+
+def decision_tooltip(order: PurchaseOrder) -> str:
+    """Who decided, when, and why - what an admin's note says, kept
+    visible on the order after the banner is gone. "" if undecided."""
+    lines = []
+    if order.decided_at:
+        who = f" by {order.decided_by}" if order.decided_by else ""
+        verb = "Rejected" if order.status == "rejected" else "Approved"
+        lines.append(f"{verb} {local_datetime_text(order.decided_at)}{who}")
+    if order.decision_note:
+        lines.append(f"Note: {order.decision_note}")
+    return "\n".join(lines)
 
 
 def status_text(order: PurchaseOrder) -> str:
@@ -270,6 +306,7 @@ class PurchasingPanel(QWidget):
             caption = QLabel(key.upper())
             caption.setStyleSheet("font-size: 11px; letter-spacing: 1px; color: #b9b9bd;")
             value = QLabel()
+            value.setTextFormat(Qt.PlainText)
             value.setStyleSheet(f"font-weight: 700; font-size: 14px; color: {p['background']};")
             grid.addWidget(caption, 0, column)
             grid.addWidget(value, 1, column)
@@ -277,6 +314,7 @@ class PurchasingPanel(QWidget):
         body.addLayout(grid)
 
         self._awaiting_message = QLabel()
+        self._awaiting_message.setTextFormat(Qt.PlainText)
         self._awaiting_message.setWordWrap(True)
         self._awaiting_message.setStyleSheet(f"font-size: 14px; color: {p['background']};")
         body.addWidget(self._awaiting_message)
@@ -305,6 +343,7 @@ class PurchasingPanel(QWidget):
         self._notice_icon = QLabel()
         row.addWidget(self._notice_icon)
         self._notice_text = QLabel()
+        self._notice_text.setTextFormat(Qt.RichText)  # callers html.escape every value they put in
         self._notice_text.setWordWrap(True)
         row.addWidget(self._notice_text, stretch=1)
         new_order = IndustryButton("New order", variant="ghost")
@@ -451,6 +490,7 @@ class PurchasingPanel(QWidget):
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']}; border: none;"
         )
         self._verdict_body = QLabel()
+        self._verdict_body.setTextFormat(Qt.PlainText)
         self._verdict_body.setWordWrap(True)
         verdict_text.addWidget(self._verdict_title)
         verdict_text.addWidget(self._verdict_body)
@@ -458,6 +498,7 @@ class PurchasingPanel(QWidget):
         right.addWidget(self._verdict_box)
 
         self._error_label = QLabel()
+        self._error_label.setTextFormat(Qt.PlainText)
         self._error_label.setWordWrap(True)
         self._error_label.setStyleSheet(
             f"color: {p['text_primary']}; background-color: #fff6d6; border: 1px solid #f4b400; "
@@ -487,14 +528,17 @@ class PurchasingPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(_kicker(f"Purchase orders · {self._site}"))
-        self._table = QTableWidget(0, 8)
-        self._table.setHorizontalHeaderLabels(["PO", "Time", "Item", "Supplier", "Qty", "Unit", "Total", "Status"])
+        self._table = QTableWidget(0, 9)
+        self._table.setHorizontalHeaderLabels(
+            ["PO", "Time", "Item", "Supplier", "Qty", "Unit", "Total", "Status", "Admin note"]
+        )
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionMode(QTableWidget.NoSelection)
         self._table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
+        self._table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
         self._table.setMinimumHeight(220)
         self._table.setStyleSheet(
             f"""
@@ -513,10 +557,12 @@ class PurchasingPanel(QWidget):
         """Re-read products and bands (the band may have been changed in
         Admin since this dialog opened)."""
         try:
-            self._products = product_repository.list_all()
+            self._products = product_repository.list_active()
             self._ranges = {r.product_barcode: r for r in purchase_order_repository.list_price_ranges()}
-        except DataAccessError:
-            self._products, self._ranges = [], {}
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            # Keep the last good catalog (an empty one would claim "No
+            # products yet") and say the refresh failed.
+            self._show_error(f"Couldn't refresh products and price ranges: {exc}")
 
         current = self._item_input.currentData()
         self._item_input.blockSignals(True)
@@ -549,15 +595,26 @@ class PurchasingPanel(QWidget):
         self._update_preview()
 
     def _typed_quantity(self) -> int | None:
-        text = self._qty_input.text().strip()
-        return int(text) if text.isdigit() else None
+        return parse_quantity(self._qty_input.text())
+
+    def _typed_price(self) -> float | None:
+        """The typed unit price, rounded half-up to cents - exactly what
+        the repository will store and judge against the band. None if it
+        isn't a usable price."""
+        value = parse_amount(self._price_input.text())
+        if value is None:
+            return None
+        try:
+            return round_money(value, "Unit price")
+        except ValueError:
+            return None
 
     def _update_preview(self) -> None:
         price_range = self._selected_range()
-        price = parse_amount(self._price_input.text())
+        price = self._typed_price()
         quantity = self._typed_quantity()
 
-        self._total_label.setText(format_amount((price or 0) * (quantity or 0)))
+        self._total_label.setText(format_amount(_order_total(price or 0, quantity or 0)))
         self._band_min.setText(format_amount(price_range.min_unit_price) if price_range else "—")
         self._band_max.setText(format_amount(price_range.max_unit_price) if price_range else "—")
         self._band_bar.set_state(price_range, price)
@@ -645,18 +702,23 @@ class PurchasingPanel(QWidget):
             return
         quantity = self._typed_quantity()
         if not quantity:
-            self._show_error("Enter a whole-number quantity greater than 0.")
+            self._show_error(f"Enter a whole-number quantity from 1 to {MAX_QUANTITY:,}.")
             return
         price = parse_amount(self._price_input.text())
-        if price is None or price <= 0:
+        if price is None:
             self._show_error("Enter a unit price greater than 0 (e.g. 742,50 or 742.50).")
+            return
+        try:
+            price = round_money(price, "Unit price")
+        except ValueError as exc:
+            self._show_error(str(exc))
             return
         try:
             order = purchase_order_repository.submit(
                 barcode, self._supplier_input.text(), quantity, price, self._site,
                 raised_by=current_session.actor(),
             )
-        except (DataAccessError, ValueError) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:
             self._show_error(str(exc))
             return
         self._last_order = order
@@ -696,16 +758,18 @@ class PurchasingPanel(QWidget):
 
         self._awaiting_banner.hide()
         if order.status == "rejected":
-            note = f" Note: {order.decision_note}" if order.decision_note else ""
+            note = f" Note: {html.escape(order.decision_note)}" if order.decision_note else ""
             self._set_notice(
-                f"<b>{order.number} rejected</b> by an administrator · not sent to {order.supplier.rstrip('.')}.{note}",
+                f"<b>{html.escape(order.number)} rejected</b> by an administrator · "
+                f"not sent to {html.escape(order.supplier.rstrip('.'))}.{note}",
                 positive=False,
             )
         else:
             approved = " (approved by an administrator)" if order.was_approved else ""
             self._set_notice(
-                f"<b>{order.number} sent</b>{approved} · {order.quantity} × {order.product_barcode} at "
-                f"{format_amount(order.unit_price)} to {order.supplier}",
+                f"<b>{html.escape(order.number)} sent</b>{approved} · {order.quantity} × "
+                f"{html.escape(order.product_barcode)} at {format_amount(order.unit_price)} to "
+                f"{html.escape(order.supplier)}",
                 positive=True,
             )
         self._sent_banner.show()
@@ -747,7 +811,9 @@ class PurchasingPanel(QWidget):
                 format_amount(order.unit_price),
                 format_amount(order.total),
                 status_text(order),
+                order.decision_note or "",
             ]
+            tooltip = decision_tooltip(order)
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
                 if column in (4, 5, 6):
@@ -764,4 +830,6 @@ class PurchasingPanel(QWidget):
                         item.setForeground(QColor(p["accent"]))
                     else:
                         item.setForeground(QColor(p["text_secondary"]))
+                if column in (7, 8) and tooltip:
+                    item.setToolTip(tooltip)
                 self._table.setItem(row, column, item)

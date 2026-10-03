@@ -32,7 +32,7 @@ from admin_app.gui.components.store_settings_sections import (
     DataLocationSection, GeneralSection, NotificationsSection,
 )
 from admin_app.gui.components.styled_table import cell, styled_table
-from shared.i18n import tr
+from shared.i18n import LazyLabels, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import account_repository
 from database.exceptions import DATABASE_ERRORS
@@ -40,28 +40,23 @@ from shared import auth, current_session
 from shared.formatting import local_datetime_text
 from shared.models import Account
 
-_WHERE = {
-    "admin": "Admin · depot Console · POS",
-    "depot_manager": "depot Console & Portal",
-    "cashier": "POS tills",
-}
-_EVENT_TEXT = {
-    "sign_in": "Signed in", "sign_out": "Signed out", "failed": "Failed sign-in", "locked": "Locked out",
-    "refused": "Refused", "pin_confirmed": "Portal unlocked", "pin_changed": "PIN changed",
-    "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked", "pin_reset": "PIN reset (recovery)", "recovery_code_created": "Recovery code made",
-    "recovery_failed": "Wrong recovery attempt", "security_question_set": "Security question set",
-}
+_WHERE = LazyLabels("admin.settings.where", ("admin", "depot_manager", "cashier"))
+_EVENT_TEXT = LazyLabels(
+    "admin.settings.event",
+    ("sign_in", "sign_out", "failed", "locked", "refused", "pin_confirmed", "pin_changed", "account_created",
+     "account_changed", "unlocked", "pin_reset", "recovery_code_created", "recovery_failed", "security_question_set"),
+)
 
 
 def account_status(account: Account) -> tuple[str, str]:
     p = CLASSICAL_PALETTE
     if account_repository.is_locked(account):
-        return f"Locked until {local_datetime_text(account.locked_until)}", p["alert_critical"]
+        return tr("admin.settings.locked_until").format(when=local_datetime_text(account.locked_until)), p["alert_critical"]
     if not account.employee_active:
-        return "Employee inactive", p["text_secondary"]
+        return tr("admin.settings.employee_inactive"), p["text_secondary"]
     if not account.is_active:
-        return "Switched off", p["text_secondary"]
-    return "Active", p["alert_success"]
+        return tr("admin.settings.switched_off"), p["text_secondary"]
+    return tr("admin.settings.active"), p["alert_success"]
 
 
 class SettingsPage(AdminPage):
@@ -86,11 +81,11 @@ class SettingsPage(AdminPage):
         self.body_layout().addWidget(self._data_location)
 
         # My account
-        self._me = Section("My account", "Signed in")
+        self._me = Section(tr("admin.settings.me_kicker"), tr("admin.settings.me_heading"))
         self._me_label = QLabel()
         self._me_label.setStyleSheet(f"font-size: 13px; color: {p['text_primary']}; padding: 12px 16px;")
         self._me.body_layout().addWidget(self._me_label)
-        change_pin = CompactButton("Change my PIN")
+        change_pin = CompactButton(tr("admin.settings.change_pin"))
         change_pin.clicked.connect(self.change_my_pin)
         self._me.add_header_control(change_pin)
         question_button = CompactButton(tr("settings.security_question"))
@@ -102,27 +97,29 @@ class SettingsPage(AdminPage):
         self.body_layout().addWidget(self._me)
 
         # Accounts
-        self._access = Section("Accounts & access", "Who can sign in")
+        self._access = Section(tr("admin.settings.access_kicker"), tr("admin.settings.access_heading"))
         self._buttons = {}
         for key, label, handler in (
-            ("add", "Add account", self.add_account), ("pin", "Reset PIN", self.reset_pin),
-            ("role", "Change role", self.change_role), ("active", "Switch off", self.toggle_active),
-            ("unlock", "Unlock", self.unlock), ("remove", "Remove", self.remove),
+            ("add", tr("admin.settings.add_account"), self.add_account),
+            ("pin", tr("admin.settings.reset_pin"), self.reset_pin),
+            ("role", tr("admin.settings.change_role"), self.change_role),
+            ("active", tr("admin.settings.switch_off"), self.toggle_active),
+            ("unlock", tr("admin.settings.unlock"), self.unlock),
+            ("remove", tr("admin.settings.remove"), self.remove),
         ):
             button = CompactButton(label)
             button.clicked.connect(handler)
             self._access.add_header_control(button)
             self._buttons[key] = button
         note = QLabel(
-            "An account is an employee from Workforce with a role and a PIN. Administrators sign in to Admin "
-            "(and can open the depot Console and a till); depot managers open the depot's Manager Console; "
-            f"cashiers sign in at a till. {auth.MAX_FAILED_ATTEMPTS} wrong PINs in a row lock an account for "
-            f"{auth.LOCK_MINUTES} minutes."
+            tr("admin.settings.access_note").format(tries=auth.MAX_FAILED_ATTEMPTS, minutes=auth.LOCK_MINUTES)
         )
         note.setWordWrap(True)
         note.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']}; padding: 10px 16px 0 16px;")
         self._access.body_layout().addWidget(note)
-        self._table = styled_table(["Badge", "Name", "Role", "Signs in at", "Status", "Last sign-in"])
+        self._table = styled_table(
+            [tr(f"admin.settings.col_{key}") for key in ("badge", "name", "role", "signs_in", "status", "last")]
+        )
         self._table.setMinimumHeight(240)
         self._table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
@@ -131,8 +128,10 @@ class SettingsPage(AdminPage):
         self.body_layout().addWidget(self._access)
 
         # Activity
-        self._activity = Section("Sign-in activity", "Latest events")
-        self._events = styled_table(["Time", "Badge", "Name", "Event", "Where", "Detail"])
+        self._activity = Section(tr("admin.settings.activity_kicker"), tr("admin.settings.activity_heading"))
+        self._events = styled_table(
+            [tr(f"admin.settings.ev_{key}") for key in ("time", "badge", "name", "event", "where", "detail")]
+        )
         self._events.setMinimumHeight(260)
         self._events.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         self._events.horizontalHeader().setSectionResizeMode(5, QHeaderView.Stretch)
@@ -144,9 +143,13 @@ class SettingsPage(AdminPage):
     def showEvent(self, event) -> None:
         super().showEvent(event)
         # Only when the page is (re)opened: reload() also runs after every
-        # account action and must not wipe a half-typed store name.
-        self._general.reload()
-        self._notifications.reload()
+        # account action and must not wipe a half-typed store name - and
+        # neither must coming back to the page: a section with unsaved
+        # edits keeps them.
+        if not self._general.is_dirty():
+            self._general.reload()
+        if not self._notifications.is_dirty():
+            self._notifications.reload()
         self._data_location.reload()
         self.reload()
 
@@ -155,8 +158,10 @@ class SettingsPage(AdminPage):
     def reload(self) -> None:
         session = current_session.get()
         self._me_label.setText(
-            f"{session.name} · {session.badge_id} · {session.role_label} · signed in at "
-            f"{local_datetime_text(session.signed_in_at)} on {session.terminal}" if session else "Not signed in."
+            tr("admin.settings.me_line").format(
+                name=session.name, badge=session.badge_id, role=session.role_label,
+                when=local_datetime_text(session.signed_in_at), terminal=session.terminal,
+            ) if session else tr("admin.settings.not_signed_in")
         )
         selected = self.selected()
         try:
@@ -171,7 +176,7 @@ class SettingsPage(AdminPage):
             for c, item in enumerate([
                 cell(account.badge_id), cell(account.name), cell(auth.role_label(account.role)),
                 cell(_WHERE.get(account.role, "")), cell(status, color=color),
-                cell(local_datetime_text(account.last_sign_in_at) if account.last_sign_in_at else "never"),
+                cell(local_datetime_text(account.last_sign_in_at) if account.last_sign_in_at else tr("admin.settings.never")),
             ]):
                 table.setItem(r, c, item)
         if selected is not None:
@@ -180,7 +185,7 @@ class SettingsPage(AdminPage):
 
         self._events.setRowCount(len(events))
         for r, event in enumerate(events):
-            where = " · ".join(part for part in (auth.AREA_LABELS.get(event["area"] or "", ""), event["terminal"] or "") if part)
+            where = " · ".join(part for part in (auth.AREA_NAMES.get(event["area"] or "", ""), event["terminal"] or "") if part)
             for c, value in enumerate([
                 local_datetime_text(event["created_at"]), event["badge_id"] or "—", event["name"] or "—",
                 _EVENT_TEXT.get(event["event"], event["event"]), where or "—", event["detail"] or "",
@@ -200,19 +205,40 @@ class SettingsPage(AdminPage):
                 self._table.selectRow(r)
                 return
 
+    @staticmethod
+    def _is_me(account: Account | None) -> bool:
+        session = current_session.get()
+        return account is not None and session is not None and (
+            auth.normalize_badge_id(account.badge_id) == auth.normalize_badge_id(session.badge_id))
+
+    def _refuse_self(self, account: Account | None) -> bool:
+        """True (after telling the person) if `account` is the signed-in
+        administrator: switching off, demoting or removing yourself is
+        left to another administrator."""
+        if not self._is_me(account):
+            return False
+        QMessageBox.information(self, tr("admin.settings.self_title"), tr("admin.settings.self_blocked"))
+        return True
+
     def _sync_buttons(self) -> None:
         account = self.selected()
         for key in ("pin", "role", "active", "unlock", "remove"):
             self._buttons[key].setEnabled(account is not None)
+        for key in ("role", "active", "remove"):
+            mine = self._is_me(account)
+            self._buttons[key].setEnabled(account is not None and not mine)
+            self._buttons[key].setToolTip(tr("admin.settings.self_blocked") if mine else "")
         if account is not None:
-            self._buttons["active"].setText("Switch on" if not account.is_active else "Switch off")
+            self._buttons["active"].setText(
+                tr("admin.settings.switch_on") if not account.is_active else tr("admin.settings.switch_off")
+            )
             self._buttons["unlock"].setEnabled(account_repository.is_locked(account) or account.failed_attempts > 0)
 
     def _run(self, fn, done: str | None = None) -> bool:
         try:
             fn()
         except (*DATABASE_ERRORS, ValueError) as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+            QMessageBox.warning(self, tr("admin.settings.save_failed"), str(exc))
             return False
         self.reload()
         return True
@@ -223,7 +249,7 @@ class SettingsPage(AdminPage):
         try:
             employees = account_repository.employees_without_account()
         except DATABASE_ERRORS as exc:
-            QMessageBox.warning(self, "Couldn't load employees", str(exc))
+            QMessageBox.warning(self, tr("admin.settings.load_employees_failed"), str(exc))
             return
         popup = AddAccountPopup(employees, self)
         if popup.exec():
@@ -241,23 +267,34 @@ class SettingsPage(AdminPage):
 
     def change_role(self) -> None:
         account = self.selected()
-        if account is None:
+        if account is None or self._refuse_self(account):
             return
         labels = [auth.role_label(role) for role in auth.ROLES]
-        label, ok = QInputDialog.getItem(self, "Change role", f"Role for {account.name}:", labels,
+        label, ok = QInputDialog.getItem(self, tr("admin.settings.change_role_title"),
+                                         tr("admin.settings.role_for").format(name=account.name), labels,
                                          auth.ROLES.index(account.role), False)
         if not ok:
             return
         role = auth.ROLES[labels.index(label)]
-        if role == "admin" and account.role != "admin":
-            QMessageBox.information(self, "Administrator PIN",
-                                    f"Administrators need a PIN of at least {auth.MIN_ADMIN_PIN_LENGTH} digits - "
-                                    "reset this person's PIN next if theirs is shorter.")
-        self._run(lambda: account_repository.set_role(account.badge_id, role, by=current_session.actor()))
+        if role == account.role:
+            return
+        new_pin = None
+        if role == "admin":
+            # Promoting to administrator comes with a new, longer PIN in the
+            # same step - the old till PIN must not become an admin key.
+            QMessageBox.information(
+                self, tr("admin.settings.promote_title"),
+                tr("admin.settings.promote_info").format(name=account.name, n=auth.MIN_ADMIN_PIN_LENGTH))
+            popup = PinPopup(account.name, "admin", ask_current=False, parent=self)
+            if not popup.exec():
+                return
+            new_pin = popup.pin.text()
+        self._run(lambda: account_repository.set_role(account.badge_id, role, by=current_session.actor(),
+                                                      new_pin=new_pin))
 
     def toggle_active(self) -> None:
         account = self.selected()
-        if account is not None:
+        if account is not None and not (account.is_active and self._refuse_self(account)):
             self._run(lambda: account_repository.set_active(account.badge_id, not account.is_active,
                                                             by=current_session.actor()))
 
@@ -268,10 +305,10 @@ class SettingsPage(AdminPage):
 
     def remove(self) -> None:
         account = self.selected()
-        if account is None:
+        if account is None or self._refuse_self(account):
             return
-        if QMessageBox.question(self, "Remove account?",
-                                f"Remove {account.name}'s sign-in account? They stay in Workforce.") != QMessageBox.Yes:
+        if QMessageBox.question(self, tr("admin.settings.remove_title"),
+                                tr("admin.settings.remove_confirm").format(name=account.name)) != QMessageBox.Yes:
             return
         self._run(lambda: account_repository.delete(account.badge_id, by=current_session.actor()))
 
@@ -303,7 +340,7 @@ class SettingsPage(AdminPage):
         session = current_session.get()
         if session is None:
             return
-        popup = PinPopup("you", session.role, ask_current=True, parent=self)
+        popup = PinPopup(tr("admin.settings.you"), session.role, ask_current=True, parent=self)
         if popup.exec():
             if self._run(lambda: account_repository.change_own_pin(session, popup.current.text(), popup.pin.text())):
-                QMessageBox.information(self, "PIN changed", "Your new PIN works from your next sign-in.")
+                QMessageBox.information(self, tr("admin.settings.pin_changed_title"), tr("admin.settings.pin_changed_body"))

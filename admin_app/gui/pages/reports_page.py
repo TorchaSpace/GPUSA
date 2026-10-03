@@ -54,15 +54,15 @@ from admin_app.gui.components.charts import DonutChart, RevenueChart, Sparkline
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
-from shared.i18n import tr
+from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics
-from shared.formatting import format_amount
+from shared.formatting import day_month_text, format_amount, format_number
 
 _SEGMENT_COLORS = [CLASSICAL_PALETTE["accent"], "#9b9797", "#d7d3d3", "#605d5d", "#7d7979", "#b0acac"]
-_MODES = (("cumulative", "Cumulative"), ("daily", "Daily"))
+_MODES = ("cumulative", "daily")
 
 
 class ReportsPage(AdminPage):
@@ -73,6 +73,8 @@ class ReportsPage(AdminPage):
         self._mode = "cumulative"
         self._view: analytics.ReportView | None = None
         self._document = None  # the ReportDocument the export buttons render
+        self._period: analytics.Period | None = None  # the window captured by the last reload()
+        self._transactions, self._previous, self._week, self._dealerships = [], [], [], []
         p = CLASSICAL_PALETTE
 
         self.body_layout().addWidget(self._build_toolbar())
@@ -103,7 +105,7 @@ class ReportsPage(AdminPage):
         self._period_group = QButtonGroup(self)
         self._period_buttons: dict[str, SegmentButton] = {}
         for key in analytics.PERIOD_KEYS:
-            button = SegmentButton(analytics.PERIOD_LABELS[key])
+            button = SegmentButton(enum_label("period", analytics.PERIOD_LABELS[key]))
             button.clicked.connect(lambda _c=False, k=key: self.set_period(k))
             self._period_group.addButton(button)
             self._period_buttons[key] = button
@@ -114,8 +116,8 @@ class ReportsPage(AdminPage):
         self._through_label = QLabel("")
         self._through_label.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
         row.addWidget(self._through_label)
-        for text, handler in (("Export CSV", self.export_csv), ("Export Excel", self.export_excel),
-                              ("Export PDF", self.export_pdf)):
+        for text, handler in ((tr("admin.reports.export_csv"), self.export_csv), (tr("admin.reports.export_excel"), self.export_excel),
+                              (tr("admin.reports.export_pdf"), self.export_pdf)):
             button = CompactButton(text)
             button.clicked.connect(handler)
             row.addWidget(button)
@@ -123,7 +125,7 @@ class ReportsPage(AdminPage):
 
     def _build_trend(self) -> QWidget:
         p = CLASSICAL_PALETTE
-        self._trend_section = Section("Revenue trend", "Revenue")
+        self._trend_section = Section(tr("admin.reports.trend_kicker"), tr("admin.reports.trend_heading"))
         body = self._trend_section.body_layout()
 
         head = QWidget()
@@ -142,8 +144,8 @@ class ReportsPage(AdminPage):
 
         self._mode_group = QButtonGroup(self)
         self._mode_buttons: dict[str, SegmentButton] = {}
-        for key, label in _MODES:
-            button = SegmentButton(label)
+        for key in _MODES:
+            button = SegmentButton(tr(f"admin.reports.{key}"))
             button.clicked.connect(lambda _c=False, k=key: self.set_mode(k))
             self._mode_group.addButton(button)
             self._mode_buttons[key] = button
@@ -169,9 +171,9 @@ class ReportsPage(AdminPage):
         body.addWidget(chart_holder)
 
         legend = QLabel(
-            f"<span style='color:{p['accent']}'>━</span> This period &nbsp;&nbsp; "
-            f"<span style='color:{p['text_secondary']}'>━</span> Previous period &nbsp;&nbsp; "
-            f"<span style='color:{p['accent']}'>╌</span> Projected"
+            f"<span style='color:{p['accent']}'>━</span> {tr('admin.reports.legend_this')} &nbsp;&nbsp; "
+            f"<span style='color:{p['text_secondary']}'>━</span> {tr('admin.reports.legend_prev')} &nbsp;&nbsp; "
+            f"<span style='color:{p['accent']}'>╌</span> {tr('admin.reports.legend_proj')}"
         )
         legend.setStyleSheet(f"color: {p['text_secondary']}; font-size: 11px; padding: 0 16px 12px 16px;")
         body.addWidget(legend)
@@ -179,7 +181,7 @@ class ReportsPage(AdminPage):
 
     def _build_breakdown(self) -> QWidget:
         p = CLASSICAL_PALETTE
-        section = Section("Revenue sources", "Revenue by region")
+        section = Section(tr("admin.reports.sources_kicker"), tr("admin.reports.sources_heading"))
         row = QWidget()
         layout = QHBoxLayout(row)
         layout.setContentsMargins(16, 12, 16, 16)
@@ -195,7 +197,7 @@ class ReportsPage(AdminPage):
         return section
 
     def _build_top(self) -> QWidget:
-        section = Section("Revenue with 7-day trend", "Top performing dealerships")
+        section = Section(tr("admin.reports.top_kicker"), tr("admin.reports.top_heading"))
         self._top_host = QWidget()
         self._top_layout = QVBoxLayout(self._top_host)
         self._top_layout.setContentsMargins(16, 8, 16, 12)
@@ -228,38 +230,67 @@ class ReportsPage(AdminPage):
             transactions = transaction_repository.list_between(period.start_datetime, period.end_exclusive)
             previous = transaction_repository.list_between(period.prev_start_datetime, period.prev_end_exclusive)
             dealerships = dealership_repository.list_all()
+            # Early in a month/quarter/year the 7-day sparklines reach back
+            # before the period starts: fetch those days too (local datetimes).
+            lead_in = (
+                transaction_repository.list_between(period.week_start_datetime, period.start_datetime)
+                if period.week_start < period.start else []
+            )
         except DATABASE_ERRORS as exc:
             self._view = None
             self._document = None
-            self._empty_note.setText(f"Couldn't load the figures: {exc}")
+            self._period = None
+            self._empty_note.setText(tr("admin.reports.load_failed").format(error=exc))
             return
-        self._transactions, self._previous, self._dealerships = transactions, previous, dealerships
-        self._document = analytics.build_period_report(transactions, period, dealerships, previous=previous)
-        self._through_label.setText(f"Data through {datetime.now():%d %b %Y, %H:%M}")
+        week = lead_in + transactions
+        self._period = period
+        self._transactions, self._previous, self._week, self._dealerships = transactions, previous, week, dealerships
+        self._document = analytics.build_period_report(
+            transactions, period, dealerships, previous=previous, week_transactions=week
+        )
+        now = datetime.now()
+        self._through_label.setText(
+            tr("admin.reports.data_through").format(when=f"{day_month_text(now)} {now:%Y, %H:%M}")
+        )
         self._render()
 
     def _render(self) -> None:
-        period = analytics.period_for(self._period_key, self._today_provider())
-        view = analytics.build_report_view(period, self._transactions, self._previous, self._dealerships, self._mode)
+        period = self._period  # as captured by reload(): never re-read "today" here, or the chart and the export could differ
+        if period is None:
+            return
+        view = analytics.build_report_view(
+            period, self._transactions, self._previous, self._dealerships, self._mode, week_transactions=self._week
+        )
         self._view = view
-        self._empty_note.setText("" if view.sale_count else "No sales recorded in this period yet.")
+        self._empty_note.setText("" if view.sale_count else tr("admin.reports.no_sales"))
         self._render_trend(view)
         self._render_breakdown(view)
         self._render_top(view)
 
     def _render_trend(self, view: analytics.ReportView) -> None:
         period = view.period
-        self._trend_section.set_kicker(f"{period.label} · {period.start:%d %b} – {period.end:%d %b %Y}")
-        self._headline.setText(format_amount(view.revenue))
-        self._delta.setText(
-            f"{analytics.change_text(view.change)} vs {period.prev_start:%d %b} – {period.prev_end:%d %b}"
-            if view.change is not None else "no prior period to compare"
+        self._trend_section.set_kicker(
+            tr("admin.reports.kicker_period").format(
+                label=enum_label("period", period.label), start=day_month_text(period.start),
+                end=f"{day_month_text(period.end)} {period.end.year}",
+            )
         )
-        parts = [f"{view.sale_count} sale{'s' if view.sale_count != 1 else ''}"]
+        self._headline.setText(format_amount(view.revenue))
+        # The change compares equal day counts; when the previous period is
+        # shorter (31 Mar vs February) say which days were compared.
+        compared = tr("admin.reports.compared_days").format(n=period.comparable_days) if period.is_clamped else ""
+        self._delta.setText(
+            tr("admin.reports.vs_prev").format(
+                change=analytics.change_text(view.change), start=day_month_text(period.prev_start),
+                end=day_month_text(period.prev_end), compared=compared,
+            )
+            if view.change is not None else tr("admin.reports.no_prior")
+        )
+        parts = [plural("admin.reports.sales", view.sale_count)]
         if view.previous_revenue > 0:
-            parts.append(f"previous period {format_amount(view.previous_revenue)}")
+            parts.append(tr("admin.reports.prev_note").format(amount=format_amount(view.previous_revenue)))
         if view.projected_total is not None:
-            parts.append(f"projected close {format_amount(view.projected_total)}")
+            parts.append(tr("admin.reports.proj_note").format(amount=format_amount(view.projected_total)))
         self._note.setText(" · ".join(parts))
         self._readout.setText(" ")
         self._chart.set_series(view.current, view.previous, view.projection, view.x_labels, view.total_points)
@@ -271,9 +302,12 @@ class ReportsPage(AdminPage):
         label, current, previous, projected = self._view.readout(index)
         text = label
         if current is not None:
-            text += f"  ·  {'projected ' if projected else ''}{format_amount(current)}"
+            text += "  ·  " + (
+                tr("admin.reports.readout_projected").format(amount=format_amount(current)) if projected
+                else format_amount(current)
+            )
         if previous is not None:
-            text += f"  ·  previous {format_amount(previous)}"
+            text += "  ·  " + tr("admin.reports.readout_previous").format(amount=format_amount(previous))
         self._readout.setText(text)
 
     def _render_breakdown(self, view: analytics.ReportView) -> None:
@@ -283,19 +317,21 @@ class ReportsPage(AdminPage):
             if item.widget() is not None:
                 item.widget().deleteLater()
         segments = [
-            (region, value, _SEGMENT_COLORS[i % len(_SEGMENT_COLORS)]) for i, (region, value, _) in enumerate(view.regions)
+            (region_label(region), value, _SEGMENT_COLORS[i % len(_SEGMENT_COLORS)]) for i, (region, value, _) in enumerate(view.regions)
         ]
         self._donut.set_segments(segments)
         self._donut.set_highlight(-1)
-        self._donut.set_center("Total", analytics.compact_amount(view.revenue), f"{len(segments)} region{'s' if len(segments) != 1 else ''}")
+        self._donut.set_center(
+            tr("admin.reports.donut_total"), analytics.compact_amount(view.revenue), plural("admin.reports.regions", len(segments))
+        )
         if not view.regions:
-            empty = QLabel("Nothing to break down yet.")
+            empty = QLabel(tr("admin.reports.nothing_breakdown"))
             empty.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
             self._legend_layout.addWidget(empty)
         for (region, value, share), (_, _, color) in zip(view.regions, segments):
             line = QLabel(
                 f"<span style='color:{color}'>●</span>&nbsp; {region}"
-                f"<span style='color:{p['text_secondary']}'> &nbsp;{share:.1f}%</span>"
+                f"<span style='color:{p['text_secondary']}'> &nbsp;{format_number(share, 1)}%</span>"
                 f"<br><span style='font-size:13px'>{format_amount(value)}</span>"
             )
             line.setStyleSheet(f"color: {p['text_primary']}; font-size: 13px;")
@@ -309,7 +345,7 @@ class ReportsPage(AdminPage):
             if item.widget() is not None:
                 item.widget().deleteLater()
         if not view.top:
-            empty = QLabel("No dealership has sales in this period.")
+            empty = QLabel(tr("admin.reports.no_top"))
             empty.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px; padding: 8px 0;")
             self._top_layout.addWidget(empty)
             return
@@ -322,7 +358,7 @@ class ReportsPage(AdminPage):
             rank_label.setFixedWidth(26)
             rank_label.setStyleSheet(f"color: {p['accent'] if rank == 1 else '#7d7979'}; font-size: 12px;")
             layout.addWidget(rank_label)
-            name = QLabel(f"{entry.name}<br><span style='color:{p['text_secondary']}; font-size:11px'>{entry.region}</span>")
+            name = QLabel(f"{entry.name}<br><span style='color:{p['text_secondary']}; font-size:11px'>{region_label(entry.region)}</span>")
             name.setStyleSheet(f"color: {p['text_primary']}; font-size: 13px;")
             layout.addWidget(name, stretch=1)
             spark = Sparkline()
@@ -342,31 +378,31 @@ class ReportsPage(AdminPage):
     # --- export -------------------------------------------------------
 
     def export_csv(self) -> None:
-        self._export(export_to_csv, "CSV Files (*.csv)", ".csv")
+        self._export(export_to_csv, tr("admin.reports.csv_filter"), ".csv")
 
     def export_excel(self) -> None:
-        self._export(export_to_excel, "Excel Files (*.xlsx)", ".xlsx")
+        self._export(export_to_excel, tr("admin.excel_file_filter"), ".xlsx")
 
     def export_pdf(self) -> None:
-        self._export(export_to_pdf, "PDF Files (*.pdf)", ".pdf")
+        self._export(export_to_pdf, tr("admin.pdf_file_filter"), ".pdf")
 
     def _export(self, exporter, file_filter: str, suffix: str) -> None:
         if self._document is None:
-            QMessageBox.information(self, "Nothing to export", "The figures haven't loaded yet.")
+            QMessageBox.information(self, tr("admin.reports.nothing_export_title"), tr("admin.reports.nothing_export_body"))
             return
-        path_str, _ = QFileDialog.getSaveFileName(self, "Save report", "", file_filter)
+        path_str, _ = QFileDialog.getSaveFileName(self, tr("admin.reports.save_report"), "", file_filter)
         if not path_str:
             return
         path = Path(path_str)
         if path.suffix.lower() != suffix:
             path = path.with_name(path.name + suffix)  # "Report 2026.10.03" -> "Report 2026.10.03.csv"
             if path.exists() and QMessageBox.question(
-                self, "Replace file?", f"{path.name} already exists. Replace it?"
+                self, tr("admin.reports.replace_title"), tr("admin.reports.replace_body").format(name=path.name)
             ) != QMessageBox.Yes:
                 return
         try:
             exporter(self._document, path)
         except Exception as exc:  # a failed export must say so, whatever the cause
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(self, tr("admin.reports.export_failed"), str(exc))
             return
-        QMessageBox.information(self, "Export complete", f"Saved to {path}")
+        QMessageBox.information(self, tr("admin.export_done_title"), tr("admin.export_done_body").format(path=path))

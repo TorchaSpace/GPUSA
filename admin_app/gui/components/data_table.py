@@ -15,9 +15,14 @@ from __future__ import annotations
 from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtWidgets import QAbstractItemView, QTableView
 
+from shared.i18n import tr
 from shared.models import Product
 
-_COLUMNS = ("Barcode", "Name", "Price", "Stock", "Critical Level")
+_COLUMN_KEYS = ("barcode", "name", "price", "stock", "critical_level")
+
+
+def _columns() -> tuple[str, ...]:
+    return tuple(tr(f"admin.form_{key}") for key in _COLUMN_KEYS)
 
 
 class ProductTableModel(QAbstractTableModel):
@@ -47,12 +52,12 @@ class ProductTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._products)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_COLUMNS)
+        return 0 if parent.isValid() else len(_COLUMN_KEYS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role != Qt.DisplayRole or orientation != Qt.Horizontal:
             return None
-        return _COLUMNS[section]
+        return _columns()[section]
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid() or role != Qt.DisplayRole:

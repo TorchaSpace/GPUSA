@@ -32,10 +32,13 @@ from PySide6.QtWidgets import (
 )
 
 from database import attendance_repository, employee_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from shared.auth import normalize_badge_id
+from shared.formatting import local_clock_text
+from shared.i18n import tr
 
 
 class AttendancePanel(QWidget):
@@ -130,25 +133,25 @@ class AttendancePanel(QWidget):
         return table
 
     def _on_check_in(self) -> None:
-        badge_id = self._badge_input.text().strip().upper()
+        badge_id = normalize_badge_id(self._badge_input.text())
         if not badge_id:
             self._show_error("Scan or enter a badge ID first.")
             return
         try:
             attendance_repository.check_in(badge_id)
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             self._show_error(str(exc))
             return
         self._after_success()
 
     def _on_check_out(self) -> None:
-        badge_id = self._badge_input.text().strip().upper()
+        badge_id = normalize_badge_id(self._badge_input.text())
         if not badge_id:
             self._show_error("Scan or enter a badge ID first.")
             return
         try:
             attendance_repository.check_out(badge_id)
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             self._show_error(str(exc))
             return
         self._after_success()
@@ -169,7 +172,7 @@ class AttendancePanel(QWidget):
             on_floor = len(attendance_repository.list_open())
             total = len(employee_repository.list_all())
             roster = attendance_repository.list_roster()
-        except DataAccessError:
+        except DATABASE_ERRORS:
             on_floor, total, roster = 0, 0, []
 
         self._on_floor_label.setText(f"{on_floor} of {total} on floor")
@@ -179,9 +182,11 @@ class AttendancePanel(QWidget):
             self._table.setItem(row, 0, QTableWidgetItem(entry["badge_id"]))
             self._table.setItem(row, 1, QTableWidgetItem(entry["name"]))
             self._table.setItem(row, 2, QTableWidgetItem(entry["role"]))
-            self._table.setItem(row, 3, QTableWidgetItem(entry["status"]))
-            in_text = entry["check_in_at"].split("T")[-1][:8] if entry["check_in_at"] else "—"
-            out_text = entry["check_out_at"].split("T")[-1][:8] if entry["check_out_at"] else "—"
+            status = entry["status"] + (" · " + tr("admin.workforce.long_open") if entry.get("long_open") else "")
+            self._table.setItem(row, 3, QTableWidgetItem(status))
+            # Local time (a shift from an earlier day also shows its date), not the UTC text of the stamp.
+            in_text = local_clock_text(entry["check_in_at"])
+            out_text = local_clock_text(entry["check_out_at"])
             self._table.setItem(row, 4, QTableWidgetItem(in_text))
             self._table.setItem(row, 5, QTableWidgetItem(out_text))
             hours_text = f"{entry['hours']:.1f}" if entry["hours"] is not None else "—"

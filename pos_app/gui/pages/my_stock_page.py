@@ -26,10 +26,11 @@ from PySide6.QtWidgets import (
 )
 
 from database import stock_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.product_status import stock_status
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.models import UNASSIGNED, Product, StockLocation
+from shared.warehousing import tr_or
 
 _STATUS_META = {
     # status -> (dot color, badge bg, badge fg, badge text, qty color, bar color)
@@ -139,9 +140,12 @@ class MyStockPage(QWidget):
 
     def reload(self) -> None:
         try:
-            self._all_products = stock_repository.products_at(self._location)
-        except DataAccessError:
-            self._all_products = []
+            here = stock_repository.products_at(self._location)
+        except DATABASE_ERRORS:
+            here = []
+        # "My stock" is what this shelf carries: products it holds or has held. The rest of the
+        # catalogue isn't "out of stock" here - it was never stocked - and would swamp the Out count.
+        self._all_products = [p for p in here if p.stocked_here or p.stock_quantity > 0]
         self._subtitle_label.setText(f"counted {datetime.now().strftime('%H:%M')} today")
         self._render_filter_labels()
         self._render_rows()
@@ -210,9 +214,9 @@ class MyStockPage(QWidget):
 
         names = QVBoxLayout()
         names.setSpacing(0)
-        name_label = QLabel(product.name)
-        name_label.setStyleSheet(f"font-weight: 700; font-size: 18px; color: {p['text_primary']};")
-        reorder_label = QLabel(f"reorder at {product.critical_stock_level}")
+        name_label = QLabel(product.name if product.is_active else f"{product.name} ({tr_or('admin.inactive_badge', 'inactive')})")
+        name_label.setStyleSheet(f"font-weight: 700; font-size: 18px; color: {p['text_primary'] if product.is_active else p['text_secondary']};")
+        reorder_label = QLabel(f"reorder at {product.critical_stock_level}" if product.critical_stock_level else "no reorder level")
         reorder_label.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
         names.addWidget(name_label)
         names.addWidget(reorder_label)

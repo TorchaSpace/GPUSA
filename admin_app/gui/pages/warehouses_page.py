@@ -60,7 +60,8 @@ from admin_app.gui.components.stock_move_popup import StockMovePopup
 from admin_app.gui.components.styled_table import cell, styled_table
 from admin_app.gui.components.warehouse_capacity_card import WarehouseCapacityCard
 from admin_app.gui.components.warehouse_form_popup import WarehouseFormPopup
-from shared.i18n import tr
+from shared.formatting import format_int, format_number
+from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
     attendance_repository,
@@ -69,7 +70,7 @@ from database import (
     stock_repository,
     warehouse_repository,
 )
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared.constants import WAREHOUSE_POLL_INTERVAL_MS
 from shared.formatting import local_time_text
 from shared.gui_kit.polling import PollingTimer
@@ -86,7 +87,7 @@ from shared.warehousing import (
 )
 
 _CARDS_PER_ROW = 3
-_TABS = (("moves", "Movement Logs"), ("workforce", "Workforce Attendance"), ("stock", "Stock by location"))
+_TABS = ("moves", "workforce", "stock")
 _DIRECTIONS = ("All", "Inbound", "Outbound")
 
 
@@ -132,9 +133,9 @@ class WarehousesPage(AdminPage):
         self._direction = "All"
         self._cards: list[WarehouseCapacityCard] = []
 
-        add = CompactButton("Add warehouse", variant="primary")
+        add = CompactButton(tr("admin.warehouses.add"), variant="primary")
         add.clicked.connect(self._open_add)
-        move = CompactButton("Move / count stock")
+        move = CompactButton(tr("admin.warehouses.move"))
         move.clicked.connect(self._open_move)
         refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
@@ -172,10 +173,10 @@ class WarehousesPage(AdminPage):
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        self._count_card = StatCard("Warehouses", "—")
-        self._units_card = StatCard("Units in warehouses", "—")
-        self._near_card = StatCard("Near capacity", "—", corner_note="85% threshold")
-        self._unassigned_card = StatCard("Unassigned stock", "—")
+        self._count_card = StatCard(tr("admin.warehouses.kpi_count"), "—")
+        self._units_card = StatCard(tr("admin.warehouses.kpi_units"), "—")
+        self._near_card = StatCard(tr("admin.warehouses.kpi_near"), "—", corner_note=tr("admin.warehouses.kpi_near_note"))
+        self._unassigned_card = StatCard(tr("admin.warehouses.kpi_unassigned"), "—")
         self._kpi_notes = {}
         for key, card in (("count", self._count_card), ("units", self._units_card),
                           ("near", self._near_card), ("unassigned", self._unassigned_card)):
@@ -204,7 +205,7 @@ class WarehousesPage(AdminPage):
         self._place_target = QComboBox()
         self._place_target.setMinimumWidth(220)
         layout.addWidget(self._place_target)
-        place = CompactButton("Place all here")
+        place = CompactButton(tr("admin.warehouses.place_all"))
         place.clicked.connect(self._place_all_unassigned)
         layout.addWidget(place)
         self._banner.hide()
@@ -212,10 +213,10 @@ class WarehousesPage(AdminPage):
 
     def _build_network(self) -> Section:
         p = CLASSICAL_PALETTE
-        self._network = Section("Network", "Warehouse capacity")
-        self._edit_button = CompactButton("Edit")
+        self._network = Section(tr("admin.warehouses.net_kicker"), tr("admin.warehouses.net_heading"))
+        self._edit_button = CompactButton(tr("admin.warehouses.edit"))
         self._edit_button.clicked.connect(self._open_edit)
-        self._delete_button = CompactButton("Delete")
+        self._delete_button = CompactButton(tr("admin.warehouses.delete"))
         self._delete_button.clicked.connect(self._delete_selected)
         for button in (self._edit_button, self._delete_button):
             self._network.add_header_control(button)
@@ -224,10 +225,7 @@ class WarehousesPage(AdminPage):
         self._grid.setContentsMargins(16, 16, 16, 16)
         self._grid.setSpacing(12)
         self._network.body_layout().addWidget(body)
-        self._empty_network = QLabel(
-            "No warehouses yet. Each Depot instance registers its own from the setup wizard - "
-            "or add one with “Add warehouse”."
-        )
+        self._empty_network = QLabel(tr("admin.warehouses.empty_network"))
         self._empty_network.setWordWrap(True)
         self._empty_network.setAlignment(Qt.AlignCenter)
         self._empty_network.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']}; padding: 20px;")
@@ -236,8 +234,8 @@ class WarehousesPage(AdminPage):
 
     def _build_activity(self) -> Section:
         p = CLASSICAL_PALETTE
-        self._activity = Section("Activity", "All warehouses")
-        tabs_box, self._tab_buttons = _segments(_TABS, self.set_tab)
+        self._activity = Section(tr("admin.warehouses.act_kicker"), tr("admin.warehouses.act_heading"))
+        tabs_box, self._tab_buttons = _segments([(key, tr(f"admin.warehouses.tab_{key}")) for key in _TABS], self.set_tab)
         self._activity.add_header_control(tabs_box)
 
         self._stack = QStackedWidget()
@@ -246,14 +244,14 @@ class WarehousesPage(AdminPage):
         moves_layout = QVBoxLayout(moves)
         moves_layout.setContentsMargins(16, 8, 16, 16)
         filter_row = QHBoxLayout()
-        dir_box, self._dir_buttons = _segments([(d, d) for d in _DIRECTIONS], self.set_direction)
+        dir_box, self._dir_buttons = _segments([(d, enum_label("direction", d)) for d in _DIRECTIONS], self.set_direction)
         filter_row.addWidget(dir_box)
         filter_row.addStretch(1)
         self._moves_count = QLabel()
         self._moves_count.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         filter_row.addWidget(self._moves_count)
         moves_layout.addLayout(filter_row)
-        self._moves_table = styled_table(["Time", "Movement", "SKU", "Product", "Qty", "Site", "Why", "Reference", "Handled by"])
+        self._moves_table = styled_table(tr("admin.warehouses.moves_cols").split("|"))
         self._moves_table.setMinimumHeight(320)
         header = self._moves_table.horizontalHeader()
         header.setSectionResizeMode(3, QHeaderView.Stretch)
@@ -268,7 +266,7 @@ class WarehousesPage(AdminPage):
         self._people_note.setWordWrap(True)
         self._people_note.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         people_layout.addWidget(self._people_note)
-        self._people_table = styled_table(["Badge", "Name", "Role", "Site", "Status", "In", "Out", "Hours"])
+        self._people_table = styled_table(tr("admin.warehouses.people_cols").split("|"))
         self._people_table.setMinimumHeight(320)
         self._people_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
         people_layout.addWidget(self._people_table)
@@ -281,7 +279,7 @@ class WarehousesPage(AdminPage):
         self._stock_note.setWordWrap(True)
         self._stock_note.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         stock_layout.addWidget(self._stock_note)
-        self._stock_table = styled_table(["Product", "SKU"])
+        self._stock_table = styled_table(tr("admin.warehouses.stock_cols_first").split("|"))
         self._stock_table.setMinimumHeight(320)
         stock_layout.addWidget(self._stock_table)
         self._stack.addWidget(stock)
@@ -342,25 +340,26 @@ class WarehousesPage(AdminPage):
         unassigned = used.get(UNASSIGNED, 0)
         self._count_card.set_value(str(len(active)))
         inactive = len(d["warehouses"]) - len(active)
-        self._kpi_notes["count"].setText(f"active · {inactive} inactive" if inactive else "active")
-        self._units_card.set_value(f"{held:,}")
+        self._kpi_notes["count"].setText(
+            tr("admin.warehouses.count_active_inactive").format(n=inactive) if inactive else tr("admin.warehouses.count_active")
+        )
+        self._units_card.set_value(format_int(held))
         self._kpi_notes["units"].setText(
-            f"of {capacity:,} units of set capacity" if capacity else "no capacities set yet"
+            tr("admin.warehouses.units_note").format(capacity=format_int(capacity)) if capacity
+            else tr("admin.warehouses.units_note_none")
         )
         self._near_card.set_value(str(len(near)))
-        self._kpi_notes["near"].setText(", ".join(near) if near else "all below 85%")
-        self._unassigned_card.set_value(f"{unassigned:,}")
-        self._kpi_notes["unassigned"].setText("units not placed at any location" if unassigned else "everything is placed")
+        self._kpi_notes["near"].setText(", ".join(near) if near else tr("admin.warehouses.near_note_none"))
+        self._unassigned_card.set_value(format_int(unassigned))
+        self._kpi_notes["unassigned"].setText(
+            tr("admin.warehouses.unassigned_note") if unassigned else tr("admin.warehouses.unassigned_note_none")
+        )
 
     def _render_banner(self) -> None:
         unassigned = self._data["used"].get(UNASSIGNED, 0)
         active = [w for w in self._data["warehouses"] if w.is_active]
         self._banner.setVisible(bool(unassigned and active))
-        self._banner_text.setText(
-            f"<b>{unassigned:,} units</b> aren't at any warehouse or dealership yet - stock from before "
-            f"warehouses were tracked, or added in Inventory. Put them where they physically are, or use "
-            f"“Move / count stock” for part of them."
-        )
+        self._banner_text.setText(tr("admin.warehouses.banner").format(units=format_int(unassigned)))
         current = self._place_target.currentData()
         self._place_target.clear()
         for w in active:
@@ -390,15 +389,17 @@ class WarehousesPage(AdminPage):
         self._empty_network.setVisible(not d["warehouses"])
         self._edit_button.setEnabled(self._site is not None)
         self._delete_button.setEnabled(self._site is not None)
-        self._network.set_kicker(f"Network · {len(d['warehouses'])} warehouse{'s' if len(d['warehouses']) != 1 else ''}")
+        self._network.set_kicker(plural("admin.warehouses.net_kicker_n", len(d["warehouses"])))
 
     def _selected_warehouse(self):
         return next((w for w in self.warehouses() if w.code == self._site), None)
 
     def _render_tab(self) -> None:
         selected = self._selected_warehouse()
-        self._activity.set_kicker(f"Activity · {selected.site_label}" if selected else "Activity · all warehouses")
-        self._stack.setCurrentIndex([key for key, _ in _TABS].index(self._tab))
+        self._activity.set_kicker(
+            tr("admin.warehouses.act_site").format(site=selected.site_label) if selected else tr("admin.warehouses.act_all")
+        )
+        self._stack.setCurrentIndex(list(_TABS).index(self._tab))
         {"moves": self._render_moves, "workforce": self._render_people, "stock": self._render_stock}[self._tab]()
 
     def _render_moves(self) -> None:
@@ -409,7 +410,9 @@ class WarehousesPage(AdminPage):
         if self._direction != "All":
             wanted = "receive" if self._direction == "Inbound" else "dispatch"
             rows = [m for m in rows if m["movement_type"] == wanted]
-        self._moves_count.setText(f"{len(rows)} movement{'s' if len(rows) != 1 else ''} · newest first")
+        self._moves_count.setText(
+            tr("admin.warehouses.moves_count").format(n=plural("admin.warehouses.movements", len(rows)))
+        )
         table = self._moves_table
         table.setRowCount(len(rows))
         for r, m in enumerate(rows):
@@ -419,7 +422,7 @@ class WarehousesPage(AdminPage):
                 cell(direction_label(m), color=p["alert_success"] if inbound else p["accent"]),
                 cell(m["barcode"]),
                 cell(m["product_name"]),
-                cell(f"{'+' if inbound else '−'}{m['quantity']:,}", right=True),
+                cell(f"{'+' if inbound else '−'}{format_int(m['quantity'])}", right=True),
                 cell(m["location"].code if m["location"] else "—"),
                 cell(reason_label(m)),
                 cell(reference_text(m)),
@@ -436,19 +439,20 @@ class WarehousesPage(AdminPage):
             rows += [(w, r) for r in self._roster_for(w) if r["is_active"]]
         unmatched = [r for r in self._data["roster"] if r["location_type"] == "Warehouse" and r["is_active"]
                      and not any(works_at(r["location_type"], r["location_name"], w) for w in self.warehouses())]
-        note = "Today's roster · an employee belongs to a warehouse when their Location (Workforce) is its code or name."
+        note = tr("admin.warehouses.people_note")
         if unmatched and not selected:
             names = ", ".join(sorted({r["location_name"] for r in unmatched}))
-            note += f" {len(unmatched)} warehouse employee(s) name a location that isn't a warehouse here: {names}."
+            note += tr("admin.warehouses.people_unmatched").format(n=len(unmatched), names=names)
         self._people_note.setText(note)
         table = self._people_table
         table.setRowCount(len(rows))
         for r, (w, entry) in enumerate(rows):
             values = [
-                entry["badge_id"], entry["name"], entry["role"], w.code, entry["status"],
+                entry["badge_id"], entry["name"], enum_label("role", entry["role"]), w.code,
+                enum_label("attendance", entry["status"]),
                 local_time_text(entry["check_in_at"]) if entry["check_in_at"] else "—",
                 local_time_text(entry["check_out_at"]) if entry["check_out_at"] else "—",
-                f"{entry['hours']:.1f}" if entry["hours"] is not None else "—",
+                format_number(entry["hours"], 1) if entry["hours"] is not None else "—",
             ]
             for c, value in enumerate(values):
                 table.setItem(r, c, cell(value))
@@ -456,9 +460,9 @@ class WarehousesPage(AdminPage):
     def _render_stock(self) -> None:
         d = self._data
         warehouses = [self._selected_warehouse()] if self._site else d["warehouses"]
-        headers = ["Product", "SKU"] + [w.code for w in warehouses]
+        headers = tr("admin.warehouses.stock_cols_first").split("|") + [w.code for w in warehouses]
         if not self._site:
-            headers += ["Dealerships", "Unassigned", "On the road", "Company total"]
+            headers += [tr(f"admin.warehouses.stock_{key}") for key in ("dealerships", "unassigned", "road", "total")]
         per: dict[str, dict] = {}
         for level in d["levels"]:
             per.setdefault(level.product_barcode, {})[level.location] = level.quantity
@@ -475,20 +479,19 @@ class WarehousesPage(AdminPage):
         for r, product in enumerate(products):
             levels = per.get(product.barcode, {})
             values = [cell(product.name), cell(product.barcode)]
-            values += [cell(f"{levels.get(w.location, 0):,}", right=True) for w in warehouses]
+            values += [cell(format_int(levels.get(w.location, 0)), right=True) for w in warehouses]
             if not self._site:
                 at_dealers = sum(q for loc, q in levels.items() if loc.kind == "dealership")
                 unassigned = levels.get(UNASSIGNED, 0)
                 road = product.stock_quantity - sum(levels.values())
-                values += [cell(f"{at_dealers:,}", right=True), cell(f"{unassigned:,}", right=True),
-                           cell(f"{road:,}" if road else "—", right=True),
-                           cell(f"{product.stock_quantity:,}", right=True)]
+                values += [cell(format_int(at_dealers), right=True), cell(format_int(unassigned), right=True),
+                           cell(format_int(road) if road else "—", right=True),
+                           cell(format_int(product.stock_quantity), right=True)]
             for c, item in enumerate(values):
                 table.setItem(r, c, item)
         self._stock_note.setText(
-            f"Units of each product held at {warehouses[0].site_label}." if self._site else
-            "Every product across the company: per warehouse, on dealership shelves, not placed yet, and on "
-            "trucks (dispatched shipments not yet received). Company total = all of these."
+            tr("admin.warehouses.stock_note_site").format(site=warehouses[0].site_label) if self._site else
+            tr("admin.warehouses.stock_note_all")
         )
 
     # --- interaction -----------------------------------------------------------
@@ -530,8 +533,8 @@ class WarehousesPage(AdminPage):
                 warehouse_repository.update(warehouse)
             else:
                 warehouse_repository.create(warehouse)
-        except (DataAccessError, ValueError) as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            QMessageBox.warning(self, tr("admin.warehouses.save_failed"), str(exc))
             return
         self.reload()
 
@@ -539,13 +542,16 @@ class WarehousesPage(AdminPage):
         warehouse = self._selected_warehouse()
         if warehouse is None:
             return
-        confirm = QMessageBox.question(self, "Delete warehouse?", f"Delete {warehouse.site_label}? This cannot be undone.")
+        confirm = QMessageBox.question(
+            self, tr("admin.warehouses.delete_title"), tr("admin.warehouses.delete_confirm").format(site=warehouse.site_label)
+        )
         if confirm != QMessageBox.Yes:
             return
         try:
             warehouse_repository.delete(warehouse.code)
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't delete", str(exc))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            # LocationHasStockError / LocationInUseError: the message says what to do (move stock, or deactivate).
+            QMessageBox.warning(self, tr("admin.warehouses.delete_failed"), str(exc))
             return
         self._site = None
         self.reload()
@@ -575,12 +581,12 @@ class WarehousesPage(AdminPage):
             return
         units = self._data["used"].get(UNASSIGNED, 0) if self._data else 0
         confirm = QMessageBox.question(
-            self, "Place unassigned stock?",
-            f"Record all {units:,} unassigned units as being at {self._place_target.currentText()}?",
+            self, tr("admin.warehouses.place_title"),
+            tr("admin.warehouses.place_confirm").format(units=format_int(units), site=self._place_target.currentText()),
         )
         if confirm != QMessageBox.Yes:
             return
         try:
             self.place_all_unassigned(code)
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't place stock", str(exc))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            QMessageBox.warning(self, tr("admin.warehouses.place_failed"), str(exc))

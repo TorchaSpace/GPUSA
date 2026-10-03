@@ -18,7 +18,7 @@ from PySide6.QtWidgets import QDoubleSpinBox, QHBoxLayout, QLabel, QMessageBox, 
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.data_table import DataTable
 from database import product_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared.gui_kit.visual_tab import VisualTab
 from shared.i18n import tr
 
@@ -69,7 +69,7 @@ class PriceUpdateTab(VisualTab):
         product.price = self._price_input.value()
         try:
             product_repository.update(product)
-        except DataAccessError as exc:
+        except (DataAccessError, ValueError, *DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, tr("admin.save_failed_title"), str(exc))
             return
         self.refresh()

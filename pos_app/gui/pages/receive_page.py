@@ -46,7 +46,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import shipment_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import eta_text, live_status
@@ -54,6 +54,7 @@ from shared.formatting import parse_db_timestamp
 from shared.gui_kit.polling import PollingTimer
 from shared.models import Shipment
 from shared import current_session
+from shared.warehousing import tr_or
 
 _YELLOW = "#f2c230"
 _RED_TEXT = "#9a2a1d"
@@ -334,6 +335,12 @@ class ReceivePage(QWidget):
 
     # --- per-shipment working state ------------------------------------
 
+    @staticmethod
+    def _can_receive(shipment: Shipment) -> bool:
+        """Only a shipment that has left the warehouse (in transit) can be checked in.
+        A scheduled one is still at the depot: receiving it would create stock from nothing."""
+        return shipment.status == "in_transit"
+
     def _received_for(self, shipment: Shipment, barcode: str) -> int:
         line = next(l for l in shipment.lines if l.product_barcode == barcode)
         if line.received_qty is not None:
@@ -345,7 +352,7 @@ class ReceivePage(QWidget):
 
     def toggle_line(self, barcode: str) -> None:
         shipment = self.selected()
-        if shipment is None or shipment.status == "delivered":
+        if shipment is None or not self._can_receive(shipment):
             return
         checked = self._checked.setdefault(shipment.id, set())
         checked.symmetric_difference_update({barcode})
@@ -353,16 +360,20 @@ class ReceivePage(QWidget):
 
     def change_received(self, barcode: str, delta: int) -> None:
         shipment = self.selected()
-        if shipment is None or shipment.status == "delivered":
+        if shipment is None or not self._can_receive(shipment):
             return
         received = self._received.setdefault(shipment.id, {})
-        received[barcode] = max(0, self._received_for(shipment, barcode) + delta)
+        line = next((l for l in shipment.lines if l.product_barcode == barcode), None)
+        if line is None:
+            return
+        # Never more than was shipped (that would be stock from nothing); fewer is a "short" discrepancy.
+        received[barcode] = min(line.expected_qty, max(0, self._received_for(shipment, barcode) + delta))
         self._checked.setdefault(shipment.id, set()).add(barcode)
         self._render()
 
     def _accept_all(self) -> None:
         shipment = self.selected()
-        if shipment is None or shipment.status == "delivered":
+        if shipment is None or not self._can_receive(shipment):
             return
         self._checked[shipment.id] = {l.product_barcode for l in shipment.lines}
         self._received[shipment.id] = {l.product_barcode: l.expected_qty for l in shipment.lines}
@@ -371,20 +382,20 @@ class ReceivePage(QWidget):
 
     def _toggle_report(self) -> None:
         shipment = self.selected()
-        if shipment is None or shipment.status == "delivered":
+        if shipment is None or not self._can_receive(shipment):
             return
         self._report_mode[shipment.id] = not self._report_mode.get(shipment.id, False)
         self._render()
 
     def _complete(self) -> None:
         shipment = self.selected()
-        if shipment is None or shipment.status == "delivered":
+        if shipment is None or not self._can_receive(shipment):
             return
         received = {l.product_barcode: self._received_for(shipment, l.product_barcode) for l in shipment.lines}
         note = self._note_input.text() if self._report_mode.get(shipment.id) else None
         try:
             done = shipment_repository.complete_receipt(shipment.id, received, note, actor=current_session.actor())
-        except (DataAccessError, ValueError) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:
             self._message.setText(f"Couldn't complete: {exc}")
             self.reload()
             return
@@ -442,9 +453,10 @@ class ReceivePage(QWidget):
             widget.show()
 
         delivered = shipment.status == "delivered"
-        report = self._report_mode.get(shipment.id, False) and not delivered
+        waiting = shipment.status == "scheduled"  # still at the depot: nothing to check in yet
+        report = self._report_mode.get(shipment.id, False) and not delivered and not waiting
         accepted = (
-            not report and not delivered
+            not report and not delivered and not waiting
             and self._checked.get(shipment.id) == {l.product_barcode for l in shipment.lines}
             and all(self._received_for(shipment, l.product_barcode) == l.expected_qty for l in shipment.lines)
         )
@@ -453,8 +465,8 @@ class ReceivePage(QWidget):
         self._title_label.setText(f"Shipment {shipment.number}")
         self._accept_button.setStyleSheet(self._pill_style(accepted, p["accent_2"], "white", "#3d472b"))
         self._report_button.setStyleSheet(self._pill_style(report, _YELLOW, "#3a2a05", "#8a5a00"))
-        self._accept_button.setEnabled(not delivered)
-        self._report_button.setEnabled(not delivered)
+        self._accept_button.setEnabled(not delivered and not waiting)
+        self._report_button.setEnabled(not delivered and not waiting)
         self._note_input.setVisible(report)
 
         for index, line in enumerate(shipment.lines):
@@ -466,9 +478,11 @@ class ReceivePage(QWidget):
         self._count_label.setText(
             f"<b>{checked} of {len(shipment.lines)}</b> checked<span style='color:{_RED_TEXT};font-weight:700'>{issue_note}</span>"
         )
-        ready = not delivered and checked == len(shipment.lines)
+        ready = self._can_receive(shipment) and checked == len(shipment.lines)
         self._complete_button.setText(  # "&&": a lone "&" is a keyboard-mnemonic marker
-            "Receipt completed" if delivered else ("Send report && receive" if issues else "Complete receipt")
+            "Receipt completed" if delivered
+            else tr_or("pos.receive_waiting", "Not dispatched yet") if waiting
+            else ("Send report && receive" if issues else "Complete receipt")
         )
         self._complete_button.setEnabled(ready)
         self._complete_button.setStyleSheet(

@@ -91,6 +91,156 @@ def test_record_document_stamps_the_site_and_retries_on_error(panel, monkeypatch
     panel._record()
 
     saved = next(e for e in ledger.list_entries() if e.doc_no == "ÇK-2")
-    assert (saved.site, saved.amount, saved.direction) == (SITE, 64500, "in")
+    assert (saved.site, saved.amount, saved.direction) == (SITE.upper(), 64500, "in")  # sites are stored upper-cased
     assert "Recorded" in panel._message.text()
+    assert len(attempts) == 2
+
+
+# --- review fixes -------------------------------------------------------------
+
+
+def _type_cells(panel):
+    return {k: (c.caption.text(), c.total.text(), c.sub.text()) for k, c in panel._cells.items()}
+
+
+def test_an_outgoing_invoice_is_a_payable_not_a_receivable(panel):
+    _add("invoice", "FT-OUT", "out", 500)
+    panel.reload()
+
+    assert panel._cells["invoice"].caption.text() == "PAYABLES · 1"
+    assert panel._cells["invoice"].total.text() == "−500.00"
+    assert panel._cells["invoice"].sub.text() == "1 open to pay"
+    assert panel._table.item(0, 1).text() == "Payable"
+    assert panel._filter_buttons["invoice"].text() == "Payables"
+
+
+def test_mixed_directions_are_split_not_abs_of_a_mixed_sum(panel):
+    _add("invoice", "FT-IN", "in", 1000)
+    _add("invoice", "FT-OUT", "out", 400)
+    panel.reload()
+
+    cell = panel._cells["invoice"]
+    assert cell.caption.text() == "INVOICES · 2"
+    assert cell.total.text() == "+1,000.00 / −400.00"  # never abs(+1000 - 400)
+    assert cell.sub.text() == "1 open to collect · 1 open to pay"
+
+
+def test_cell_totals_count_open_documents_only(panel):
+    _add("check", "C-1", "in", 100)
+    done = _add("check", "C-2", "in", 900)
+    ledger.mark_cleared(done.id)
+    _add("check", "C-3", "out", 30)
+    panel.reload()
+
+    caption, total, sub = _type_cells(panel)["check"]
+    assert caption == "CHECKS · 3"
+    assert total == "+100.00 / −30.00"
+    assert sub == "2 not yet settled"
+
+
+def test_a_cell_with_nothing_open_reads_zero(panel):
+    done = _add("transfer", "HV-1", "out", 30)
+    ledger.mark_cleared(done.id)
+    panel.reload()
+    assert panel._cells["transfer"].total.text() == "0.00"
+
+
+def test_net_matches_admins_summarize_open_only_and_signs(panel):
+    from shared.treasury import summarize
+
+    _add("check", "A", "in", 100)
+    _add("invoice", "B", "out", 250.5)
+    settled = _add("transfer", "C", "out", 9999)
+    ledger.mark_cleared(settled.id)
+    panel.reload()
+
+    expected = summarize(ledger.list_entries(site=SITE), TODAY).net_position  # -150.5
+    assert expected == -150.5
+    assert panel._net_label.text() == "−150.50"
+
+    panel._toggle_cell("check")  # shown rows only: just the +100 check
+    assert panel._net_label.text() == "+100.00"
+
+
+def test_net_of_nothing_open_is_unsigned_zero(panel):
+    done = _add("check", "A", "in", 100)
+    ledger.mark_cleared(done.id)
+    panel.reload()
+    assert panel._net_label.text() == "0.00"
+
+
+def test_type_labels_follow_direction():
+    from depot_app.gui.ledger_entry_dialog import depot_type_label
+
+    assert depot_type_label("in", "invoice") == "Receivable"
+    assert depot_type_label("out", "invoice") == "Payable"
+    assert depot_type_label("out", "transfer") == "Payment"
+    assert depot_type_label("in", "transfer") == "Incoming transfer"
+    assert depot_type_label("in", "check") == "Received check"
+    assert depot_type_label("out", "note") == "Issued promissory note"
+
+
+def test_dialog_type_names_follow_the_direction_picker(qapp):
+    from depot_app.gui.ledger_entry_dialog import LedgerEntryDialog
+
+    dialog = LedgerEntryDialog(SITE, [], TODAY)
+    invoice = dialog.type_input.findData("invoice")
+    assert dialog.type_input.itemText(invoice) == "Receivable"
+    dialog.direction_input.setCurrentIndex(dialog.direction_input.findData("out"))
+    assert dialog.type_input.itemText(invoice) == "Payable"
+    from shared.formatting import MAX_AMOUNT
+
+    assert dialog.amount_input.maximum() == MAX_AMOUNT
+    dialog.close()
+
+
+def test_site_label_is_escaped(qapp):
+    from PySide6.QtWidgets import QLabel
+
+    from depot_app.gui.treasury_panel import TreasuryPanel
+
+    widget = TreasuryPanel("<i>WH</i>", today_provider=lambda: TODAY)
+    texts = [l.text() for l in widget.findChildren(QLabel)]
+    assert any("&lt;i&gt;WH&lt;/i&gt;" in t for t in texts)
+    assert not any("<b><i>WH</i></b>" in t for t in texts)
+    widget.close()
+
+
+def test_a_failed_refresh_says_so_and_keeps_the_last_rows(panel, monkeypatch):
+    import sqlite3
+
+    _add("check", "A", "in", 100)
+    panel.reload()
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ledger, "list_entries", boom)
+    panel.reload()
+
+    assert "Couldn't refresh" in panel._message.text() and "locked" in panel._message.text()
+    assert len(panel.shown_entries()) == 1
+
+
+def test_a_raw_sqlite_error_on_save_is_shown_in_the_dialog_not_raised(panel, monkeypatch):
+    import sqlite3
+
+    attempts = []
+
+    def fake_run(dialog):
+        attempts.append(1)
+        if len(attempts) == 2:
+            assert "locked" in dialog.error_label.text()
+            return False
+        dialog.doc_no_input.setText("X-1")
+        dialog.counterparty_input.setText("Y")
+        dialog.amount_input.setValue(5)
+        return True
+
+    def boom(entry):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(panel, "_run_dialog", fake_run)
+    monkeypatch.setattr(ledger, "create", boom)
+    panel._record()
     assert len(attempts) == 2

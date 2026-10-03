@@ -21,7 +21,9 @@ from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.distribution import eta_text, live_status, progress
 from shared.formatting import local_time_text
+from shared.i18n import tr
 from shared.models import Shipment
+from shared.warehousing import percent_used
 
 GOLD = "#e1ad66"
 WARN = "#df9460"
@@ -59,7 +61,7 @@ class RouteBar(QWidget):
         if self._fraction is None:
             painter.setPen(QPen(QColor(p["text_secondary"])))
             painter.drawText(QRectF(right + 6, 0, 44, self.height()), Qt.AlignVCenter | Qt.AlignLeft, "—")
-            painter.drawText(QRectF(left, 0, right - left, y - 4), Qt.AlignCenter | Qt.AlignBottom, "not departed")
+            painter.drawText(QRectF(left, 0, right - left, y - 4), Qt.AlignCenter | Qt.AlignBottom, tr("route.not_departed"))
             return
         x = left + (right - left) * self._fraction
         painter.setPen(QPen(self._color, 3, Qt.SolidLine, Qt.RoundCap))
@@ -73,7 +75,7 @@ class RouteBar(QWidget):
         painter.drawEllipse(QPointF(x, y), 5, 5)
         painter.setPen(QPen(QColor(p["text_secondary"])))
         painter.drawText(
-            QRectF(right + 6, 0, 44, self.height()), Qt.AlignVCenter | Qt.AlignLeft, f"{round(self._fraction * 100)}%"
+            QRectF(right + 6, 0, 44, self.height()), Qt.AlignVCenter | Qt.AlignLeft, f"{percent_used(self._fraction)}%"
         )
 
 
@@ -152,9 +154,9 @@ class RouteTracker(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(16, 8, 16, 6)
         self._header_labels = []
-        for text, width, align in (("Origin", 190, Qt.AlignLeft), ("Departed", 52, Qt.AlignLeft),
-                                   ("Progress", 0, Qt.AlignCenter), ("Destination · ETA", 230, Qt.AlignRight)):
-            label = QLabel(text)
+        for text, width, align in (("admin.distribution.col_origin", 190, Qt.AlignLeft), ("admin.distribution.col_departed", 52, Qt.AlignLeft),
+                                   ("admin.distribution.col_progress", 0, Qt.AlignCenter), ("admin.distribution.col_dest_eta", 230, Qt.AlignRight)):
+            label = QLabel(tr(text))
             label.setAlignment(align)
             label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
             if width:
@@ -167,7 +169,7 @@ class RouteTracker(QWidget):
         self._rows = QVBoxLayout()
         self._rows.setSpacing(0)
         outer.addLayout(self._rows)
-        self._empty = QLabel("No shipments on the road.")
+        self._empty = QLabel(tr("admin.distribution.no_road"))
         self._empty.setAlignment(Qt.AlignCenter)
         self._empty.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']}; padding: 20px;")
         outer.addWidget(self._empty)
@@ -185,7 +187,7 @@ class RouteTracker(QWidget):
             self._rows.addWidget(row)
             self._row_widgets.append(row)
         self._empty.setVisible(not shipments)
-        self._progress_header.setText(f"Progress · {now_label}")
+        self._progress_header.setText(tr("admin.distribution.progress_at").format(label=now_label))
 
     def rows(self) -> list[RouteRow]:
         return list(self._row_widgets)

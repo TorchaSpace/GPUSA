@@ -21,10 +21,12 @@ from PySide6.QtWidgets import (
     QLineEdit,
 )
 
+from shared.i18n import enum_label, tr
+from shared.formatting import MAX_AMOUNT
 from shared.gui_kit.popup_window import RefreshablePopup
-from shared.models import LEDGER_DOC_TYPE_LABELS, LEDGER_DOC_TYPES, LedgerEntry
+from shared.models import LEDGER_DOC_TYPES, LedgerEntry
 
-_DIRECTIONS = (("in", "Received (money coming in)"), ("out", "Issued (money going out)"))
+_DIRECTIONS = ("in", "out")
 
 
 def _date_edit() -> QDateEdit:
@@ -51,38 +53,43 @@ class LedgerEntryFormPopup(RefreshablePopup):
         self._editing: LedgerEntry | None = None
 
         self._direction_input = QComboBox()
-        for key, label in _DIRECTIONS:
-            self._direction_input.addItem(label, key)
+        for key in _DIRECTIONS:
+            self._direction_input.addItem(tr(f"admin.treasury.f_dir_{key}"), key)
         self._type_input = QComboBox()
         for key in LEDGER_DOC_TYPES:
-            self._type_input.addItem(LEDGER_DOC_TYPE_LABELS[key], key)
+            self._type_input.addItem(enum_label("doc_type", key), key)
         self._doc_no_input = QLineEdit()
-        self._doc_no_input.setPlaceholderText("e.g. CHK-40211")
+        self._doc_no_input.setPlaceholderText(tr("admin.treasury.f_doc_no_ph"))
         self._counterparty_input = QLineEdit()
         self._detail_input = QLineEdit()
-        self._detail_input.setPlaceholderText("Bank, note term or account (optional)")
+        self._detail_input.setPlaceholderText(tr("admin.treasury.f_detail_ph"))
         self._site_input = QLineEdit()
-        self._site_input.setPlaceholderText("Company-wide (leave blank) or a site, e.g. WH-01")
+        self._site_input.setPlaceholderText(tr("admin.treasury.f_site_ph"))
         self._issue_input = _date_edit()
         self._due_input = _date_edit()
         self._amount_input = QDoubleSpinBox()
         self._amount_input.setDecimals(2)
-        self._amount_input.setRange(0, 1_000_000_000)
+        self._amount_input.setRange(0, MAX_AMOUNT)  # same cap the repository enforces
         self._amount_input.setGroupSeparatorShown(True)
+        for line_edit, limit in (
+            (self._doc_no_input, 60), (self._counterparty_input, 120), (self._detail_input, 120), (self._site_input, 60),
+        ):
+            line_edit.setMaxLength(limit)
         self._error = QLabel()
+        self._error.setTextFormat(Qt.PlainText)  # repository messages echo typed text
         self._error.setWordWrap(True)
         self._error.hide()
 
         form = QFormLayout()
-        form.addRow("Direction", self._direction_input)
-        form.addRow("Document type", self._type_input)
-        form.addRow("Document no.", self._doc_no_input)
-        form.addRow("Counterparty", self._counterparty_input)
-        form.addRow("Bank / detail", self._detail_input)
-        form.addRow("Site", self._site_input)
-        form.addRow("Issue date", self._issue_input)
-        form.addRow("Due date", self._due_input)
-        form.addRow("Amount", self._amount_input)
+        form.addRow(tr("admin.treasury.f_direction"), self._direction_input)
+        form.addRow(tr("admin.treasury.f_type"), self._type_input)
+        form.addRow(tr("admin.treasury.f_doc_no"), self._doc_no_input)
+        form.addRow(tr("admin.treasury.f_counterparty"), self._counterparty_input)
+        form.addRow(tr("admin.treasury.f_detail"), self._detail_input)
+        form.addRow(tr("admin.treasury.f_site"), self._site_input)
+        form.addRow(tr("admin.treasury.f_issue"), self._issue_input)
+        form.addRow(tr("admin.treasury.f_due"), self._due_input)
+        form.addRow(tr("admin.treasury.f_amount"), self._amount_input)
         form.addRow(self._error)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._validate_and_accept)
@@ -101,7 +108,10 @@ class LedgerEntryFormPopup(RefreshablePopup):
         today = today or date.today()
         self._editing = entry
         self._error.hide()
-        self.setWindowTitle("Edit document" if entry else ("Record receipt" if direction == "in" else "Record payment"))
+        self.setWindowTitle(
+            tr("admin.treasury.f_title_edit") if entry
+            else (tr("admin.treasury.f_title_receipt") if direction == "in" else tr("admin.treasury.f_title_payment"))
+        )
 
         for widget, names in ((self._counterparty_input, counterparties), (self._site_input, sites)):
             completer = QCompleter(list(names), widget)
@@ -126,13 +136,13 @@ class LedgerEntryFormPopup(RefreshablePopup):
     def _validate_and_accept(self) -> None:
         problems = []
         if not self._doc_no_input.text().strip():
-            problems.append("Enter a document number.")
+            problems.append(tr("admin.treasury.f_err_docno"))
         if not self._counterparty_input.text().strip():
-            problems.append("Enter a counterparty.")
+            problems.append(tr("admin.treasury.f_err_cp"))
         if self._amount_input.value() <= 0:
-            problems.append("Enter an amount above 0.")
+            problems.append(tr("admin.treasury.f_err_amount"))
         if self._due_input.date() < self._issue_input.date():
-            problems.append("The due date can't be before the issue date.")
+            problems.append(tr("admin.treasury.f_err_dates"))
         if problems:
             self._error.setText(" ".join(problems))
             self._error.show()

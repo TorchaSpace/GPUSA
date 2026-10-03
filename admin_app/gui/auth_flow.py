@@ -10,12 +10,12 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QDialog, QWidget, QFormLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout,
+    QComboBox, QDialog, QWidget, QFormLayout, QLabel, QLineEdit, QMessageBox, QPushButton, QHBoxLayout, QVBoxLayout,
 )
 
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
-from database.connection import erase_all_data
+from database.connection import ERASE_CONFIRM_WORDS, erase_all_data, erase_confirmed
 from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared import auth, security_question
 from shared.i18n import tr
@@ -46,7 +46,7 @@ class FirstAdminDialog(QDialog):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
         self.session: Session | None = None
-        self.setWindowTitle("Create the first administrator")
+        self.setWindowTitle(tr("admin.auth.first_title"))
         self.setMinimumWidth(440)
         self.setObjectName("firstAdmin")
         self.setStyleSheet(
@@ -56,13 +56,10 @@ class FirstAdminDialog(QDialog):
         )
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
-        heading = QLabel("Welcome to GPUSA")
+        heading = QLabel(tr("admin.auth.welcome"))
         heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 26px; color: {p['text_primary']};")
         layout.addWidget(heading)
-        intro = QLabel(
-            "Nobody can sign in yet. Create the first administrator - you'll use this badge and PIN to open "
-            "Admin, and can add everyone else in Settings. Use a badge that's already in Workforce, or a new one."
-        )
+        intro = QLabel(tr("admin.auth.first_intro"))
         intro.setWordWrap(True)
         intro.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         layout.addWidget(intro)
@@ -72,10 +69,10 @@ class FirstAdminDialog(QDialog):
         self.badge_input = QLineEdit()
         self.pin_input = _pin_field()
         self.pin_again_input = _pin_field()
-        form.addRow("Your name", self.name_input)
-        form.addRow("Badge ID", self.badge_input)
-        form.addRow(f"PIN ({auth.MIN_ADMIN_PIN_LENGTH}+ digits)", self.pin_input)
-        form.addRow("PIN again", self.pin_again_input)
+        form.addRow(tr("admin.auth.your_name"), self.name_input)
+        form.addRow(tr("admin.auth.badge"), self.badge_input)
+        form.addRow(tr("admin.auth.pin_label").format(n=auth.MIN_ADMIN_PIN_LENGTH), self.pin_input)
+        form.addRow(tr("admin.auth.pin_again"), self.pin_again_input)
         # The way back in if the PIN is ever forgotten ("Forgot your PIN?").
         self.question_input = QComboBox()
         self.question_input.setEditable(True)
@@ -99,9 +96,9 @@ class FirstAdminDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        quit_button = QPushButton("Quit")
+        quit_button = QPushButton(tr("admin.auth.quit"))
         quit_button.clicked.connect(self.reject)
-        create = QPushButton("Create and sign in")
+        create = QPushButton(tr("admin.auth.create"))
         create.setDefault(True)
         create.setStyleSheet(f"background-color: {p['accent']}; color: #161514; border: none; padding: 7px 14px;")
         create.clicked.connect(self.create)
@@ -111,11 +108,11 @@ class FirstAdminDialog(QDialog):
 
     def create(self) -> None:
         if self.pin_input.text() != self.pin_again_input.text():
-            self._fail("The two PINs don't match.")
+            self._fail(tr("admin.auth.mismatch"))
             return
         try:
             # Checked first, so a bad answer doesn't leave an admin without a way back in.
-            security_question.validate(self.question_input.currentText(), self.answer_input.text())
+            account_repository.validate_security_answer(self.question_input.currentText(), self.answer_input.text())
             self.session = account_repository.create_first_admin(
                 self.badge_input.text(), self.name_input.text(), self.pin_input.text(), terminal_name()
             )
@@ -232,8 +229,9 @@ class ResetAdminAccessDialog(QDialog):
     - the recovery code, if one was made (Settings > My account);
     - start over: when nothing else is possible, the data is backed up to a
       file beside the database and erased, and a new administrator is
-      created. Nothing is exposed by this - it can only destroy, and it
-      keeps a copy.
+      created. It is guarded by a typed confirmation word (SIL / ERASE) and
+      says plainly that everything will be erased. Nothing is exposed by
+      this - it can only destroy, and it keeps a copy.
 
     `reset_badge` holds who was reset (for the sign-in dialog to prefill);
     `erased` is True after a start-over."""
@@ -290,9 +288,18 @@ class ResetAdminAccessDialog(QDialog):
         self._reset_host = QWidget()
         reset_layout = QVBoxLayout(self._reset_host)
         reset_layout.setContentsMargins(0, 0, 0, 0)
-        self.confirm_box = QCheckBox(tr("recovery.erase_confirm"))
-        self.confirm_box.toggled.connect(lambda on: self.erase_button.setEnabled(on))
-        reset_layout.addWidget(self.confirm_box)
+        self._erase_warning = QLabel(tr("admin.recovery.erase_warning"))
+        self._erase_warning.setWordWrap(True)
+        self._erase_warning.setStyleSheet(f"font-size: 13px; font-weight: bold; color: {p['alert_critical']};")
+        reset_layout.addWidget(self._erase_warning)
+        self._erase_prompt = QLabel(tr("admin.recovery.erase_type").format(words=" / ".join(ERASE_CONFIRM_WORDS)))
+        self._erase_prompt.setWordWrap(True)
+        reset_layout.addWidget(self._erase_prompt)
+        # No one-click wipe at a sign-in screen: the word has to be typed.
+        self.confirm_input = QLineEdit()
+        self.confirm_input.setPlaceholderText(ERASE_CONFIRM_WORDS[0])
+        self.confirm_input.textChanged.connect(lambda text: self.erase_button.setEnabled(erase_confirmed(text)))
+        reset_layout.addWidget(self.confirm_input)
         self.erase_button = QPushButton(tr("recovery.erase"))
         self.erase_button.setEnabled(False)
         self.erase_button.setStyleSheet(f"QPushButton {{ color: {p['alert_critical']}; border: 1px solid {p['alert_critical']}; }}")
@@ -394,12 +401,15 @@ class ResetAdminAccessDialog(QDialog):
         return True
 
     def erase(self) -> bool:
-        """Back everything up, then wipe it, so a new administrator can be created."""
-        if not self.confirm_box.isChecked():
+        """Back everything up, then wipe it, so a new administrator can be
+        created. Only after the confirmation word has been typed (SIL or
+        ERASE, any letter case)."""
+        if not erase_confirmed(self.confirm_input.text()):
+            self._say(tr("admin.recovery.erase_type").format(words=" / ".join(ERASE_CONFIRM_WORDS)))
             return False
         try:
-            self.backup_path = erase_all_data()
-        except (OSError, *DATABASE_ERRORS) as exc:
+            self.backup_path = erase_all_data(self.confirm_input.text())
+        except (OSError, ValueError, *DATABASE_ERRORS) as exc:
             self._say(str(exc))
             return False
         self.erased = True
@@ -428,25 +438,26 @@ def show_new_recovery_code(session: Session, parent=None) -> str | None:
     couldn't be made - Settings > My account can make one later)."""
     try:
         code = account_repository.create_recovery_code(session)
-    except DATABASE_ERRORS:
+    except DATABASE_ERRORS as exc:
+        QMessageBox.warning(parent, tr("recovery.code_title"), str(exc))
         return None
     RecoveryCodeDialog(code, parent).exec()
     return code
 
 
-def admin_sign_in_dialog(parent=None, cancel_text: str = "Quit") -> SignInDialog:
+def admin_sign_in_dialog(parent=None, cancel_text: str | None = None) -> SignInDialog:
     return SignInDialog(
-        "Sign in to Admin",
-        "Administrators only. Use your badge and PIN.",
+        tr("admin.auth.sign_in_title"),
+        tr("admin.auth.sign_in_sub"),
         lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name()),
         palette={**CLASSICAL_PALETTE, "on_accent": "#161514"},
-        cancel_text=cancel_text,
+        cancel_text=cancel_text or tr("admin.auth.quit"),
         parent=parent,
         extra_action=(tr("signin.forgot"), _offer_recovery),
     )
 
 
-def sign_in(parent=None, cancel_text: str = "Quit") -> Session | None:
+def sign_in(parent=None, cancel_text: str | None = None) -> Session | None:
     """Run the right dialog and return the Session, or None if cancelled.
     Raises DataAccessError if the database can't be read at all. After a
     "start over" from Forgot your PIN, the loop comes round to the

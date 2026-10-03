@@ -70,7 +70,42 @@ def test_fresh_setup_updates_an_existing_code(tmp_path, monkeypatch):
     _sidecar(exe, DETAILS)
     wb.register_pending_warehouse()
     w = warehouse_repository.get_by_code("WH-01")
-    assert (w.name, w.is_active) == ("İstanbul Merkez", True)
+    # details are refreshed, but a warehouse an administrator switched off stays off
+    assert (w.name, w.is_active) == ("İstanbul Merkez", False)
+    assert "stays inactive" in (tmp_path / "Depot_1.warehouse.log").read_text(encoding="utf-8")
+
+
+def test_sidecar_does_not_reactivate_a_warehouse_deactivated_in_admin(tmp_path, monkeypatch):
+    exe = _run_as(monkeypatch, tmp_path / "Depot_1.exe")
+    _sidecar(exe, DETAILS)
+    wb.register_pending_warehouse()  # first launch creates it, active
+    w = warehouse_repository.get_by_code("WH-01")
+    w.is_active = False
+    warehouse_repository.update(w)  # an admin switches it off
+
+    _sidecar(exe, {**DETAILS, "name": "Renamed in a new setup"})  # fresh (unstamped) sidecar again
+    wb.register_pending_warehouse()
+
+    w = warehouse_repository.get_by_code("WH-01")
+    assert (w.name, w.is_active) == ("Renamed in a new setup", False)
+
+
+def test_sidecar_capacity_below_current_usage_keeps_the_old_capacity(tmp_path, monkeypatch):
+    from database import product_repository, stock_repository
+    from shared.models import Product
+
+    exe = _run_as(monkeypatch, tmp_path / "Depot_1.exe")
+    _sidecar(exe, DETAILS)
+    wb.register_pending_warehouse()
+    product_repository.create(Product("A", "A", 1, 0, 0))
+    stock_repository.receive(warehouse_repository.get_by_code("WH-01").location, "A", 3000)
+
+    _sidecar(exe, {**DETAILS, "capacity_units": 100, "city": "Gebze"})
+    wb.register_pending_warehouse()
+
+    w = warehouse_repository.get_by_code("WH-01")
+    assert (w.capacity_units, w.city) == (5400, "Gebze")
+    assert "capacity left at 5400" in (tmp_path / "Depot_1.warehouse.log").read_text(encoding="utf-8")
 
 
 def test_bad_sidecars_are_logged_not_raised(tmp_path, monkeypatch):

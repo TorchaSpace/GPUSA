@@ -25,7 +25,18 @@ import calendar
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 
-from shared.builders.report_builder import ReportDocument, ReportSection, build_sales_report
+from shared.builders.report_builder import (
+    NumericText,
+    ReportDocument,
+    ReportSection,
+    amount_text,
+    build_sales_report,
+    cents_to_amount,
+    count_text,
+    transaction_cents,
+)
+from shared.formatting import day_month_text, localize_number, long_date_text
+from shared.i18n import tr
 from shared.models import Dealership, Transaction
 
 UNASSIGNED_REGION = "Unassigned"
@@ -37,8 +48,19 @@ PERIOD_LABELS = {"month": "Month", "quarter": "Quarter", "ytd": "Year to date"}
 @dataclass(frozen=True)
 class Period:
     """A reporting window, both ends inclusive, plus the window it is
-    compared against: the same number of elapsed days at the start of the
-    previous month / quarter / year."""
+    compared against.
+
+    Comparison rule (like with like): both windows cover the SAME NUMBER
+    OF WHOLE DAYS, counted from the first day of their month / quarter /
+    year. Normally that is every elapsed day including today, but if the
+    previous period is shorter than the elapsed days (31 Mar vs a 28-day
+    February) the comparison is clamped to the previous period's length
+    on BOTH sides: `compare_end` is the last day of the current window
+    that takes part (28 Mar), `prev_end` the last day of the previous one
+    (28 Feb). Today counts as a day even though it is still in progress,
+    so early in the day the change reads low; the screens say "so far".
+    The headline revenue and the projection always use the whole window.
+    """
 
     key: str
     label: str
@@ -46,6 +68,30 @@ class Period:
     end: date
     prev_start: date
     prev_end: date
+    compare_end: date | None = None  # None: the whole window is compared
+
+    @property
+    def comparable_end(self) -> date:
+        return self.end if self.compare_end is None else self.compare_end
+
+    @property
+    def comparable_days(self) -> int:
+        return (self.comparable_end - self.start).days + 1
+
+    @property
+    def is_clamped(self) -> bool:
+        return self.comparable_end != self.end
+
+    @property
+    def week_start(self) -> date:
+        """First day the 7-day sparklines need: the window's own start, or
+        6 days before its end when that is earlier (early in a month the
+        week reaches back into the previous one)."""
+        return min(self.start, self.end - timedelta(days=6))
+
+    @property
+    def week_start_datetime(self) -> datetime:
+        return datetime.combine(self.week_start, datetime.min.time())
 
     @property
     def days(self) -> int:
@@ -104,14 +150,17 @@ def period_for(key: str, today: date) -> Period:
     else:
         start = date(today.year, 1, 1)
         py, pm = today.year - 1, 1
-    elapsed = (today - start).days
+    elapsed_days = (today - start).days + 1
     prev_start = date(py, pm, 1)
     # Never spill past the end of the previous month / quarter / year (e.g.
-    # 31 Mar vs a 28-day February): compare against the whole of it instead.
+    # 31 Mar vs a 28-day February): both windows are cut to its length.
     span_months = {"month": 1, "quarter": 3, "ytd": 12}[key]
     last_y, last_m = _shift_months(py, pm, span_months - 1)
-    prev_end = min(prev_start + timedelta(days=elapsed), _clamp_day(last_y, last_m, 31))
-    return Period(key, PERIOD_LABELS[key], start, today, prev_start, prev_end)
+    prev_length = (_clamp_day(last_y, last_m, 31) - prev_start).days + 1
+    compared = min(elapsed_days, prev_length)
+    prev_end = prev_start + timedelta(days=compared - 1)
+    compare_end = None if compared == elapsed_days else start + timedelta(days=compared - 1)
+    return Period(key, PERIOD_LABELS[key], start, today, prev_start, prev_end, compare_end)
 
 
 # --- Series ---------------------------------------------------------------
@@ -122,14 +171,32 @@ def daily_totals(transactions: list[Transaction], start: date, end: date) -> lis
     a day with no sales), oldest first."""
     if end < start:
         return []
-    totals = [0.0] * ((end - start).days + 1)
+    totals = [0] * ((end - start).days + 1)  # whole cents
     for transaction in transactions:
         if transaction.created_at is None:
             continue
         index = (transaction.created_at.date() - start).days
         if 0 <= index < len(totals):
-            totals[index] += transaction.total
-    return [round(value, 2) for value in totals]
+            totals[index] += transaction_cents(transaction)
+    return [cents_to_amount(value) for value in totals]
+
+
+def revenue_between(transactions: list[Transaction], start: date, end: date) -> float:
+    """Revenue of the sales whose local calendar day is in [start, end]."""
+    return cents_to_amount(sum(
+        transaction_cents(t) for t in transactions if t.created_at is not None and start <= t.created_at.date() <= end
+    ))
+
+
+def period_comparison(
+    period: Period, transactions: list[Transaction], previous: list[Transaction]
+) -> tuple[float, float, float | None]:
+    """(this period's revenue over the compared days, the previous
+    period's revenue over the same number of days, percent change). The
+    headline revenue is NOT this - it covers the whole window."""
+    current = revenue_between(transactions, period.start, period.comparable_end)
+    prior = revenue_between(previous, period.prev_start, period.prev_end)
+    return current, prior, percent_change(current, prior)
 
 
 def cumulative(values: list[float]) -> list[float]:
@@ -147,18 +214,39 @@ def percent_change(current: float, previous: float) -> float | None:
     made-up "+100%")."""
     if previous <= 0:
         return None
-    return round((current - previous) / previous * 100, 1)
+    return round((current - previous) / previous * 100, 1) + 0.0  # + 0.0: -0.0 becomes 0.0
 
 
 def change_text(change: float | None, plain: bool = False) -> str:
-    """"▲ 8.4%" for the screen; plain=True gives "+8.4%" for exports, since
-    the PDF's built-in Helvetica has no triangle glyphs."""
+    """"▲ 8.4%" for the screen; plain=True gives "+8.4%" for exports (no
+    triangle glyphs needed in any font). The direction is decided from the
+    ROUNDED figure, so a change that displays as 0.0% is neutral ("• 0.0%"),
+    never an up or down arrow."""
     if change is None:
-        return "no prior data"
+        return tr("analytics.no_prior") if not plain else "no prior data"
+    shown = round(change, 1) + 0.0
+    if shown == 0:
+        return "0.0%" if plain else "• " + localize_number("0.0%")
     if plain:
-        return f"{change:+.1f}%"
-    arrow = "▲" if change >= 0 else "▼"
-    return f"{arrow} {abs(change):.1f}%"
+        return f"{shown:+.1f}%"
+    return f"{'▲' if shown > 0 else '▼'} {localize_number(f'{abs(shown):.1f}')}%"
+
+
+def change_direction(change: float | None) -> int | None:
+    """+1 up, -1 down, 0 neutral (rounds to 0.0%), None when unknown."""
+    if change is None:
+        return None
+    shown = round(change, 1)
+    return (shown > 0) - (shown < 0)
+
+
+def change_cell(change: float | None) -> str:
+    """The export cell for a change: numeric (a fraction, shown as a
+    percentage) in Excel, "+8.4%" text elsewhere."""
+    text = change_text(change, plain=True)
+    if change is None:
+        return text
+    return NumericText(text, round(change, 1) / 100, "+0.0%;-0.0%;0.0%")
 
 
 def project_total(total_so_far: float, elapsed_days: int, total_days: int) -> float | None:
@@ -177,13 +265,13 @@ def revenue_by_region(transactions: list[Transaction], dealerships: list[Dealers
     missing or no longer exists falls under "Unassigned". Regions with no
     sales are still listed (at 0) so the breakdown keeps a stable shape."""
     region_of = {d.code: d.region for d in dealerships}
-    totals: dict[str, float] = {region: 0.0 for region in sorted({d.region for d in dealerships})}
+    totals: dict[str, int] = {region: 0 for region in sorted({d.region for d in dealerships})}
     for transaction in transactions:
         region = region_of.get(transaction.dealership_code or "", UNASSIGNED_REGION)
-        totals[region] = totals.get(region, 0.0) + transaction.total
+        totals[region] = totals.get(region, 0) + transaction_cents(transaction)
     if UNASSIGNED_REGION not in totals:
-        totals[UNASSIGNED_REGION] = 0.0
-    return {region: round(value, 2) for region, value in totals.items()}
+        totals[UNASSIGNED_REGION] = 0
+    return {region: cents_to_amount(value) for region, value in totals.items()}
 
 
 @dataclass(frozen=True)
@@ -202,23 +290,36 @@ def _week_trend(week: list[float]) -> float | None:
 
 
 def top_dealerships(
-    transactions: list[Transaction], dealerships: list[Dealership], today: date, limit: int = 6
+    transactions: list[Transaction],
+    dealerships: list[Dealership],
+    today: date,
+    limit: int = 6,
+    week_transactions: list[Transaction] | None = None,
 ) -> list[DealershipRevenue]:
     """The `limit` dealerships with the most revenue in `transactions`,
     each with its last-7-days series (ending `today`) for a sparkline.
     Dealerships with no sales are left out - a ranking of zeros says
-    nothing."""
+    nothing.
+
+    The ranking uses `transactions` (the period); the 7-day series uses
+    `week_transactions` (default: the same list). Early in a month the
+    period holds fewer than 7 days, so the caller passes the sales from
+    Period.week_start on, or the earlier days would read as zero."""
     by_code: dict[str, list[Transaction]] = {}
     for transaction in transactions:
         if transaction.dealership_code:
             by_code.setdefault(transaction.dealership_code, []).append(transaction)
+    week_by_code: dict[str, list[Transaction]] = {}
+    for transaction in transactions if week_transactions is None else week_transactions:
+        if transaction.dealership_code:
+            week_by_code.setdefault(transaction.dealership_code, []).append(transaction)
     ranked: list[DealershipRevenue] = []
     for dealership in dealerships:
         sales = by_code.get(dealership.code, [])
-        revenue = round(sum(t.total for t in sales), 2)
+        revenue = cents_to_amount(sum(transaction_cents(t) for t in sales))
         if revenue <= 0:
             continue
-        week = daily_totals(sales, today - timedelta(days=6), today)
+        week = daily_totals(week_by_code.get(dealership.code, []), today - timedelta(days=6), today)
         ranked.append(
             DealershipRevenue(dealership.code, dealership.name, dealership.region, revenue, week, _week_trend(week))
         )
@@ -229,7 +330,7 @@ def top_dealerships(
 def sales_today(transactions: list[Transaction], today: date) -> tuple[int, float]:
     """(number of sales, revenue) for `today` out of `transactions`."""
     todays = [t for t in transactions if t.created_at is not None and t.created_at.date() == today]
-    return len(todays), round(sum(t.total for t in todays), 2)
+    return len(todays), cents_to_amount(sum(transaction_cents(t) for t in todays))
 
 
 # --- The exportable report ------------------------------------------------
@@ -240,32 +341,43 @@ def build_period_report(
     period: Period,
     dealerships: list[Dealership],
     previous: list[Transaction] | None = None,
+    week_transactions: list[Transaction] | None = None,
 ) -> ReportDocument:
     """The Reports page's export (PDF / Excel / CSV all render this one
     document): totals with the comparison, revenue per day, revenue per
-    region, the dealership ranking, then the per-product breakdown."""
+    region, the dealership ranking, then the per-product breakdown.
+    `week_transactions` are the sales from Period.week_start on, for the
+    ranking's 7-day trend (see top_dealerships)."""
     base = build_sales_report(transactions, period.start_datetime, period.end_exclusive)
     base.title = f"Revenue report · {period.start:%Y-%m-%d} to {period.end:%Y-%m-%d} ({period.label})"
-    revenue = round(sum(t.total for t in transactions), 2)
+    revenue = cents_to_amount(sum(transaction_cents(t) for t in transactions))
 
-    totals_rows = [("Sales", str(len(transactions))), ("Revenue", f"{revenue:.2f}")]
+    totals_rows: list[tuple[str, ...]] = [("Sales", count_text(len(transactions))), ("Revenue", amount_text(revenue))]
     if previous is not None:
-        prior = round(sum(t.total for t in previous), 2)
+        _, prior, change = period_comparison(period, transactions, previous)
         totals_rows += [
-            (f"Previous period ({period.prev_start:%Y-%m-%d} to {period.prev_end:%Y-%m-%d})", f"{prior:.2f}"),
-            ("Change", change_text(percent_change(revenue, prior), plain=True)),
+            (f"Previous period ({period.prev_start:%Y-%m-%d} to {period.prev_end:%Y-%m-%d})", amount_text(prior)),
+            ("Change", change_cell(change)),
         ]
+        if period.is_clamped:
+            totals_rows.append((
+                "Change compares",
+                f"{period.start:%Y-%m-%d} to {period.comparable_end:%Y-%m-%d} against the same {period.comparable_days} days",
+            ))
     projection = project_total(revenue, period.days, period.total_days) if period.end < _period_close(period) else None
     if projection is not None:
-        totals_rows.append(("Projected for the full period", f"{projection:.2f}"))
+        totals_rows.append(("Projected for the full period", amount_text(projection)))
 
     series = daily_totals(transactions, period.start, period.end)
-    daily_rows = [(f"{period.start + timedelta(days=i):%Y-%m-%d}", f"{value:.2f}") for i, value in enumerate(series)]
+    daily_rows = [(f"{period.start + timedelta(days=i):%Y-%m-%d}", amount_text(value)) for i, value in enumerate(series)]
 
-    region_rows = [(region, f"{value:.2f}") for region, value in revenue_by_region(transactions, dealerships).items()]
+    region_rows = [(region, amount_text(value)) for region, value in revenue_by_region(transactions, dealerships).items()]
     top_rows = [
-        (str(rank), d.name, d.region, f"{d.revenue:.2f}", change_text(d.trend, plain=True))
-        for rank, d in enumerate(top_dealerships(transactions, dealerships, period.end, limit=10), start=1)
+        (count_text(rank), d.name, d.region, amount_text(d.revenue), change_cell(d.trend))
+        for rank, d in enumerate(
+            top_dealerships(transactions, dealerships, period.end, limit=10, week_transactions=week_transactions),
+            start=1,
+        )
     ]
 
     sections = [
@@ -289,11 +401,11 @@ def compact_amount(value: float) -> str:
     like every other amount in the app)."""
     magnitude = abs(value)
     if magnitude >= 1_000_000:
-        return f"{value / 1_000_000:.2f}M"
+        return localize_number(f"{value / 1_000_000:.2f}M")
     if magnitude >= 10_000:
         return f"{value / 1_000:.0f}k"
     if magnitude >= 1_000:
-        return f"{value / 1_000:.1f}k"
+        return localize_number(f"{value / 1_000:.1f}k")
     return f"{value:.0f}"
 
 
@@ -321,7 +433,7 @@ class ReportView:
     period: Period
     mode: str  # "cumulative" | "daily"
     revenue: float
-    previous_revenue: float
+    previous_revenue: float  # over the compared days only (see Period)
     change: float | None
     projected_total: float | None  # None for a closed period or before any sales
     current: list[float]
@@ -334,7 +446,7 @@ class ReportView:
     sale_count: int
 
     def day_label(self, index: int) -> str:
-        return f"{self.period.start + timedelta(days=index):%a %d %b %Y}"
+        return long_date_text(self.period.start + timedelta(days=index))
 
     def readout(self, index: int) -> tuple[str, float | None, float | None, bool]:
         """(date text, this period's value, previous period's value,
@@ -354,13 +466,14 @@ def build_report_view(
     previous: list[Transaction],
     dealerships: list[Dealership],
     mode: str = "cumulative",
+    week_transactions: list[Transaction] | None = None,
 ) -> ReportView:
     if mode not in ("cumulative", "daily"):
         raise ValueError(f"mode must be 'cumulative' or 'daily', got {mode!r}")
     daily = daily_totals(transactions, period.start, period.end)
     prior_daily = daily_totals(previous, period.prev_start, period.prev_end)
-    revenue = round(sum(daily), 2)
-    previous_revenue = round(sum(prior_daily), 2)
+    revenue = revenue_between(transactions, period.start, period.end)
+    _, previous_revenue, change = period_comparison(period, transactions, previous)
 
     open_period = period.end < _period_close(period)
     projected_total = project_total(revenue, period.days, period.total_days) if open_period else None
@@ -379,9 +492,9 @@ def build_report_view(
     total_points = period.total_days if open_period else period.days
 
     step = max(1, total_points // 6)
-    labels = [(i, f"{period.start + timedelta(days=i):%d %b}") for i in range(0, total_points, step)]
+    labels = [(i, day_month_text(period.start + timedelta(days=i))) for i in range(0, total_points, step)]
     if labels and labels[-1][0] != total_points - 1 and total_points - 1 - labels[-1][0] >= step // 2 + 1:
-        labels.append((total_points - 1, f"{period.start + timedelta(days=total_points - 1):%d %b}"))
+        labels.append((total_points - 1, day_month_text(period.start + timedelta(days=total_points - 1))))
 
     by_region = revenue_by_region(transactions, dealerships)
     shown = [(region, value) for region, value in by_region.items() if value > 0]
@@ -391,8 +504,8 @@ def build_report_view(
 
     return ReportView(
         period=period, mode=mode, revenue=revenue, previous_revenue=previous_revenue,
-        change=percent_change(revenue, previous_revenue), projected_total=projected_total,
+        change=change, projected_total=projected_total,
         current=current, previous=prior_series, projection=projection, total_points=total_points,
-        x_labels=labels, regions=regions, top=top_dealerships(transactions, dealerships, period.end),
+        x_labels=labels, regions=regions, top=top_dealerships(transactions, dealerships, period.end, week_transactions=week_transactions),
         sale_count=len(transactions),
     )

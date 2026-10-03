@@ -17,12 +17,47 @@ purchase orders or sales.
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 from datetime import date
 
+from shared.i18n import UserError
 from database.connection import connection_scope
-from database.exceptions import DuplicateLedgerDocumentError, LedgerEntryNotFoundError
+from database.exceptions import (
+    DataAccessError,
+    DuplicateLedgerDocumentError,
+    LedgerEntryNotFoundError,
+    LedgerEntryStateError,
+)
+from shared.formatting import round_money
 from shared.models import LEDGER_DIRECTIONS, LEDGER_DOC_TYPES, LedgerEntry
+
+
+def _wrap_sqlite(func):
+    """A stray sqlite3.Error ("database is locked", a CHECK failure we
+    didn't anticipate) becomes a DataAccessError, so callers never see
+    SQLite exceptions. ValueError and our own errors pass through."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except sqlite3.Error as exc:
+            raise DataAccessError(f"Database error: {exc}") from exc
+
+    return wrapper
+
+
+def normalise_site(site: str | None) -> str | None:
+    """Sites are stored stripped and upper-cased, so "wh-01" and "WH-01"
+    are one site. Blank -> None (a company-level document)."""
+    return " ".join((site or "").split()).upper() or None
+
+
+def normalise_doc_no(doc_no: str | None) -> str:
+    """Whitespace collapsed, upper-cased - so "chk-1", "CHK-1" and
+    "chk  1" collide on the UNIQUE (direction, doc_type, doc_no) key."""
+    return " ".join((doc_no or "").split()).upper()
 
 
 def _row_to_entry(row: sqlite3.Row) -> LedgerEntry:
@@ -50,24 +85,24 @@ def _clean(entry: LedgerEntry) -> LedgerEntry:
         raise ValueError(f"direction must be one of {LEDGER_DIRECTIONS!r}")
     if entry.doc_type not in LEDGER_DOC_TYPES:
         raise ValueError(f"document type must be one of {LEDGER_DOC_TYPES!r}")
-    doc_no = (entry.doc_no or "").strip()
+    doc_no = normalise_doc_no(entry.doc_no)
     counterparty = (entry.counterparty or "").strip()
     if not doc_no:
-        raise ValueError("Enter a document number.")
+        raise UserError("err.doc_no_required")
     if not counterparty:
-        raise ValueError("Enter a counterparty.")
-    if entry.amount is None or entry.amount <= 0:
-        raise ValueError("Amount must be greater than 0.")
+        raise UserError("err.counterparty_required")
+    amount = round_money(entry.amount, "Amount")  # finite, >= 0.01 after rounding, <= MAX_AMOUNT
     if entry.due_date < entry.issue_date:
-        raise ValueError("The due date can't be before the issue date.")
+        raise UserError("err.due_before_issue")
     entry.doc_no = doc_no
     entry.counterparty = counterparty
     entry.detail = (entry.detail or "").strip() or None
-    entry.site = (entry.site or "").strip() or None
-    entry.amount = round(float(entry.amount), 2)
+    entry.site = normalise_site(entry.site)
+    entry.amount = amount
     return entry
 
 
+@_wrap_sqlite
 def get(entry_id: int) -> LedgerEntry:
     with connection_scope() as conn:
         row = conn.execute("SELECT * FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
@@ -76,25 +111,29 @@ def get(entry_id: int) -> LedgerEntry:
     return _row_to_entry(row)
 
 
+@_wrap_sqlite
 def list_entries(direction: str | None = None, site: str | None = None) -> list[LedgerEntry]:
     """Entries ordered by due date (soonest first), optionally filtered
-    by direction and/or site."""
+    by direction and/or site (compared case-insensitively, so rows saved
+    before sites were normalised still match)."""
     clauses, params = [], []
     if direction is not None:
         clauses.append("direction = ?")
         params.append(direction)
-    if site is not None:
-        clauses.append("site = ?")
-        params.append(site)
     sql = "SELECT * FROM ledger_entries"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY due_date, id"
     with connection_scope() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [_row_to_entry(row) for row in rows]
+    entries = [_row_to_entry(row) for row in rows]
+    if site is not None:
+        wanted = normalise_site(site)
+        entries = [e for e in entries if normalise_site(e.site) == wanted]
+    return entries
 
 
+@_wrap_sqlite
 def create(entry: LedgerEntry) -> LedgerEntry:
     """Record a new (pending) document. Returns it with its id. Raises
     ValueError for invalid fields, DuplicateLedgerDocumentError if the
@@ -125,24 +164,20 @@ def create(entry: LedgerEntry) -> LedgerEntry:
     return _row_to_entry(row)
 
 
+@_wrap_sqlite
 def update(entry: LedgerEntry) -> LedgerEntry:
-    """Edit a document's details (not its status - see mark_*/reopen).
-    Changing an incoming check/note that's been endorsed into a type that
-    can't be endorsed is refused."""
+    """Edit a PENDING document's details (not its status - see
+    mark_*/reopen). Settled entries (cleared/endorsed) are history:
+    raises LedgerEntryStateError - reopen it first."""
     if entry.id is None:
-        raise ValueError("Can't update an entry that was never saved.")
+        raise UserError("err.ledger_unsaved")
     entry = _clean(entry)
     with connection_scope() as conn:
-        current = conn.execute("SELECT status FROM ledger_entries WHERE id = ?", (entry.id,)).fetchone()
-        if current is None:
-            raise LedgerEntryNotFoundError(entry.id)
-        if current["status"] == "endorsed" and not _can_endorse(entry.direction, entry.doc_type):
-            raise ValueError("Only a received check or note can be endorsed - reopen it first.")
         try:
-            conn.execute(
+            cursor = conn.execute(
                 "UPDATE ledger_entries SET direction = ?, doc_type = ?, doc_no = ?, counterparty = ?, "
                 "detail = ?, site = ?, issue_date = ?, due_date = ?, amount = ?, "
-                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND status = 'pending'",
                 (
                     entry.direction,
                     entry.doc_type,
@@ -160,53 +195,83 @@ def update(entry: LedgerEntry) -> LedgerEntry:
             if "UNIQUE" in str(exc):
                 raise DuplicateLedgerDocumentError(entry.doc_no) from exc
             raise
+        if cursor.rowcount == 0:
+            _explain_refusal(conn, entry.id, "edit")
     return get(entry.id)
 
 
-def delete(entry_id: int) -> None:
-    with connection_scope() as conn:
-        cursor = conn.execute("DELETE FROM ledger_entries WHERE id = ?", (entry_id,))
-    if cursor.rowcount == 0:
+def _explain_refusal(conn: sqlite3.Connection, entry_id: int, action: str) -> None:
+    """A conditional UPDATE/DELETE matched no row: say why (missing, or
+    in the wrong status). Always raises."""
+    row = conn.execute("SELECT status FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
+    if row is None:
         raise LedgerEntryNotFoundError(entry_id)
+    raise LedgerEntryStateError(entry_id, row["status"], action)
 
 
-def _can_endorse(direction: str, doc_type: str) -> bool:
-    return direction == "in" and doc_type in ("check", "note")
+@_wrap_sqlite
+def delete(entry_id: int) -> None:
+    """Remove a PENDING entry (a mistake). Settled entries are history:
+    raises LedgerEntryStateError - reopen first if it really was an error."""
+    with connection_scope() as conn:
+        cursor = conn.execute("DELETE FROM ledger_entries WHERE id = ? AND status = 'pending'", (entry_id,))
+        if cursor.rowcount == 0:
+            _explain_refusal(conn, entry_id, "delete")
 
 
-def _set_status(entry_id: int, status: str) -> LedgerEntry:
-    settled = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')" if status != "pending" else "NULL"
+_NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+def _transition(entry_id: int, new_status: str, allowed_from: tuple[str, ...], action: str,
+                extra_where: str = "") -> LedgerEntry:
+    """One conditional UPDATE: it only matches while the entry is still in
+    a status `allowed_from`, so two admins on two machines can't both
+    settle it, and a second clear can't overwrite settled_at."""
+    settled = _NOW if new_status != "pending" else "NULL"
+    marks = ", ".join("?" for _ in allowed_from)
     with connection_scope() as conn:
         cursor = conn.execute(
-            f"UPDATE ledger_entries SET status = ?, settled_at = {settled}, "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-            (status, entry_id),
+            f"UPDATE ledger_entries SET status = ?, settled_at = {settled}, updated_at = {_NOW} "
+            f"WHERE id = ? AND status IN ({marks}){extra_where}",
+            (new_status, entry_id, *allowed_from),
         )
-    if cursor.rowcount == 0:
-        raise LedgerEntryNotFoundError(entry_id)
+        if cursor.rowcount == 0:
+            row = conn.execute("SELECT status FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
+            if row is None:
+                raise LedgerEntryNotFoundError(entry_id)
+            if row["status"] not in allowed_from:
+                raise LedgerEntryStateError(entry_id, row["status"], action)
+            raise UserError("err.endorse_only")
     return get(entry_id)
 
 
+@_wrap_sqlite
 def mark_cleared(entry_id: int) -> LedgerEntry:
-    """Paid / collected / cashed."""
-    return _set_status(entry_id, "cleared")
+    """Paid / collected / cashed. Only from pending (LedgerEntryStateError
+    otherwise - e.g. someone else already settled it)."""
+    return _transition(entry_id, "cleared", ("pending",), "clear")
 
 
+@_wrap_sqlite
 def mark_endorsed(entry_id: int) -> LedgerEntry:
     """A received check or note passed on to someone else (e.g. to pay a
-    supplier) instead of being cashed. Raises ValueError for anything
-    else - you can't endorse your own outgoing check or an invoice."""
-    entry = get(entry_id)
-    if not _can_endorse(entry.direction, entry.doc_type):
-        raise ValueError("Only a received check or promissory note can be endorsed.")
-    return _set_status(entry_id, "endorsed")
+    supplier) instead of being cashed. Only from pending. Raises
+    ValueError for anything else - you can't endorse your own outgoing
+    check or an invoice."""
+    return _transition(
+        entry_id, "endorsed", ("pending",), "endorse",
+        extra_where=" AND direction = 'in' AND doc_type IN ('check', 'note')",
+    )
 
 
+@_wrap_sqlite
 def reopen(entry_id: int) -> LedgerEntry:
-    """Undo a clear/endorse (e.g. marked by mistake, or a check bounced)."""
-    return _set_status(entry_id, "pending")
+    """Undo a clear/endorse (e.g. marked by mistake, or a check bounced).
+    Only from cleared/endorsed."""
+    return _transition(entry_id, "pending", ("cleared", "endorsed"), "reopen")
 
 
+@_wrap_sqlite
 def known_counterparties() -> list[str]:
     """Names to suggest while typing a counterparty: everyone already in
     the ledger, every dealership, and every supplier seen on a purchase

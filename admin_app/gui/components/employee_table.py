@@ -14,8 +14,40 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
 from admin_app.theme import CLASSICAL_PALETTE
+from shared.formatting import format_number
+from shared.i18n import enum_label, tr
 
-_COLUMNS = ("Badge", "Name", "Role", "Location", "Status", "Hours")
+_COLUMN_KEYS = ("badge", "name", "role", "location", "status", "hours")
+
+
+def _columns() -> tuple[str, ...]:
+    return tuple(tr(f"admin.workforce.col_{key}") for key in _COLUMN_KEYS)
+
+
+def hours_text(hours: float | None) -> str:
+    """"7.5h" ("7,5 sa" in Turkish), or "—" for no hours yet."""
+    if hours is None:
+        return "—"
+    return tr("admin.workforce.hours_fmt").format(h=format_number(hours, 1))
+
+
+def location_text(entry: dict) -> str:
+    """"Merkez Depo (Warehouse)" - the place's name from the database, the
+    type translated."""
+    return tr("admin.workforce.location_fmt").format(
+        name=entry["location_name"], kind=enum_label("location_type", entry["location_type"])
+    )
+
+
+def status_text(entry: dict) -> str:
+    """The Status cell: the status, ' · Inactive' for a switched-off
+    employee, and a warning when an open shift looks forgotten (open for
+    more than attendance_repository.LONG_SHIFT_HOURS)."""
+    status = enum_label("attendance", entry["status"])
+    text = status if entry["is_active"] else f"{status} · {tr('admin.workforce.status_inactive')}"
+    if entry.get("long_open"):
+        text += " · " + tr("admin.workforce.long_open")
+    return text
 
 
 def status_color(status: str) -> str:
@@ -45,12 +77,12 @@ class WorkforceTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._roster)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_COLUMNS)
+        return 0 if parent.isValid() else len(_COLUMN_KEYS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role != Qt.DisplayRole or orientation != Qt.Horizontal:
             return None
-        return _COLUMNS[section]
+        return _columns()[section]
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
@@ -64,13 +96,13 @@ class WorkforceTableModel(QAbstractTableModel):
             if column == 1:
                 return entry["name"]
             if column == 2:
-                return entry["role"]
+                return enum_label("role", entry["role"])
             if column == 3:
-                return f"{entry['location_name']} ({entry['location_type']})"
+                return location_text(entry)
             if column == 4:
-                return entry["status"] if entry["is_active"] else f"{entry['status']} · Inactive"
+                return status_text(entry)
             if column == 5:
-                return f"{entry['hours']:.1f}h" if entry["hours"] is not None else "—"
+                return hours_text(entry["hours"])
         elif role == Qt.ForegroundRole and column == 4:
             return QColor(status_color(entry["status"]))
         return None
@@ -123,6 +155,15 @@ class WorkforceTable(QTableView):
 
     def set_roster(self, roster: list[dict]) -> None:
         self._table_model.set_roster(roster)
+
+    def select_badge(self, badge_id: str) -> bool:
+        """Select the row for `badge_id` (case-insensitive); False if absent."""
+        wanted = (badge_id or "").strip().upper()
+        for row in range(self._table_model.rowCount()):
+            if self._table_model.row_at(row)["badge_id"].upper() == wanted:
+                self.selectRow(row)
+                return True
+        return False
 
     def selected_row(self) -> dict | None:
         indexes = self.selectionModel().selectedRows()

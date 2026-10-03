@@ -153,3 +153,70 @@ def test_add_edit_and_delete_guard(page, monkeypatch):
     page.select_site("WH-03")
     page._delete_selected()
     assert [w.code for w in warehouse_repository.list_all()] == ["WH-01", "WH-02"]
+
+
+def test_deleting_a_warehouse_with_an_open_shipment_is_refused_with_a_hint(page, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    # empty WH-02's neighbour first so the only blocker is the shipment (WH-01 holds stock, so use a fresh one)
+    warehouse_repository.create(Warehouse(code="WH-09", name="Empty", city="X"))
+    stock_repository.receive(StockLocation.warehouse("WH-09"), "BOX", 5)
+    stock_repository.transfer(StockLocation.warehouse("WH-09"), UNASSIGNED, "BOX", 5)
+    shipment_repository.create("WH-09 · Empty", "001", "X", datetime.now() + timedelta(hours=2), [("BOX", 1)],
+                               origin_code="WH-09")
+    page.reload()
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    page.select_site("WH-09")
+
+    page._delete_selected()
+
+    assert warnings and "Deactivate" in warnings[0] and "shipment" in warnings[0]
+    assert warehouse_repository.get_by_code("WH-09")
+
+
+def test_percentage_is_floored_and_over_capacity_is_called_out(page):
+    # 280 of 500 = 56%; push WH-01 to 499/500 (99.8%): must read 99%, not a "100%" next to "Near capacity".
+    stock_repository.receive(WH1, "TAPE", 219)
+    page.reload()
+    card = next(c for c in page._cards if c.warehouse.code == "WH-01")
+    assert card.percent_label.text() == "99%" and card.status_label.text() == "Near capacity"
+    assert card.units_label.text() == "499 / 500 units"
+
+    stock_repository.receive(WH1, "TAPE", 1)  # exactly full
+    page.reload()
+    card = next(c for c in page._cards if c.warehouse.code == "WH-01")
+    assert card.percent_label.text() == "100%"
+
+
+def test_receiving_past_capacity_is_refused_by_the_move_popup(page):
+    page._open_move()
+    popup = page._move_popup
+    popup._product_input.setCurrentIndex(popup._product_input.findData("TAPE"))
+    popup._select(popup._from_input, UNASSIGNED)
+    popup._select(popup._to_input, WH1)
+    popup._qty_input.setValue(50)  # WH-01 holds 280 of 500: 50 more fits
+    popup._save()
+    assert "Moved" in popup._error.text()
+    assert stock_repository.quantity_at(WH1, "TAPE") == 50
+
+    stock_repository.receive(UNASSIGNED, "TAPE", 400)
+    popup._qty_input.setValue(300)  # 330 + 300 > 500
+    popup._save()
+    assert "exceed its capacity" in popup._error.text()
+    assert stock_repository.quantity_at(WH1, "TAPE") == 50  # nothing moved
+    popup.close()
+
+
+def test_lowering_capacity_below_usage_is_a_message_not_a_crash(page, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    warnings = []
+    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    page.select_site("WH-01")
+    page._open_edit()
+    page._form._capacity_input.setText("100")  # WH-01 holds 280
+    page._save_form()
+    assert warnings and "holds 280" in warnings[0]
+    assert warehouse_repository.get_by_code("WH-01").capacity_units == 500

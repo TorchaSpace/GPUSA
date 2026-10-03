@@ -9,6 +9,7 @@ functions - no Qt, no database.
 
 from __future__ import annotations
 
+from shared.i18n import UserError
 from shared.search import fold
 
 MIN_QUESTION_LENGTH = 8
@@ -35,9 +36,9 @@ def validate(question: str, answer: str) -> tuple[str, str]:
     """(clean question, clean answer text) or ValueError with a message fit to show."""
     question = " ".join((question or "").split())
     if len(question) < MIN_QUESTION_LENGTH:
-        raise ValueError("Write a question of at least %d characters." % MIN_QUESTION_LENGTH)
+        raise UserError("err.question_short", n=MIN_QUESTION_LENGTH)
     if len(question) > MAX_QUESTION_LENGTH:
-        raise ValueError("The question can be at most %d characters." % MAX_QUESTION_LENGTH)
+        raise UserError("err.question_long", n=MAX_QUESTION_LENGTH)
     if len(normalize_answer(answer)) < MIN_ANSWER_LENGTH:
-        raise ValueError("The answer needs at least %d letters or digits." % MIN_ANSWER_LENGTH)
+        raise UserError("err.answer_short", n=MIN_ANSWER_LENGTH)
     return question, " ".join((answer or "").split())

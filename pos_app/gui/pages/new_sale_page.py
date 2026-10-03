@@ -45,14 +45,16 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database import stock_repository
-from database.exceptions import DataAccessError, InsufficientStockError
+from database import account_repository, product_repository, stock_repository
+from database.exceptions import DATABASE_ERRORS, InsufficientStockError
+from pos_app.gui.auth_flow import till_dealership_problem
 from pos_app.gui.components.action_button import ActionButton
 from pos_app.gui.product_status import stock_status
 from pos_app.services.checkout_service import complete_sale
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.models import UNASSIGNED, LineItem, Product, StockLocation, Transaction
 from shared import current_session
+from shared.warehousing import tr_or
 
 _STATUS_COLORS = {"out": ("#d8412f", "white"), "low": ("#f2c230", "#3a2a05")}
 
@@ -130,7 +132,11 @@ class NewSalePage(QWidget):
                 item.widget().deleteLater()
 
         query = self._search_input.text().strip().lower()
-        visible = [product for product in self._all_products if query in product.name.lower()]
+        # Deactivated products can't be sold (and the search matches a scanned barcode as well as names).
+        visible = [
+            product for product in self._all_products
+            if product.is_active and (query in product.name.lower() or query in product.barcode.lower())
+        ]
 
         columns = 4
         for index, product in enumerate(visible):
@@ -238,6 +244,16 @@ class NewSalePage(QWidget):
         self._cart_rows_layout.addStretch(1)
         scroll.setWidget(cart_host)
         layout.addWidget(scroll, stretch=1)
+
+        # Why the cart changed under the cashier (a price moved, an item was withdrawn, stock ran short).
+        self._cart_notice = QLabel()
+        self._cart_notice.setWordWrap(True)
+        self._cart_notice.setStyleSheet(
+            "background-color: #fff6d6; color: #3a2a05; border: 1px solid #f4b400; "
+            "border-radius: 12px; padding: 8px 12px; margin: 0 16px 8px 16px; font-size: 14px;"
+        )
+        self._cart_notice.hide()
+        layout.addWidget(self._cart_notice)
 
         footer = QWidget()
         footer.setStyleSheet(f"background-color: {p['surface']};")
@@ -387,14 +403,88 @@ class NewSalePage(QWidget):
     def reload(self) -> None:
         try:
             self._all_products = stock_repository.products_at(self._location)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             self._all_products = []
+        issues = self._refresh_cart()  # prices / availability may have changed since the lines were added
+        self._show_notice(issues)
         self._render_grid()
         self._render_cart()
+
+    # --- keeping the cart true to the database -------------------------------
+
+    def _cart_triples(self) -> list[tuple[str, float, int]]:
+        return [(line.barcode, line.unit_price, line.quantity) for line in self._cart.values()]
+
+    def _refresh_cart(self) -> list:
+        """Re-read every cart line from the database and bring it in line:
+        a changed price is taken over, a withdrawn / deactivated product is
+        removed, a quantity above what the shelf holds is cut back.
+        Returns the CartIssues found (empty: the cart was already right)."""
+        if not self._cart:
+            return []
+        try:
+            issues = product_repository.check_cart(self._location, self._cart_triples())
+        except DATABASE_ERRORS:
+            return []
+        self._apply_issues(issues)
+        return issues
+
+    def _apply_issues(self, issues) -> None:
+        for issue in issues:
+            line = self._cart.get(issue.barcode)
+            if line is None:
+                continue
+            if issue.kind == "unavailable":
+                del self._cart[issue.barcode]
+            elif issue.kind == "price":
+                line.unit_price = issue.current_price
+                line.max_quantity = issue.available
+                line.quantity = min(line.quantity, issue.available)
+            elif issue.kind == "stock":
+                line.max_quantity = issue.available
+                line.quantity = min(line.quantity, issue.available)
+            if issue.barcode in self._cart and self._cart[issue.barcode].quantity <= 0:
+                del self._cart[issue.barcode]
+        # lines that were fine keep their limit current too
+        for product in self._all_products:
+            line = self._cart.get(product.barcode)
+            if line is not None:
+                line.max_quantity = product.stock_quantity
+
+    def _show_notice(self, issues) -> None:
+        if issues:
+            self._cart_notice.setText(" ".join(issue.message for issue in issues)
+                                      + " " + tr_or("pos.cart_refreshed", "The cart has been updated - check it before charging."))
+            self._cart_notice.show()
+        else:
+            self._cart_notice.hide()
+
+    def cart_notice(self) -> str:
+        """The visible cart-changed notice ('' when none) - for tests."""
+        return self._cart_notice.text() if not self._cart_notice.isHidden() else ""
 
     def _checkout(self, payment_label: str) -> None:
         if not self._cart:
             QMessageBox.information(self, "Cart is empty", "Add a product before completing a sale.")
+            return
+
+        # Re-read prices and availability NOW: the till may have been open for a while, and an admin
+        # can change a price (or withdraw a product) at any time. Refuse, refresh, and let the cashier look again.
+        try:
+            issues = product_repository.check_cart(self._location, self._cart_triples())
+        except DATABASE_ERRORS as exc:
+            QMessageBox.warning(self, "Sale failed", str(exc))
+            return
+        if issues:
+            self._apply_issues(issues)
+            self.reload()  # fresh grid + cart (clears the notice, so show it after)
+            self._show_notice(issues)
+            QMessageBox.warning(
+                self,
+                tr_or("pos.cart_changed_title", "Cart changed"),
+                " ".join(issue.message for issue in issues)
+                + "\n\n" + tr_or("pos.cart_changed_body", "Nothing was charged. Check the updated cart and try again."),
+            )
             return
 
         pending = Transaction(
@@ -409,6 +499,20 @@ class NewSalePage(QWidget):
             ]
         )
 
+        session = current_session.get()
+        if session is not None and not account_repository.is_session_valid(session):
+            QMessageBox.warning(
+                self, "Sign in again",
+                "This sign-in is no longer valid (the account was switched off or changed). "
+                "Nothing was charged. Please switch cashier.",
+            )
+            return
+        if self._location.kind == "dealership":
+            problem = till_dealership_problem(self._location.code)
+            if problem:
+                QMessageBox.warning(self, "Till switched off", problem)
+                return
+
         try:
             finalized = complete_sale(pending, self._location, current_session.actor())
         except InsufficientStockError as exc:
@@ -420,11 +524,12 @@ class NewSalePage(QWidget):
             )
             self.reload()
             return
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, "Sale failed", str(exc))
             return
 
         self._cart.clear()
+        self._cart_notice.hide()
         self.reload()
         QMessageBox.information(
             self,

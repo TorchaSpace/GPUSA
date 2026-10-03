@@ -8,6 +8,9 @@ hunting through every screen for string literals.
 
 from __future__ import annotations
 
+from collections.abc import Iterable, Mapping
+
+from shared.i18n_admin_en import EN_ADMIN
 from shared.i18n_tr import TR
 
 _CURRENT_LANGUAGE = "en"
@@ -178,6 +181,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "common.total": "Total",
         "common.cancel": "Cancel",
         "common.save": "Save",
+        **EN_ADMIN,
     },
     "tr": TR,
 }
@@ -211,3 +215,76 @@ def tr(key: str) -> str:
     if key in table:
         return table[key]
     return _STRINGS["en"].get(key, key)
+
+
+def plural(base_key: str, n: int) -> str:
+    """"{n} SKU" / "{n} SKUs": tr(base_key + "_one" | "_other") formatted with n."""
+    return tr(base_key + ("_one" if n == 1 else "_other")).format(n=n)
+
+
+def enum_label(group: str, code: str | None) -> str:
+    """Display label for a stored enum code (region, role, ...): the
+    translation of "enum.<group>.<code>", or the code itself when there is
+    none. The code stays English in the database; only the label moves."""
+    if not code:
+        return code or ""
+    key = f"enum.{group}.{code}"
+    text = tr(key)
+    return code if text == key else text
+
+
+def region_label(code: str | None) -> str:
+    return enum_label("region", code)
+
+
+class LazyLabels(Mapping):
+    """A read-only {code: label} mapping whose labels are looked up with
+    tr("<prefix>.<code>") at access time, so a dict that used to hold
+    English text follows the language chosen at start-up. Behaves like the
+    dict it replaces for [], .get(), `in`, iteration and ==."""
+
+    def __init__(self, prefix: str, codes: Iterable[str]):
+        self._prefix = prefix
+        self._codes = tuple(codes)
+
+    def __getitem__(self, code: str) -> str:
+        if code not in self._codes:
+            raise KeyError(code)
+        return tr(f"{self._prefix}.{code}")
+
+    def __iter__(self):
+        return iter(self._codes)
+
+    def __len__(self) -> int:
+        return len(self._codes)
+
+    def __repr__(self) -> str:
+        return repr(dict(self))
+
+
+def english(key: str, **values) -> str:
+    """The English text for `key`, formatted - what a message said before it
+    was translated (kept as the exception's args[0] so logs and tests that
+    read the English still work)."""
+    return _STRINGS["en"][key].format(**values)
+
+
+class UserError(ValueError):
+    """A ValueError whose message is meant for the person at the screen:
+    str() looks the key up in the language the app runs in, with the same
+    values, so a validation message follows ui.language. args[0] is the
+    English text."""
+
+    def __init__(self, key: str, **values):
+        super().__init__(english(key, **values))
+        self.key = key
+        self.values = values
+
+    def __str__(self) -> str:
+        text = tr(self.key)
+        if text == self.key:
+            return super().__str__()
+        try:
+            return text.format(**self.values)
+        except (KeyError, IndexError, ValueError):
+            return super().__str__()

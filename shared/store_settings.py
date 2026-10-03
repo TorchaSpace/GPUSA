@@ -8,6 +8,7 @@ and how text turns into a value and back (so it can be tested alone).
 
 from __future__ import annotations
 
+from shared.i18n import UserError
 from dataclasses import dataclass, field
 
 DEFAULT_STORE_NAME = "GPUSA"
@@ -45,15 +46,15 @@ def validate_profile(name: str, address_text: str) -> StoreProfile:
     """Raise ValueError (with a message fit to show) if the input can't be saved."""
     name = " ".join((name or "").split())
     if not name:
-        raise ValueError("The store needs a name - it prints at the top of every receipt and report.")
+        raise UserError("err.store_name_required")
     if len(name) > MAX_NAME_LENGTH:
-        raise ValueError(f"The store name can be at most {MAX_NAME_LENGTH} characters.")
+        raise UserError("err.store_name_long", n=MAX_NAME_LENGTH)
     raw = [line.strip() for line in (address_text or "").splitlines() if line.strip()]
     if len(raw) > MAX_ADDRESS_LINES:
-        raise ValueError(f"The address can have at most {MAX_ADDRESS_LINES} lines.")
+        raise UserError("err.address_lines", n=MAX_ADDRESS_LINES)
     for line in raw:
         if len(line) > MAX_ADDRESS_LINE_LENGTH:
-            raise ValueError(f"Each address line can be at most {MAX_ADDRESS_LINE_LENGTH} characters (receipts are narrow).")
+            raise UserError("err.address_line_long", n=MAX_ADDRESS_LINE_LENGTH)
     return StoreProfile(name=name, address_lines=tuple(raw))
 
 
@@ -67,9 +68,9 @@ def profile_to_values(profile: StoreProfile) -> dict[str, str]:
 
 
 def _flag(value: str | None, default: bool) -> bool:
-    if value is None:
+    if value is None or not value.strip():
         return default
-    return value.strip() not in ("0", "false", "no", "off")
+    return value.strip().lower() not in ("0", "false", "no", "off")
 
 
 def prefs_from(values: dict[str, str]) -> NotificationPrefs:

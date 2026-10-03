@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QComboBox, QDialogButtonBox, QDoubleSpinBox, QFormLayout, QLabel, QLineEdit
 
+from shared.i18n import tr
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.models import PriceRange, Product
 
@@ -26,25 +27,22 @@ class PriceRangeFormPopup(RefreshablePopup):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Safe price range")
+        self.setWindowTitle(tr("admin.purchase.p_title"))
         self._product_input = QComboBox()
         self._min_input = _money_spin()
         self._max_input = _money_spin()
         self._supplier_input = QLineEdit()
-        self._supplier_input.setPlaceholderText("Optional")
+        self._supplier_input.setPlaceholderText(tr("admin.purchase.p_optional"))
         self._error = QLabel()
         self._error.setWordWrap(True)
         self._error.hide()
 
         form = QFormLayout()
-        form.addRow("Product", self._product_input)
-        form.addRow("Minimum unit price", self._min_input)
-        form.addRow("Maximum unit price", self._max_input)
-        form.addRow("Default supplier", self._supplier_input)
-        hint = QLabel(
-            "Depot orders priced inside this range are sent to the supplier directly; "
-            "anything above the maximum or below the minimum is held for your approval."
-        )
+        form.addRow(tr("admin.purchase.p_product"), self._product_input)
+        form.addRow(tr("admin.purchase.p_min"), self._min_input)
+        form.addRow(tr("admin.purchase.p_max"), self._max_input)
+        form.addRow(tr("admin.purchase.p_supplier"), self._supplier_input)
+        hint = QLabel(tr("admin.purchase.p_note"))
         hint.setWordWrap(True)
         form.addRow(hint)
         form.addRow(self._error)
@@ -68,17 +66,17 @@ class PriceRangeFormPopup(RefreshablePopup):
         self._min_input.setValue(price_range.min_unit_price if price_range else 0)
         self._max_input.setValue(price_range.max_unit_price if price_range else 0)
         self._supplier_input.setText((price_range.default_supplier or "") if price_range else "")
-        self.setWindowTitle("Edit safe price range" if price_range else "Set safe price range")
+        self.setWindowTitle(tr("admin.purchase.p_edit") if price_range else tr("admin.purchase.p_set"))
 
     def _validate_and_accept(self) -> None:
         if self._product_input.currentData() is None:
-            self._show_error("Add a product first.")
+            self._show_error(tr("admin.purchase.p_err_product"))
             return
         if self._min_input.value() > self._max_input.value():
-            self._show_error("The minimum can't be higher than the maximum.")
+            self._show_error(tr("admin.purchase.p_err_minmax"))
             return
         if self._max_input.value() <= 0:
-            self._show_error("Set a maximum above 0.")
+            self._show_error(tr("admin.purchase.p_err_max"))
             return
         self.accept()
 

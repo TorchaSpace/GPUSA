@@ -29,7 +29,8 @@ from PySide6.QtWidgets import (
     QVBoxLayout,
 )
 
-from shared.auth import MAX_PIN_LENGTH, Session
+from shared.i18n import tr
+from shared.auth import MAX_PIN_LENGTH, Session, normalize_badge_id
 
 
 class SignInDialog(QDialog):
@@ -40,7 +41,7 @@ class SignInDialog(QDialog):
         authenticate: Callable[[str, str], Session],
         palette: dict,
         fixed_badge: str | None = None,
-        cancel_text: str = "Cancel",
+        cancel_text: str | None = None,
         parent=None,
         extra_action: tuple[str, Callable[["SignInDialog"], None]] | None = None,
     ):
@@ -80,19 +81,19 @@ class SignInDialog(QDialog):
         layout.addSpacing(6)
 
         self.badge_input = QLineEdit()
-        self.badge_input.setPlaceholderText("Badge ID")
+        self.badge_input.setPlaceholderText(tr("signin.badge_placeholder"))
         if fixed_badge:
             self.badge_input.setText(fixed_badge)
             self.badge_input.setReadOnly(True)
-        layout.addWidget(self._caption("Badge", p))
+        layout.addWidget(self._caption(tr("signin.badge"), p))
         layout.addWidget(self.badge_input)
 
         self.pin_input = QLineEdit()
-        self.pin_input.setPlaceholderText("PIN")
+        self.pin_input.setPlaceholderText(tr("signin.pin"))
         self.pin_input.setEchoMode(QLineEdit.Password)
         self.pin_input.setMaxLength(MAX_PIN_LENGTH)
         self.pin_input.setValidator(QRegularExpressionValidator(QRegularExpression(r"\d*"), self.pin_input))
-        layout.addWidget(self._caption("PIN", p))
+        layout.addWidget(self._caption(tr("signin.pin"), p))
         layout.addWidget(self.pin_input)
 
         self.error_label = QLabel()
@@ -117,12 +118,12 @@ class SignInDialog(QDialog):
 
         buttons = QHBoxLayout()
         buttons.addStretch(1)
-        self.cancel_button = QPushButton(cancel_text)
+        self.cancel_button = QPushButton(cancel_text or tr("common.cancel"))
         self.cancel_button.setStyleSheet(
             f"QPushButton {{ background: transparent; color: {p['text_secondary']}; border: 1px solid {p['border']}; }}"
         )
         self.cancel_button.clicked.connect(self.reject)
-        self.sign_in_button = QPushButton("Unlock" if fixed_badge else "Sign in")
+        self.sign_in_button = QPushButton(tr("signin.unlock") if fixed_badge else tr("signin.sign_in"))
         self.sign_in_button.setDefault(True)
         self.sign_in_button.setStyleSheet(
             f"QPushButton {{ background-color: {p['accent']}; color: {p.get('on_accent', '#ffffff')}; border: none; }}"
@@ -143,15 +144,20 @@ class SignInDialog(QDialog):
         return label
 
     def try_sign_in(self) -> None:
-        badge, pin = self.badge_input.text().strip(), self.pin_input.text()
+        badge, pin = normalize_badge_id(self.badge_input.text()), self.pin_input.text()
         if not badge or not pin:
-            self._fail("Enter your badge and PIN.")
+            self._fail(tr("signin.enter_both"))
             return
+        if not self.sign_in_button.isEnabled():  # already checking: a double click must not count two wrong PINs
+            return
+        self.sign_in_button.setEnabled(False)
         try:
             self.session = self._authenticate(badge, pin)
         except Exception as exc:  # AuthError & co: the message is written to be shown
-            self._fail(str(exc) or "Couldn't sign in.")
+            self._fail(str(exc) or tr("signin.failed"))
             return
+        finally:
+            self.sign_in_button.setEnabled(True)
         self.accept()
 
     def _fail(self, message: str) -> None:

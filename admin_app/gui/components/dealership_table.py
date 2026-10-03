@@ -10,18 +10,23 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
+from shared.i18n import region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.models import Dealership
 
-_COLUMNS = ("Code", "Name", "Region", "City", "Manager", "Status")
+_COLUMN_KEYS = ("code", "name", "region", "city", "manager", "status")
+
+
+def _columns() -> tuple[str, ...]:
+    return tuple(tr(f"admin.dealerships.col_{key}") for key in _COLUMN_KEYS)
 
 
 def status_for(dealership: Dealership) -> tuple[str, str]:
     """Return (label, hex color) - shared by the table and the detail panel."""
     p = CLASSICAL_PALETTE
     if dealership.is_active:
-        return "Active", p["alert_success"]
-    return "Inactive", p["text_secondary"]
+        return tr("admin.dealerships.status_active"), p["alert_success"]
+    return tr("admin.dealerships.status_inactive"), p["text_secondary"]
 
 
 class DealershipTableModel(QAbstractTableModel):
@@ -41,12 +46,12 @@ class DealershipTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._dealerships)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_COLUMNS)
+        return 0 if parent.isValid() else len(_COLUMN_KEYS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role != Qt.DisplayRole or orientation != Qt.Horizontal:
             return None
-        return _COLUMNS[section]
+        return _columns()[section]
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():
@@ -60,7 +65,7 @@ class DealershipTableModel(QAbstractTableModel):
             if column == 1:
                 return dealership.name
             if column == 2:
-                return dealership.region
+                return region_label(dealership.region)
             if column == 3:
                 return dealership.city
             if column == 4:
@@ -119,6 +124,15 @@ class DealershipTable(QTableView):
 
     def set_dealerships(self, dealerships: list[Dealership]) -> None:
         self._table_model.set_dealerships(dealerships)
+
+    def select_code(self, code: str) -> bool:
+        """Select the row for `code` (case-insensitive); False if absent."""
+        wanted = (code or "").strip().upper()
+        for row in range(self._table_model.rowCount()):
+            if self._table_model.dealership_at(row).code.upper() == wanted:
+                self.selectRow(row)
+                return True
+        return False
 
     def selected_dealership(self) -> Dealership | None:
         indexes = self.selectionModel().selectedRows()

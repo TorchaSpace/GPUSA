@@ -17,40 +17,49 @@ fabricated one.
 from __future__ import annotations
 
 from datetime import date as _date
-from datetime import datetime
+from datetime import datetime, time, timedelta, timezone
 
+from database import employee_repository
 from database.connection import connection_scope
 from database.exceptions import (
     AlreadyCheckedInError,
+    EmployeeInactiveError,
     EmployeeNotFoundError,
     NoOpenAttendanceRecordError,
 )
+from shared.formatting import parse_db_timestamp, to_db_timestamp
+
+# An open shift older than this is almost certainly a forgotten check-out:
+# the roster still shows the person Present, but flags it (`long_open`).
+LONG_SHIFT_HOURS = 16
 
 
-def _parse_ts(ts: str) -> datetime:
-    return datetime.strptime(ts, "%Y-%m-%dT%H:%M:%S.%fZ")
-
-
-def _hours_between(check_in_at: str, check_out_at: str) -> float:
-    delta = _parse_ts(check_out_at) - _parse_ts(check_in_at)
+def _hours(delta: timedelta) -> float:
     return round(delta.total_seconds() / 3600, 1)
 
 
+def _employee(conn, badge_id: str):
+    """The employees row for a typed/scanned badge (any case, stray spaces)."""
+    row = employee_repository.find_row(conn, badge_id)
+    if row is None:
+        raise EmployeeNotFoundError(employee_repository.normalize_badge_id(badge_id))
+    return row
+
+
 def check_in(badge_id: str, note: str | None = None) -> int:
-    """Open a new attendance record for `badge_id`. Returns the new
-    record's id. Raises EmployeeNotFoundError for an unknown badge,
-    AlreadyCheckedInError if that employee already has an open record
-    (writing nothing) - a badge can't check in twice without checking
-    out first.
+    """Open a new attendance record for `badge_id` (any letter case).
+    Returns the new record's id. Raises EmployeeNotFoundError for an
+    unknown badge, EmployeeInactiveError for an employee switched off in
+    Workforce, AlreadyCheckedInError if that employee already has an open
+    record (writing nothing) - a badge can't check in twice without
+    checking out first.
     """
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            employee_row = conn.execute(
-                "SELECT id FROM employees WHERE badge_id = ?", (badge_id,)
-            ).fetchone()
-            if employee_row is None:
-                raise EmployeeNotFoundError(badge_id)
+            employee_row = _employee(conn, badge_id)
+            if not employee_row["is_active"]:
+                raise EmployeeInactiveError(employee_row["badge_id"])
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -58,7 +67,7 @@ def check_in(badge_id: str, note: str | None = None) -> int:
                 (employee_id,),
             ).fetchone()
             if open_row is not None:
-                raise AlreadyCheckedInError(badge_id)
+                raise AlreadyCheckedInError(employee_row["badge_id"])
 
             cursor = conn.execute(
                 "INSERT INTO attendance_records (employee_id, note) VALUES (?, ?)",
@@ -77,16 +86,14 @@ def check_out(badge_id: str, note: str | None = None) -> int:
     """Close `badge_id`'s open attendance record. Returns the record's id.
     Raises EmployeeNotFoundError for an unknown badge, NoOpenAttendanceRecordError
     if that employee has no open record to close. `note`, when given,
-    overwrites whatever note check_in() set; left as-is otherwise.
+    overwrites whatever note check_in() set; left as-is otherwise. (An
+    inactive employee can still be checked out - that is how a shift left
+    open at deactivation, in older data, gets closed.)
     """
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            employee_row = conn.execute(
-                "SELECT id FROM employees WHERE badge_id = ?", (badge_id,)
-            ).fetchone()
-            if employee_row is None:
-                raise EmployeeNotFoundError(badge_id)
+            employee_row = _employee(conn, badge_id)
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -95,7 +102,7 @@ def check_out(badge_id: str, note: str | None = None) -> int:
                 (employee_id,),
             ).fetchone()
             if open_row is None:
-                raise NoOpenAttendanceRecordError(badge_id)
+                raise NoOpenAttendanceRecordError(employee_row["badge_id"])
 
             conn.execute(
                 "UPDATE attendance_records SET check_out_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
@@ -111,6 +118,20 @@ def check_out(badge_id: str, note: str | None = None) -> int:
     return record_id
 
 
+def close_open_shifts(conn, employee_id: int, note: str) -> int:
+    """Check out every open record of `employee_id` right now, inside the
+    caller's transaction (employee_repository.update() uses this when it
+    switches someone off). The note is appended to any existing one.
+    Returns how many were closed."""
+    cursor = conn.execute(
+        "UPDATE attendance_records SET check_out_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now'), "
+        "note = CASE WHEN note IS NULL OR note = '' THEN ? ELSE note || ' · ' || ? END "
+        "WHERE employee_id = ? AND check_out_at IS NULL",
+        (note, note, employee_id),
+    )
+    return cursor.rowcount
+
+
 def list_open() -> list[dict]:
     """Every employee currently checked in (no check_out_at yet) - depot
     Console's "on floor" count and admin_app's "on shift now" KPI both
@@ -124,58 +145,89 @@ def list_open() -> list[dict]:
     return [dict(row) for row in rows]
 
 
-def list_roster(for_date: str | None = None) -> list[dict]:
-    """Every active-or-not employee, each paired with their latest
-    attendance record for `for_date` (default: today), for depot
-    Console's roster table and admin_app's Workforce page.
+def _day_window(day: _date) -> tuple[datetime, datetime]:
+    """[start, end) of the LOCAL calendar day `day`, as aware UTC datetimes."""
+    start = datetime.combine(day, time.min).astimezone()  # a naive datetime is read as local time
+    end = datetime.combine(day + timedelta(days=1), time.min).astimezone()
+    return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
+
+
+def list_roster(for_date: str | None = None, now: datetime | None = None) -> list[dict]:
+    """Every active-or-not employee with their attendance on the LOCAL day
+    `for_date` (default: today), for depot Console's roster table, the
+    Overview's employee log (shared.overview.attendance_today) and
+    admin_app's Workforce page.
 
     Returns dicts with: badge_id, name, title, role, location_type,
-    location_name, is_active, status ("Present" - checked in, no
-    check-out yet; "Checked out" - a completed cycle that day; "Off" -
-    no record that day), check_in_at, check_out_at, hours (float,
-    rounded, or None until checked out).
+    location_name, is_active, status, check_in_at, check_out_at, hours,
+    long_open.
+    - status "Present": the employee has an open record (no check-out yet)
+      that began before the end of that day - whatever day it began on, so
+      a shift opened yesterday and never closed still shows Present.
+      check_in_at is that record's start; `long_open` is True when it has
+      been open more than LONG_SHIFT_HOURS (probably a forgotten
+      check-out).
+    - "Checked out": every record touching the day is closed. check_in_at /
+      check_out_at are those of the latest one.
+    - "Off": no record touches the day.
+    - hours: the day's COMPLETED records added up (a night shift counts only
+      the part inside the day), rounded to 0.1; None if there are none.
     """
-    query_date = for_date or _date.today().isoformat()
-    query = """
-        SELECT e.badge_id, e.name, e.title, e.role, e.location_type, e.location_name,
-               e.is_active, a.check_in_at, a.check_out_at
-        FROM employees e
-        LEFT JOIN attendance_records a ON a.id = (
-            SELECT a2.id FROM attendance_records a2
-            WHERE a2.employee_id = e.id AND date(a2.check_in_at, 'localtime') = date(?)
-            ORDER BY a2.check_in_at DESC LIMIT 1
-        )
-        ORDER BY e.name
-    """
+    day = _date.fromisoformat(for_date) if for_date else _date.today()
+    start, end = _day_window(day)
+    now = now or datetime.now(timezone.utc)
     with connection_scope() as conn:
-        rows = conn.execute(query, (query_date,)).fetchall()
+        employees = conn.execute(
+            "SELECT id, badge_id, name, title, role, location_type, location_name, is_active "
+            "FROM employees ORDER BY name"
+        ).fetchall()
+        records = conn.execute(
+            "SELECT employee_id, check_in_at, check_out_at FROM attendance_records "
+            "WHERE check_in_at < ? AND (check_out_at IS NULL OR check_out_at > ?) ORDER BY check_in_at",
+            (to_db_timestamp(end), to_db_timestamp(start)),
+        ).fetchall()
+
+    by_employee: dict[int, list] = {}
+    for record in records:
+        by_employee.setdefault(record["employee_id"], []).append(record)
 
     roster = []
-    for row in rows:
-        check_in_at = row["check_in_at"]
-        check_out_at = row["check_out_at"]
-        if check_in_at is None:
-            status = "Off"
-            hours = None
-        elif check_out_at is None:
-            status = "Present"
-            hours = None
+    for emp in employees:
+        mine = by_employee.get(emp["id"], [])
+        opened = [r for r in mine if r["check_out_at"] is None]
+        closed = [r for r in mine if r["check_out_at"] is not None]
+        hours = None
+        if closed:
+            worked = timedelta()
+            for r in closed:
+                begin = max(parse_db_timestamp(r["check_in_at"]), start)
+                finish = min(parse_db_timestamp(r["check_out_at"]), end)
+                worked += max(finish - begin, timedelta())
+            hours = _hours(worked)
+        long_open = False
+        if opened:
+            shown = opened[-1]
+            status, check_in_at, check_out_at = "Present", shown["check_in_at"], None
+            long_open = now - parse_db_timestamp(shown["check_in_at"]) > timedelta(hours=LONG_SHIFT_HOURS)
+        elif closed:
+            shown = closed[-1]
+            status, check_in_at, check_out_at = "Checked out", shown["check_in_at"], shown["check_out_at"]
         else:
-            status = "Checked out"
-            hours = _hours_between(check_in_at, check_out_at)
+            status, check_in_at, check_out_at = "Off", None, None
         roster.append(
             {
-                "badge_id": row["badge_id"],
-                "name": row["name"],
-                "title": row["title"],
-                "role": row["role"],
-                "location_type": row["location_type"],
-                "location_name": row["location_name"],
-                "is_active": bool(row["is_active"]),
+                "badge_id": emp["badge_id"],
+                "name": emp["name"],
+                "title": emp["title"],
+                "role": emp["role"],
+                "location_type": emp["location_type"],
+                "location_name": emp["location_name"],
+                "is_active": bool(emp["is_active"]),
                 "status": status,
                 "check_in_at": check_in_at,
                 "check_out_at": check_out_at,
                 "hours": hours,
+                "long_open": long_open,
             }
         )
     return roster

@@ -14,6 +14,13 @@ re-checks the version after taking the write lock - so when POS, Depot
 and Admin all start at the same moment against an old database, exactly
 one of them migrates and the others see the new version and do nothing.
 
+Version 3 - product safety: products.is_active (default 1: every existing
+product stays active) and a case-insensitive UNIQUE index on
+products.barcode (skipped, harmlessly, if an old database already holds two
+barcodes that differ only by case - product_repository then enforces it in
+code). Existing barcodes are NOT rewritten to upper-case: other tables point
+at them.
+
 Version 2 - sign-in: stock_movements.handled_by, transactions.cashier,
 purchase_orders.raised_by / decided_by ("name · badge" snapshots; NULL on
 older rows). The accounts / auth_events tables are new, so schema.sql
@@ -36,7 +43,7 @@ from __future__ import annotations
 
 import sqlite3
 
-LATEST_VERSION = 2
+LATEST_VERSION = 3
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -132,7 +139,29 @@ def _to_v2(conn: sqlite3.Connection) -> None:
     _add_columns(conn, _V2_COLUMNS)
 
 
-_STEPS = {1: _to_v1, 2: _to_v2}
+_V3_COLUMNS = (
+    ("products", "is_active", "INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))"),
+)
+
+
+def _ensure_barcode_nocase_index(conn: sqlite3.Connection) -> None:
+    """Case-insensitive uniqueness for barcodes. Tolerant: if the table
+    already has "abc"/"ABC" the index can't exist - leave it (the repository
+    checks in code) rather than refuse to start."""
+    try:
+        conn.execute(
+            "CREATE UNIQUE INDEX IF NOT EXISTS idx_products_barcode_nocase ON products(barcode COLLATE NOCASE)"
+        )
+    except sqlite3.IntegrityError:
+        pass
+
+
+def _to_v3(conn: sqlite3.Connection) -> None:
+    _add_columns(conn, _V3_COLUMNS)
+    _ensure_barcode_nocase_index(conn)
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:
@@ -153,3 +182,4 @@ def run_migrations(conn: sqlite3.Connection) -> None:
             conn.execute("COMMIT")
     for statement in _INDEXES:
         conn.execute(statement)
+    _ensure_barcode_nocase_index(conn)

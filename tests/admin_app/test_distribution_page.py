@@ -30,6 +30,7 @@ def data():
     ships.update_eta(late.id, datetime.now() + timedelta(hours=4))
     planned = ships.create("WH-01", "001", "Coastline", datetime.now() + timedelta(days=2), [("A", 7)])
     received = ships.create("WH-01", "001", "Ridgeline", datetime.now(), [("A", 24)])
+    ships.dispatch(received.id)
     ships.complete_receipt(received.id, {"A": 20}, "crushed")
     return on_time, late, planned, received
 
@@ -77,4 +78,5 @@ def test_delivered_section_shows_discrepancies(page, data):
     received = data[3]
     assert page._delivered_table.rowCount() == 1
     assert page._delivered_table.item(0, 0).text() == received.number
+    assert page._delivered_table.item(0, 3).text() == "20"  # what arrived, not the 24 shipped
     assert page._delivered_table.item(0, 5).text() == "A -4 · “crushed”"

@@ -27,7 +27,7 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository, purchase_order_repository, settings_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 
 import admin_app.gui.icons as icons
 from admin_app.gui.auth_flow import sign_in
@@ -97,7 +97,7 @@ class MainWindow(QMainWindow):
             build_nav_sections(),
             brand_title="GPUSA",
             brand_subtitle=tr("admin.brand_subtitle"),
-            user_name=session.name if session else "Not signed in",
+            user_name=session.name if session else tr("admin.shell.not_signed_in"),
             user_role=session.role_label if session else "",
         )
         self._sidebar.sign_out_requested.connect(self.sign_out)
@@ -111,7 +111,8 @@ class MainWindow(QMainWindow):
         self._overview_page.open_purchase_requests.connect(lambda: self.navigate("purchase_requests"))
         self._register_page("overview", self._overview_page)
         self._register_page("inventory", InventoryPage())
-        self._register_page("dealerships", DealershipsPage())
+        self._dealerships_page = DealershipsPage()
+        self._register_page("dealerships", self._dealerships_page)
         self._register_page("distribution", DistributionPage())
         self._purchase_requests_page = PurchaseRequestsPage()
         self._purchase_requests_page.pending_count_changed.connect(self._set_pending_count)
@@ -120,7 +121,8 @@ class MainWindow(QMainWindow):
         self._settings_page = SettingsPage()
         self._settings_page.notifications_changed.connect(self._refresh_pending_display)
         self._register_page("settings", self._settings_page)
-        self._register_page("workforce", WorkforcePage())
+        self._workforce_page = WorkforcePage()
+        self._register_page("workforce", self._workforce_page)
         self._treasury_page = TreasuryPage()
         self._register_page("treasury", self._treasury_page)
         self._reports_page = ReportsPage()
@@ -157,6 +159,10 @@ class MainWindow(QMainWindow):
                 self._treasury_page.reload()  # "overdue" depends on today; depot may have recorded entries
             elif key == "reports":
                 self._reports_page.reload()  # sales keep arriving from the tills
+            elif key == "dealerships":
+                self._dealerships_page.reload()  # stock and status change elsewhere (depot, POS, another Admin)
+            elif key == "workforce":
+                self._workforce_page.reload()  # check-ins arrive from the depot all day
 
     def sign_out(self) -> None:
         """Sign out, hide everything, and ask for a sign-in again; Quit
@@ -164,12 +170,12 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             try:
                 account_repository.sign_out(self.session)
-            except DataAccessError:
+            except DATABASE_ERRORS:
                 pass
         self.session = None
         current_session.clear()
         self.hide()
-        session = sign_in(cancel_text="Quit")
+        session = sign_in()
         if session is not None:
             self.session = session
             current_session.set(self.session)
@@ -188,20 +194,22 @@ class MainWindow(QMainWindow):
     # --- live "Purchase requests" badge ----------------------------------
 
     @staticmethod
-    def _poll_pending_count() -> int | None:
+    def _poll_pending_count() -> list[int] | None:
         # Broad on purpose: a transient "database is locked" on a timer
-        # tick should just skip that tick.
+        # tick should just skip that tick. Ids (not just a count) so one
+        # order decided while another arrives still refreshes the list.
         try:
-            return purchase_order_repository.count_pending()
+            return purchase_order_repository.pending_ids()
         except Exception:
             return None
 
-    def _on_pending_polled(self, count: int | None) -> None:
-        if count is None or count == self._pending_count:
+    def _on_pending_polled(self, ids: list[int] | None) -> None:
+        if ids is None:
             return
-        self._set_pending_count(count)
+        if len(ids) != self._pending_count:
+            self._set_pending_count(len(ids))
         if self._stack.currentWidget() is self._purchase_requests_page:
-            self._purchase_requests_page.reload()
+            self._purchase_requests_page.reload_if_pending_changed()
 
     def _set_pending_count(self, count: int) -> None:
         self._pending_count = count

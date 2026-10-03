@@ -97,6 +97,7 @@ def test_shows_only_this_warehouses_shipments_and_receipt_reports(page):
                         origin_code="WH-01")
     legacy = ships.create(SITE, "001", "Old", datetime.now() + timedelta(hours=3), [("BOX-2218", 1)])  # site text only
     ships.create("WH-02", "001", "Other", datetime.now(), [("BOX-2218", 1)])
+    ships.dispatch(mine.id)
     ships.complete_receipt(mine.id, {"BOX-2218": 20}, "crushed")
     page.reload()
 
@@ -133,3 +134,34 @@ def test_create_and_dispatch_now_keeps_the_shipment_when_stock_is_short(page):
     [shipment] = ships.list_shipments()
     assert shipment.status == "scheduled"
     assert "Not dispatched" in page._message.text() and page._draft_lines == []
+
+
+def test_an_eta_before_the_departure_is_reported_not_raised(page):
+    shipment = ships.create(SITE, "001", "Ridgeline", datetime.now() + timedelta(hours=2), [("BOX-2218", 5)],
+                            origin_code="WH-01")
+    page.reload()
+    page.select(shipment.id)
+    page._act("dispatch")
+
+    page._new_eta_input.setDateTime(page._new_eta_input.dateTime().addDays(-3))  # three days before it left
+    page._act("eta")  # used to raise ValueError out of the click handler
+
+    assert "Couldn't update" in page._message.text() and "departure" in page._message.text()
+    assert ships.get(shipment.id).eta == shipment.eta
+
+
+def test_a_past_eta_in_the_new_shipment_form_is_a_form_error(page):
+    page._carrier_input.setText("Ridgeline")
+    page._eta_input.setDateTime(page._eta_input.dateTime().addDays(-2))
+    page._product_input.setCurrentIndex(page._product_input.findData("BOX-2218"))
+    page._add_line()
+    page._create()
+    assert "before now" in page._form_error.text()
+    assert ships.list_shipments() == []
+
+
+def test_deactivated_products_are_not_offered_for_a_shipment(page):
+    product_repository.set_active("PLT-4410", False)
+    page.reload_choices()
+    codes = [page._product_input.itemData(i) for i in range(page._product_input.count())]
+    assert "PLT-4410" not in codes and "BOX-2218" in codes

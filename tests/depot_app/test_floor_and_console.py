@@ -43,8 +43,15 @@ def test_floor_is_labelled_with_its_warehouse(floor):
 
 
 def test_low_stock_banner_reads_this_warehouse(floor):
-    # 30 in the company, 0 here -> low here.
-    assert floor._low_stock_banner._card.isVisibleTo(floor)
+    banner = floor._low_stock_banner
+    # BOX: 30 in the company, all at the OTHER warehouse. This one never carried it, so there
+    # is nothing here to reorder.
+    banner.reload()
+    assert not banner._card.isVisibleTo(floor)
+    # Once this warehouse has held it and is at/below the reorder level, it is flagged.
+    stock_repository.receive(WH1, "BOX", 3)
+    banner.reload()
+    assert banner._card.isVisibleTo(floor)
 
 
 def test_inbound_and_outbound_move_this_warehouse_only(floor):
@@ -95,3 +102,22 @@ def test_floor_movements_are_not_attributed_to_the_console_manager(floor, qapp):
     floor._receive_panel._qty_input.setValue(1)
     floor._receive_panel._on_submit()  # ...but the Floor is an open kiosk
     assert stock_repository.list_movements(1)[0]["handled_by"] is None
+
+
+def test_inbound_refuses_a_deactivated_product_with_a_clear_message(floor):
+    product_repository.set_active("BOX", False)
+    inbound = floor._receive_panel
+    inbound._sku_input.setText("BOX")
+    inbound._qty_input.setValue(1)
+    inbound._on_submit()
+    assert "deactivated" in inbound._error_label.text()
+    assert stock_repository.quantity_at(WH1, "BOX") == 0
+
+
+def test_inbound_past_capacity_is_a_message_not_a_crash(floor):
+    inbound = floor._receive_panel
+    inbound._sku_input.setText("BOX")
+    inbound._qty_input.setValue(101)  # WH-01 holds 0 of 100
+    inbound._on_submit()
+    assert "exceed" in inbound._error_label.text()
+    assert stock_repository.quantity_at(WH1, "BOX") == 0

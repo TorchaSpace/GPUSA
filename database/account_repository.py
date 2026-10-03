@@ -22,6 +22,7 @@ from __future__ import annotations
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from shared.i18n import UserError
 from database.connection import connection_scope
 from database.exceptions import (
     AccountDisabledError,
@@ -31,8 +32,12 @@ from database.exceptions import (
     EmployeeNotFoundError,
     LastAdminError,
     NotAllowedError,
+    SelfActionError,
+    SessionInvalidError,
     SignInFailedError,
+    localized_auth,
 )
+from database import employee_repository
 from shared import auth, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
@@ -74,7 +79,74 @@ def _log(conn, event: str, badge_id: str | None, area: str | None = None, termin
 
 
 def _fetch(conn, badge_id: str) -> sqlite3.Row | None:
-    return conn.execute(_SELECT + " WHERE e.badge_id = ?", (badge_id,)).fetchone()
+    """The account row for a typed/scanned badge: any letter case, stray
+    spaces ignored (rows saved in lower case before badges were upper-cased
+    still match; an exact match wins)."""
+    raw = (badge_id or "").strip()
+    return conn.execute(
+        _SELECT + " WHERE e.badge_id = ? OR upper(e.badge_id) = ? ORDER BY (e.badge_id = ?) DESC, e.id LIMIT 1",
+        (raw, raw.upper(), raw.upper()),
+    ).fetchone()
+
+
+def _fetch_by_id(conn, account_id: int) -> sqlite3.Row | None:
+    return conn.execute(_SELECT + " WHERE a.id = ?", (account_id,)).fetchone()
+
+
+def _live_admin(conn, badge_id: str) -> sqlite3.Row:
+    """The CURRENT row of the administrator doing something sensitive -
+    re-read from the database, never trusted from a Session/Actor object
+    that may be hours old. SessionInvalidError if they are gone, switched
+    off, or no longer an administrator."""
+    row = _fetch(conn, badge_id)
+    if row is None or not row["is_active"] or not row["employee_active"] or row["role"] != "admin":
+        raise SessionInvalidError()
+    return row
+
+
+def _check_actor(conn, by: Actor | None, target_badge: str, *, allow_self: bool = False) -> bool:
+    """Common guard for admin actions that know who is acting (`by`).
+    Returns True if `by` is the target account itself. `by=None` (setup
+    scripts, tests) skips the checks. With allow_self, acting on your own
+    account only needs it to be active (changing your own PIN)."""
+    if by is None:
+        return False
+    same = auth.normalize_badge_id(by.badge_id) == auth.normalize_badge_id(target_badge)
+    if same and allow_self:
+        row = _fetch(conn, by.badge_id)
+        if row is None or not row["is_active"] or not row["employee_active"]:
+            raise SessionInvalidError()
+        return True
+    _live_admin(conn, by.badge_id)
+    return same
+
+
+def is_session_valid(session: Session | None) -> bool:
+    """Whether `session` still stands: its account exists, is switched on,
+    belongs to an active employee, still has the role the person signed in
+    with, and that role may still open the area. One cheap read - call it
+    before anything that must not be done by someone who has since been
+    switched off (POS: before finalising a sale)."""
+    if session is None:
+        return False
+    try:
+        with connection_scope() as conn:
+            row = _fetch_by_id(conn, session.account_id)
+    except sqlite3.Error:
+        return False
+    return (
+        row is not None
+        and bool(row["is_active"])
+        and bool(row["employee_active"])
+        and row["role"] == session.role
+        and auth.can_open(row["role"], session.area)
+    )
+
+
+def require_valid_session(session: Session | None) -> None:
+    """is_session_valid() that raises SessionInvalidError instead."""
+    if not is_session_valid(session):
+        raise SessionInvalidError()
 
 
 def _write(fn):
@@ -135,7 +207,7 @@ def get(badge_id: str) -> Account:
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     if row is None:
-        raise AccountNotFoundError(badge_id)
+        raise AccountNotFoundError(auth.normalize_badge_id(badge_id))
     return _row_to_account(row)
 
 
@@ -182,18 +254,21 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) 
     """Give an existing, active employee a sign-in account. Raises
     ValueError (bad PIN / role, already has an account, inactive employee),
     EmployeeNotFoundError."""
-    badge_id = (badge_id or "").strip()
+    badge_id = auth.normalize_badge_id(badge_id)
     _check_pin(pin, role)
     pin_hash = auth.hash_pin(pin)
 
     def run(conn):
-        employee = conn.execute("SELECT id, is_active FROM employees WHERE badge_id = ?", (badge_id,)).fetchone()
+        nonlocal badge_id
+        _check_actor(conn, by, badge_id)
+        employee = employee_repository.find_row(conn, badge_id)
         if employee is None:
             raise EmployeeNotFoundError(badge_id)
+        badge_id = employee["badge_id"]
         if not employee["is_active"]:
-            raise ValueError(f"{badge_id} is marked inactive in Workforce.")
+            raise UserError("err.account_employee_inactive", badge=badge_id)
         if conn.execute("SELECT 1 FROM accounts WHERE employee_id = ?", (employee["id"],)).fetchone():
-            raise ValueError(f"{badge_id} already has an account.")
+            raise UserError("err.account_exists", badge=badge_id)
         conn.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (?, ?, ?)",
                      (employee["id"], role, pin_hash))
         _log(conn, "account_created", badge_id, detail=f"{auth.role_label(role)}" + (f" · by {by.label}" if by else ""))
@@ -206,19 +281,26 @@ def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admi
     """The one-time setup on a fresh system: make `badge_id` the first
     administrator - an existing employee, or a new one named `name` - and
     sign them in. Refused once any active administrator exists."""
-    badge_id, name = (badge_id or "").strip(), (name or "").strip()
+    badge_id, name = auth.normalize_badge_id(badge_id), " ".join((name or "").split())
     if not badge_id:
-        raise ValueError("Enter a badge ID.")
+        raise UserError("err.badge_required")
+    if len(badge_id) > employee_repository.MAX_BADGE_LENGTH:
+        raise UserError("err.badge_too_long", n=employee_repository.MAX_BADGE_LENGTH)
+    if len(name) > employee_repository.MAX_NAME_LENGTH:
+        raise UserError("err.name_too_long", n=employee_repository.MAX_NAME_LENGTH)
     _check_pin(pin, "admin")
     pin_hash = auth.hash_pin(pin)
 
     def run(conn):
+        nonlocal badge_id
         if _active_admin_employee_ids(conn):
-            raise AuthError("An administrator already exists - sign in instead.")
-        employee = conn.execute("SELECT id, is_active FROM employees WHERE badge_id = ?", (badge_id,)).fetchone()
+            raise localized_auth("err.admin_exists")
+        employee = employee_repository.find_row(conn, badge_id)
+        if employee is not None:
+            badge_id = employee["badge_id"]
         if employee is None:
             if not name:
-                raise ValueError("Enter your name.")
+                raise UserError("err.your_name_required")
             cursor = conn.execute(
                 "INSERT INTO employees (badge_id, name, title, role, location_type, location_name) "
                 "VALUES (?, ?, 'Administrator', 'Management', 'Dealership', 'Head office')",
@@ -243,11 +325,45 @@ def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admi
 
 # --- signing in ---------------------------------------------------------------
 
+def _verify_with_lockout(row: sqlite3.Row, pin: str, area: str, terminal: str, now: datetime) -> None:
+    """The lockout and PIN check shared by authenticate() and the
+    "type your PIN again" actions: raises AccountLockedError while locked,
+    counts a wrong PIN (locking at MAX_FAILED_ATTEMPTS) and raises
+    SignInFailedError - with the same bare message whoever the badge
+    belongs to, so the attempts left are never revealed. Returns on a
+    correct PIN."""
+    account = _row_to_account(row)
+    badge_id = row["badge_id"]
+    if is_locked(account, now):
+        _write(lambda conn: _log(conn, "failed", badge_id, area, terminal, "locked"))
+        raise AccountLockedError(local_datetime_text(account.locked_until))
+
+    if auth.verify_pin(pin or "", row["pin_hash"]):
+        return
+
+    def wrong(conn):
+        attempts = conn.execute("SELECT failed_attempts FROM accounts WHERE id = ?", (account.id,)).fetchone()[0] + 1
+        if attempts >= auth.MAX_FAILED_ATTEMPTS:
+            until = to_db_timestamp(now + timedelta(minutes=auth.LOCK_MINUTES))
+            conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = ? WHERE id = ?", (until, account.id))
+            _log(conn, "locked", badge_id, area, terminal, f"{attempts} wrong PINs")
+            return until
+        conn.execute("UPDATE accounts SET failed_attempts = ? WHERE id = ?", (attempts, account.id))
+        _log(conn, "failed", badge_id, area, terminal, "wrong PIN")
+        return None
+
+    until = _write(wrong)
+    if until is not None:
+        raise AccountLockedError(local_datetime_text(until))
+    raise SignInFailedError()
+
+
 def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str = "sign_in") -> Session:
-    """Check a badge + PIN for `area` and return the Session. Raises
-    SignInFailedError, AccountLockedError, AccountDisabledError,
-    NotAllowedError. Every outcome is logged."""
-    badge_id = (badge_id or "").strip()
+    """Check a badge + PIN for `area` and return the Session. The badge is
+    matched in any letter case. Raises SignInFailedError,
+    AccountLockedError, AccountDisabledError, NotAllowedError. Every
+    outcome is logged."""
+    badge_id = auth.normalize_badge_id(badge_id)
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     now = _now()
@@ -260,27 +376,9 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
         _write(unknown)
         raise SignInFailedError()
 
+    _verify_with_lockout(row, pin, area, terminal, now)
     account = _row_to_account(row)
-    if is_locked(account, now):
-        _write(lambda conn: _log(conn, "failed", badge_id, area, terminal, "locked"))
-        raise AccountLockedError(local_datetime_text(account.locked_until))
-
-    if not auth.verify_pin(pin or "", row["pin_hash"]):
-        def wrong(conn):
-            attempts = conn.execute("SELECT failed_attempts FROM accounts WHERE id = ?", (account.id,)).fetchone()[0] + 1
-            if attempts >= auth.MAX_FAILED_ATTEMPTS:
-                until = to_db_timestamp(now + timedelta(minutes=auth.LOCK_MINUTES))
-                conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = ? WHERE id = ?", (until, account.id))
-                _log(conn, "locked", badge_id, area, terminal, f"{attempts} wrong PINs")
-                return until
-            conn.execute("UPDATE accounts SET failed_attempts = ? WHERE id = ?", (attempts, account.id))
-            _log(conn, "failed", badge_id, area, terminal, "wrong PIN")
-            return auth.MAX_FAILED_ATTEMPTS - attempts
-
-        outcome = _write(wrong)
-        if isinstance(outcome, str):
-            raise AccountLockedError(local_datetime_text(outcome))
-        raise SignInFailedError(outcome)
+    badge_id = account.badge_id
 
     if not account.is_active or not account.employee_active:
         _write(lambda conn: _log(conn, "refused", badge_id, area, terminal, "account switched off"))
@@ -307,6 +405,20 @@ def confirm_pin(session: Session, pin: str) -> None:
     authenticate(session.badge_id, pin, session.area, session.terminal, event="pin_confirmed")
 
 
+def _confirm_current_pin(session: Session, pin: str, *, admin: bool = False) -> sqlite3.Row:
+    """For actions that ask for "your current PIN" (change PIN, security
+    question): re-reads the account from the database (it must still be
+    active - and an administrator if `admin`), then checks the PIN with the
+    same lockout as sign-in, so a walk-up at an unlocked screen can't guess
+    it for free. Returns the fresh account row."""
+    with connection_scope() as conn:
+        row = _fetch_by_id(conn, session.account_id)
+    if row is None or not row["is_active"] or not row["employee_active"] or (admin and row["role"] != "admin"):
+        raise SessionInvalidError()
+    _verify_with_lockout(row, pin, session.area, session.terminal, _now())
+    return row
+
+
 def sign_out(session: Session) -> None:
     _write(lambda conn: _log(conn, "sign_out", session.badge_id, session.area, session.terminal))
 
@@ -321,15 +433,22 @@ def _account_row(conn, badge_id: str) -> sqlite3.Row:
 
 
 def set_pin(badge_id: str, new_pin: str, by: Actor | None = None) -> None:
-    """An administrator sets a new PIN (also clears a lockout)."""
+    """An administrator sets a new PIN (also clears a lockout); a person
+    may set their own (`by` is them - change_own_pin checks the old PIN
+    first). With `by` given, the actor is re-checked in the database:
+    someone else's PIN needs a CURRENT active administrator."""
     account = get(badge_id)
     _check_pin(new_pin, account.role)
     pin_hash = auth.hash_pin(new_pin)
 
     def run(conn):
+        _check_actor(conn, by, account.badge_id, allow_self=True)
+        row = _account_row(conn, account.badge_id)
+        if row["role"] != account.role:  # changed while we were hashing
+            _check_pin(new_pin, row["role"])
         conn.execute("UPDATE accounts SET pin_hash = ?, failed_attempts = 0, locked_until = NULL, "
-                     "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (pin_hash, account.id))
-        _log(conn, "pin_changed", badge_id, detail=f"by {by.label}" if by else None)
+                     "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (pin_hash, row["id"]))
+        _log(conn, "pin_changed", row["badge_id"], detail=f"by {by.label}" if by else None)
 
     _write(run)
 
@@ -358,12 +477,15 @@ def create_recovery_code(by: Session) -> str:
     """Make (or replace) the recovery code and return it - the only time it
     can be read. Administrators only; the old code stops working."""
     if by.role != "admin":
-        raise AuthError("Only an administrator can create the recovery code.")
+        raise localized_auth("err.recovery_admin_only")
     actor = by.actor
     code = recovery_code.generate()
     code_hash = auth.hash_pin(recovery_code.normalize(code))
 
     def run(conn):
+        live = _fetch_by_id(conn, by.account_id)  # the session may be stale: ask the database
+        if live is None or not live["is_active"] or not live["employee_active"] or live["role"] != "admin":
+            raise SessionInvalidError()
         for key, value in ((_RC_HASH, code_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
             conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
                          "SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
@@ -381,8 +503,8 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
     normalized = recovery_code.normalize(code)
     _reset_with_secret(
         _RC_HASH, normalized, len(normalized) == recovery_code.CODE_LENGTH, badge_id, new_pin, terminal,
-        "Reset with the recovery code", "This installation has no recovery code yet.",
-        "That recovery code is not right.",
+        "Reset with the recovery code", "err.rc_none",
+        "err.rc_wrong",
     )
 
 
@@ -393,20 +515,34 @@ def get_security_question() -> str | None:
     return row["value"] if row and row["value"] else None
 
 
+# A security answer must be a little stronger than the question module's
+# own minimum (3): it guards a full administrator reset.
+MIN_SECURITY_ANSWER_LENGTH = max(4, security_question.MIN_ANSWER_LENGTH)
+
+
+def validate_security_answer(question: str, answer: str) -> tuple[str, str]:
+    """security_question.validate() plus the stricter answer length (counted
+    after normalising - case, accents, spaces and punctuation ignored).
+    Raises ValueError with a message fit to show."""
+    question, answer = security_question.validate(question, answer)
+    if len(security_question.normalize_answer(answer)) < MIN_SECURITY_ANSWER_LENGTH:
+        raise UserError("err.answer_short", n=MIN_SECURITY_ANSWER_LENGTH)
+    return question, answer
+
+
 def set_security_question(session: Session, current_pin: str, question: str, answer: str) -> None:
     """An administrator sets (or replaces) the installation's security
     question. Needs their current PIN, so a walk-up can't swap it."""
     if session.role != "admin":
-        raise AuthError("Only an administrator can set the security question.")
-    question, answer = security_question.validate(question, answer)
-    row = get(session.badge_id)
-    with connection_scope() as conn:
-        stored = conn.execute("SELECT pin_hash FROM accounts WHERE id = ?", (row.id,)).fetchone()[0]
-    if not auth.verify_pin(current_pin or "", stored):
-        raise SignInFailedError()
+        raise localized_auth("err.question_admin_only")
+    question, answer = validate_security_answer(question, answer)
+    _confirm_current_pin(session, current_pin, admin=True)
     answer_hash = auth.hash_pin(security_question.normalize_answer(answer))
 
     def run(conn):
+        live = _fetch_by_id(conn, session.account_id)
+        if live is None or not live["is_active"] or not live["employee_active"] or live["role"] != "admin":
+            raise SessionInvalidError()
         for key, value in ((_SQ_QUESTION, question), (_SQ_HASH, answer_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
             conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
                          "SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
@@ -422,9 +558,9 @@ def reset_with_security_answer(answer: str, badge_id: str, new_pin: str, termina
     the recovery code, so trying both doesn't double the guesses."""
     normalized = security_question.normalize_answer(answer)
     _reset_with_secret(
-        _SQ_HASH, normalized, len(normalized) >= security_question.MIN_ANSWER_LENGTH, badge_id, new_pin, terminal,
-        "Reset by answering the security question", "No security question has been set yet.",
-        "That answer is not right.",
+        _SQ_HASH, normalized, len(normalized) >= MIN_SECURITY_ANSWER_LENGTH, badge_id, new_pin, terminal,
+        "Reset by answering the security question", "err.sq_none",
+        "err.sq_wrong",
     )
 
 
@@ -461,7 +597,7 @@ def _reset_with_secret(hash_key, secret, plausible, badge_id, new_pin, terminal,
                  "Locked for %d minutes" % recovery_code.LOCK_MINUTES if expiry else None)
             return "wrong", None
         row = _account_row(conn, badge_id)
-        if row["role"] != "admin" or not row["is_active"]:
+        if row["role"] != "admin" or not row["is_active"] or not row["employee_active"]:
             return "not_admin", None
         conn.execute("UPDATE accounts SET pin_hash = ?, failed_attempts = 0, locked_until = NULL, "
                      "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (new_hash, row["id"]))
@@ -474,50 +610,81 @@ def _reset_with_secret(hash_key, secret, plausible, badge_id, new_pin, terminal,
     if status == "ok":
         return
     if status == "none":
-        raise AuthError(none_message)
+        raise localized_auth(none_message)
     if status == "locked":
-        raise AuthError(f"Too many wrong tries - recovery is locked until {local_datetime_text(extra)}.")
+        raise localized_auth("err.recovery_locked", when=local_datetime_text(extra))
     if status == "not_admin":
-        raise AuthError("That account is not an active administrator.")
-    raise AuthError(wrong_message)
+        raise localized_auth("err.not_active_admin")
+    raise localized_auth(wrong_message)
 
 
 def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:
-    """Signed-in person changes their own PIN; the current one must match."""
-    row = get(session.badge_id)
-    with connection_scope() as conn:
-        stored = conn.execute("SELECT pin_hash FROM accounts WHERE id = ?", (row.id,)).fetchone()[0]
-    if not auth.verify_pin(current_pin or "", stored):
-        raise SignInFailedError()
-    set_pin(session.badge_id, new_pin, by=session.actor)
+    """Signed-in person changes their own PIN; the current one must match
+    (checked with the sign-in lockout against the account as it is NOW)."""
+    row = _confirm_current_pin(session, current_pin)
+    set_pin(row["badge_id"], new_pin, by=session.actor)
 
 
-def set_role(badge_id: str, role: str, by: Actor | None = None) -> None:
+def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | None = None) -> None:
+    """Change an account's role. Promoting someone to administrator must
+    come with `new_pin` in the same call: an administrator PIN is longer
+    (auth.MIN_ADMIN_PIN_LENGTH) than a till PIN, and the old short PIN must
+    not become an admin key. It must also differ from the current PIN.
+    Raises ValueError (missing / weak / unchanged PIN), LastAdminError,
+    SelfActionError (`by` changing their own role), SessionInvalidError
+    (`by` is no longer an administrator)."""
     if role not in auth.ROLES:
         raise ValueError(f"Unknown role {role!r}")
+    current = get(badge_id)
+    promoting = role == "admin" and current.role != "admin"
+    pin_hash = None
+    if promoting:
+        if not new_pin:
+            raise UserError("err.promote_needs_pin", n=auth.MIN_ADMIN_PIN_LENGTH)
+        _check_pin(new_pin, "admin")
+        with connection_scope() as conn:
+            old_hash = conn.execute("SELECT pin_hash FROM accounts WHERE id = ?", (current.id,)).fetchone()[0]
+        if auth.verify_pin(new_pin, old_hash):
+            raise UserError("err.promote_new_pin")
+        pin_hash = auth.hash_pin(new_pin)
 
     def run(conn):
-        row = _account_row(conn, badge_id)
+        same = _check_actor(conn, by, current.badge_id)
+        row = _account_row(conn, current.badge_id)
         if row["role"] == role:
             return
+        if same:
+            raise SelfActionError("change the role of")
+        if role == "admin" and pin_hash is None:  # became non-admin while we were checking
+            raise UserError("err.promote_try_again")
         if row["role"] == "admin":
             guard_last_admin(conn, row["employee_id"])
-        conn.execute("UPDATE accounts SET role = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
-                     (role, row["id"]))
-        _log(conn, "account_changed", badge_id,
-             detail=f"role {auth.role_label(row['role'])} -> {auth.role_label(role)}" + (f" · by {by.label}" if by else ""))
+        if pin_hash is not None:
+            conn.execute("UPDATE accounts SET role = ?, pin_hash = ?, failed_attempts = 0, locked_until = NULL, "
+                         "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (role, pin_hash, row["id"]))
+        else:
+            conn.execute("UPDATE accounts SET role = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
+                         (role, row["id"]))
+        _log(conn, "account_changed", row["badge_id"],
+             detail=f"role {auth.role_label(row['role'])} -> {auth.role_label(role)}"
+                    + (" · new PIN set" if pin_hash is not None else "") + (f" · by {by.label}" if by else ""))
 
     _write(run)
 
 
 def set_active(badge_id: str, active: bool, by: Actor | None = None) -> None:
+    """Switch an account on or off. Raises LastAdminError,
+    SelfActionError (`by` switching themselves off), SessionInvalidError."""
     def run(conn):
         row = _account_row(conn, badge_id)
+        same = _check_actor(conn, by, row["badge_id"])
+        if not active and same:
+            raise SelfActionError("switch off")
         if not active and row["role"] == "admin":
             guard_last_admin(conn, row["employee_id"])
         conn.execute("UPDATE accounts SET is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
                      (int(bool(active)), row["id"]))
-        _log(conn, "account_changed", badge_id,
+        _log(conn, "account_changed", row["badge_id"],
              detail=("switched on" if active else "switched off") + (f" · by {by.label}" if by else ""))
 
     _write(run)
@@ -526,19 +693,25 @@ def set_active(badge_id: str, active: bool, by: Actor | None = None) -> None:
 def unlock(badge_id: str, by: Actor | None = None) -> None:
     def run(conn):
         row = _account_row(conn, badge_id)
+        _check_actor(conn, by, row["badge_id"])
         conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL WHERE id = ?", (row["id"],))
-        _log(conn, "unlocked", badge_id, detail=f"by {by.label}" if by else None)
+        _log(conn, "unlocked", row["badge_id"], detail=f"by {by.label}" if by else None)
 
     _write(run)
 
 
 def delete(badge_id: str, by: Actor | None = None) -> None:
-    """Remove the account (the employee stays in Workforce)."""
+    """Remove the account (the employee stays in Workforce). Raises
+    LastAdminError, SelfActionError (`by` removing their own account),
+    SessionInvalidError."""
     def run(conn):
         row = _account_row(conn, badge_id)
+        same = _check_actor(conn, by, row["badge_id"])
+        if same:
+            raise SelfActionError("remove")
         if row["role"] == "admin":
             guard_last_admin(conn, row["employee_id"])
         conn.execute("DELETE FROM accounts WHERE id = ?", (row["id"],))
-        _log(conn, "account_changed", badge_id, detail="account removed" + (f" · by {by.label}" if by else ""))
+        _log(conn, "account_changed", row["badge_id"], detail="account removed" + (f" · by {by.label}" if by else ""))
 
     _write(run)

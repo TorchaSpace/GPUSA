@@ -26,15 +26,36 @@ from PySide6.QtWidgets import (
 
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
-from shared.models import LedgerEntry
+from shared.formatting import MAX_AMOUNT
+from shared.models import LEDGER_DOC_TYPES, LedgerEntry
 
-# The depot mockup's own names for the four document types.
+# The depot mockup's own names for the four document types - its view of
+# the usual direction (a transfer is a "Payment", an invoice a
+# "Receivable"). Direction decides the real name: use depot_type_label().
 DEPOT_TYPE_LABELS = {
     "check": "Check",
     "note": "Promissory note",
     "transfer": "Payment",
     "invoice": "Receivable",
 }
+
+_LABELS_BY_DIRECTION = {
+    ("in", "check"): "Received check",
+    ("out", "check"): "Issued check",
+    ("in", "note"): "Received promissory note",
+    ("out", "note"): "Issued promissory note",
+    ("in", "transfer"): "Incoming transfer",
+    ("out", "transfer"): "Payment",
+    ("in", "invoice"): "Receivable",
+    ("out", "invoice"): "Payable",
+}
+
+
+def depot_type_label(direction: str, doc_type: str) -> str:
+    """The name for a document by direction AND type: an incoming invoice
+    is a Receivable, an outgoing one a Payable; an outgoing transfer is a
+    Payment, an incoming one an Incoming transfer."""
+    return _LABELS_BY_DIRECTION.get((direction, doc_type), DEPOT_TYPE_LABELS.get(doc_type, doc_type))
 
 
 def _date_edit(value: date) -> QDateEdit:
@@ -61,6 +82,7 @@ class LedgerEntryDialog(QDialog):
         )
 
         title = QLabel(f"RECORD DOCUMENT · {site}")
+        title.setTextFormat(Qt.PlainText)
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; letter-spacing: 1px;"
         )
@@ -69,8 +91,9 @@ class LedgerEntryDialog(QDialog):
         self.direction_input.addItem("Received (money coming in)", "in")
         self.direction_input.addItem("Issued (money going out)", "out")
         self.type_input = QComboBox()
-        for key, label in DEPOT_TYPE_LABELS.items():
-            self.type_input.addItem(label, key)
+        for key in LEDGER_DOC_TYPES:
+            self.type_input.addItem(depot_type_label("in", key), key)
+        self.direction_input.currentIndexChanged.connect(self._relabel_types)
         self.doc_no_input = QLineEdit()
         self.doc_no_input.setPlaceholderText("e.g. ÇK-004812")
         self.counterparty_input = QLineEdit()
@@ -84,10 +107,14 @@ class LedgerEntryDialog(QDialog):
         self.due_input = _date_edit(today)
         self.amount_input = QDoubleSpinBox()
         self.amount_input.setDecimals(2)
-        self.amount_input.setRange(0, 1_000_000_000)
+        self.amount_input.setRange(0, MAX_AMOUNT)  # same cap the repository enforces
         self.amount_input.setGroupSeparatorShown(True)
 
+        for line_edit, limit in ((self.doc_no_input, 60), (self.counterparty_input, 120), (self.detail_input, 120)):
+            line_edit.setMaxLength(limit)
+
         self.error_label = QLabel()
+        self.error_label.setTextFormat(Qt.PlainText)  # repository messages echo typed text
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet(
             f"color: {p['text_primary']}; background-color: #fff6d6; border: 1px solid #f4b400; "
@@ -118,6 +145,12 @@ class LedgerEntryDialog(QDialog):
         buttons.addWidget(cancel)
         buttons.addWidget(save)
         form.addRow(buttons)
+
+    def _relabel_types(self) -> None:
+        """Type names follow the direction ("Receivable" vs "Payable")."""
+        direction = self.direction_input.currentData()
+        for index in range(self.type_input.count()):
+            self.type_input.setItemText(index, depot_type_label(direction, self.type_input.itemData(index)))
 
     def _validate_and_accept(self) -> None:
         problems = []

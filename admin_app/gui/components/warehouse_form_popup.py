@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QSpinBox
 
+from shared.i18n import tr
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.models import Warehouse
 
@@ -21,7 +22,7 @@ class WarehouseFormPopup(RefreshablePopup):
         self._name_input = QLineEdit()
         self._city_input = QLineEdit()
         self._capacity_input = QLineEdit()
-        self._capacity_input.setPlaceholderText("units of stock - leave empty if unknown")
+        self._capacity_input.setPlaceholderText(tr("admin.warehouses.form_capacity_ph"))
         self._docks_input = QSpinBox()
         self._docks_input.setRange(0, 999)
         self._active_input = QCheckBox()
@@ -31,12 +32,12 @@ class WarehouseFormPopup(RefreshablePopup):
         self._error.hide()
 
         form = QFormLayout()
-        form.addRow("Code", self._code_input)
-        form.addRow("Name", self._name_input)
-        form.addRow("City", self._city_input)
-        form.addRow("Capacity (units)", self._capacity_input)
-        form.addRow("Loading docks", self._docks_input)
-        form.addRow("Active", self._active_input)
+        form.addRow(tr("admin.warehouses.form_code"), self._code_input)
+        form.addRow(tr("admin.warehouses.form_name"), self._name_input)
+        form.addRow(tr("admin.warehouses.form_city"), self._city_input)
+        form.addRow(tr("admin.warehouses.form_capacity"), self._capacity_input)
+        form.addRow(tr("admin.warehouses.form_docks"), self._docks_input)
+        form.addRow(tr("admin.warehouses.form_active"), self._active_input)
         form.addRow(self._error)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Cancel)
         buttons.accepted.connect(self._try_accept)
@@ -46,7 +47,9 @@ class WarehouseFormPopup(RefreshablePopup):
 
     def refresh_content(self, warehouse: Warehouse | None = None) -> None:
         self._editing_code = warehouse.code if warehouse is not None else None
-        self.setWindowTitle("Edit warehouse" if warehouse is not None else "Add warehouse")
+        self.setWindowTitle(
+            tr("admin.warehouses.form_edit") if warehouse is not None else tr("admin.warehouses.form_add")
+        )
         self._code_input.setText(warehouse.code if warehouse else "")
         self._code_input.setEnabled(warehouse is None)
         self._name_input.setText(warehouse.name if warehouse else "")
@@ -69,11 +72,11 @@ class WarehouseFormPopup(RefreshablePopup):
         try:
             self._capacity()
         except ValueError:
-            self._error.setText("Capacity must be a whole number above 0, or empty.")
+            self._error.setText(tr("admin.warehouses.form_err_capacity"))
             self._error.show()
             return
         if not self._code_input.text().strip() or not self._name_input.text().strip():
-            self._error.setText("Code and name are required.")
+            self._error.setText(tr("admin.warehouses.form_err_required"))
             self._error.show()
             return
         self.accept()

@@ -27,16 +27,40 @@ as in the mockup's own form).
 
 from __future__ import annotations
 
+import functools
 import sqlite3
 
+from shared.formatting import format_int
+from shared.i18n import UserError
 from database.connection import connection_scope
 from database.exceptions import (
+    DataAccessError,
     ProductNotFoundError,
     PurchaseOrderAlreadyDecidedError,
     PurchaseOrderNotFoundError,
 )
+from database.ledger_repository import normalise_site
 from shared.auth import Actor, actor_label
+from shared.formatting import round_money
 from shared.models import PriceRange, PurchaseOrder, hold_reason_for
+
+# Largest quantity on one order - a typo guard (an extra zero), not a business rule.
+MAX_QUANTITY = 1_000_000
+MAX_SUPPLIER_LENGTH = 200
+
+
+def _wrap_sqlite(func):
+    """A stray sqlite3.Error becomes a DataAccessError - callers never
+    see SQLite exceptions. ValueError and our own errors pass through."""
+
+    @functools.wraps(func)
+    def wrapper(*args, **kwargs):
+        try:
+            return func(*args, **kwargs)
+        except sqlite3.Error as exc:
+            raise DataAccessError(f"Database error: {exc}") from exc
+
+    return wrapper
 
 
 # --- Safe price ranges ---------------------------------------------------
@@ -51,13 +75,24 @@ def _row_to_range(row: sqlite3.Row) -> PriceRange:
     )
 
 
-def _validate_range(price_range: PriceRange) -> None:
-    if price_range.min_unit_price < 0 or price_range.max_unit_price < 0:
-        raise ValueError("Prices can't be negative.")
-    if price_range.min_unit_price > price_range.max_unit_price:
-        raise ValueError("The minimum price can't be higher than the maximum.")
+def _validate_range(price_range: PriceRange) -> tuple[float, float]:
+    """Finite, non-negative, <= MAX_AMOUNT, rounded half-up to cents;
+    returns (min, max). Raises ValueError."""
+    import math
+
+    for value in (price_range.min_unit_price, price_range.max_unit_price):
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise UserError("err.prices_finite")
+        if value < 0:
+            raise UserError("err.prices_negative")
+    low = round_money(price_range.min_unit_price, "Minimum price") if price_range.min_unit_price >= 0.005 else 0.0
+    high = round_money(price_range.max_unit_price, "Maximum price")
+    if low > high:
+        raise UserError("err.min_gt_max")
+    return low, high
 
 
+@_wrap_sqlite
 def get_price_range(barcode: str) -> PriceRange | None:
     """The product's safe band, or None if no band has been set."""
     with connection_scope() as conn:
@@ -67,6 +102,7 @@ def get_price_range(barcode: str) -> PriceRange | None:
     return _row_to_range(row) if row is not None else None
 
 
+@_wrap_sqlite
 def list_price_ranges() -> list[PriceRange]:
     with connection_scope() as conn:
         rows = conn.execute(
@@ -75,11 +111,12 @@ def list_price_ranges() -> list[PriceRange]:
     return [_row_to_range(row) for row in rows]
 
 
+@_wrap_sqlite
 def set_price_range(price_range: PriceRange) -> None:
     """Create or replace a product's band. Raises ProductNotFoundError for
     an unknown barcode, ValueError for negative/inverted prices. Existing
     orders keep the band they were judged against (see schema.sql)."""
-    _validate_range(price_range)
+    low, high = _validate_range(price_range)
     supplier = (price_range.default_supplier or "").strip() or None
     with connection_scope() as conn:
         exists = conn.execute(
@@ -94,10 +131,11 @@ def set_price_range(price_range: PriceRange) -> None:
             "min_unit_price = excluded.min_unit_price, max_unit_price = excluded.max_unit_price, "
             "default_supplier = excluded.default_supplier, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            (price_range.product_barcode, price_range.min_unit_price, price_range.max_unit_price, supplier),
+            (price_range.product_barcode, low, high, supplier),
         )
 
 
+@_wrap_sqlite
 def delete_price_range(barcode: str) -> None:
     """Remove a product's band (a no-op if it had none). Orders for that
     product are then held as "no_range" until a new band is set."""
@@ -129,13 +167,17 @@ def _row_to_order(row: sqlite3.Row) -> PurchaseOrder:
     )
 
 
+@_wrap_sqlite
 def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: str,
            raised_by: Actor | None = None) -> PurchaseOrder:
     """Raise a purchase order and decide, authoritatively, whether it's
     sent directly or held for approval. Returns the stored order.
 
-    Raises ValueError for a blank supplier/site or a non-positive
-    quantity/price, ProductNotFoundError for an unknown barcode.
+    Raises ValueError for a blank supplier/site, a quantity that isn't a
+    whole number between 1 and MAX_QUANTITY, or a price that isn't finite,
+    rounds (half-up, to cents) to less than 0.01 or exceeds MAX_AMOUNT;
+    ProductNotFoundError for an unknown barcode. The site is stored
+    stripped and upper-cased.
 
     BEGIN IMMEDIATE so the band that's read and the order that's written
     are one consistent snapshot - an admin changing the band at the same
@@ -143,15 +185,20 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     against another.
     """
     supplier = (supplier or "").strip()
-    site = (site or "").strip()
+    site = normalise_site(site)
     if not supplier:
-        raise ValueError("Enter a supplier.")
+        raise UserError("err.supplier_required")
+    if len(supplier) > MAX_SUPPLIER_LENGTH:
+        raise UserError("err.supplier_too_long", n=MAX_SUPPLIER_LENGTH)
     if not site:
-        raise ValueError("A purchase order needs a site.")
+        raise UserError("err.po_site_required")
+    if isinstance(quantity, bool) or not isinstance(quantity, int):
+        raise UserError("err.qty_whole")
     if quantity <= 0:
-        raise ValueError("Quantity must be greater than 0.")
-    if unit_price <= 0:
-        raise ValueError("Unit price must be greater than 0.")
+        raise UserError("err.qty_positive")
+    if quantity > MAX_QUANTITY:
+        raise UserError("err.qty_too_big", n=format_int(MAX_QUANTITY))
+    unit_price = round_money(unit_price, "Unit price")
 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -198,6 +245,7 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     return _row_to_order(row)
 
 
+@_wrap_sqlite
 def get(order_id: int) -> PurchaseOrder:
     with connection_scope() as conn:
         row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
@@ -206,25 +254,31 @@ def get(order_id: int) -> PurchaseOrder:
     return _row_to_order(row)
 
 
+@_wrap_sqlite
 def list_orders(status: str | None = None, site: str | None = None, limit: int | None = None) -> list[PurchaseOrder]:
-    """Orders newest first, optionally filtered by status and/or site."""
+    """Orders newest first, optionally filtered by status and/or site
+    (compared case-insensitively, so rows saved before sites were
+    normalised still match)."""
     clauses, params = [], []
     if status is not None:
         clauses.append("status = ?")
         params.append(status)
-    if site is not None:
-        clauses.append("site = ?")
-        params.append(site)
     sql = "SELECT * FROM purchase_orders"
     if clauses:
         sql += " WHERE " + " AND ".join(clauses)
     sql += " ORDER BY created_at DESC, id DESC"
-    if limit is not None:
+    if limit is not None and site is None:
         sql += " LIMIT ?"
         params.append(limit)
     with connection_scope() as conn:
         rows = conn.execute(sql, params).fetchall()
-    return [_row_to_order(row) for row in rows]
+    orders = [_row_to_order(row) for row in rows]
+    if site is not None:
+        wanted = normalise_site(site)
+        orders = [o for o in orders if normalise_site(o.site) == wanted]
+        if limit is not None:
+            orders = orders[:limit]
+    return orders
 
 
 def list_pending() -> list[PurchaseOrder]:
@@ -232,6 +286,17 @@ def list_pending() -> list[PurchaseOrder]:
     return list_orders(status="pending")
 
 
+@_wrap_sqlite
+def pending_ids() -> list[int]:
+    """Ids of every order awaiting a decision, ascending - cheap to poll,
+    and (unlike a count) changes when one is decided AND another raised
+    between two polls."""
+    with connection_scope() as conn:
+        rows = conn.execute("SELECT id FROM purchase_orders WHERE status = 'pending' ORDER BY id").fetchall()
+    return [int(row[0]) for row in rows]
+
+
+@_wrap_sqlite
 def count_pending() -> int:
     """Cheap enough to poll (indexed) - drives admin_app's sidebar badge."""
     with connection_scope() as conn:
@@ -239,7 +304,11 @@ def count_pending() -> int:
     return int(row[0])
 
 
+@_wrap_sqlite
 def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor | None = None) -> PurchaseOrder:
+    decider = actor_label(decided_by) if decided_by is not None else None
+    if not decider or not decider.strip(" ·"):
+        raise UserError("err.decision_needs_admin")
     note = (note or "").strip() or None
     with connection_scope() as conn:
         # The `AND status = 'pending'` is what makes this safe with two
@@ -251,7 +320,7 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
             "UPDATE purchase_orders SET status = ?, decision_note = ?, decided_by = ?, "
             "decided_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
             "WHERE id = ? AND status = 'pending'",
-            (new_status, note, actor_label(decided_by), order_id),
+            (new_status, note, decider, order_id),
         )
         row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
     if row is None:
@@ -263,12 +332,14 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
 
 
 def approve(order_id: int, note: str | None = None, decided_by: Actor | None = None) -> PurchaseOrder:
-    """Approve a held order - it becomes "sent". Raises
-    PurchaseOrderAlreadyDecidedError if it isn't pending anymore."""
+    """Approve a held order - it becomes "sent". `decided_by` is required
+    (ValueError without it: decided_by is never NULL on a decided order).
+    Raises PurchaseOrderAlreadyDecidedError if it isn't pending anymore."""
     return _decide(order_id, "sent", note, decided_by)
 
 
 def reject(order_id: int, note: str | None = None, decided_by: Actor | None = None) -> PurchaseOrder:
-    """Reject a held order - it's never sent. Raises
-    PurchaseOrderAlreadyDecidedError if it isn't pending anymore."""
+    """Reject a held order - it's never sent. `decided_by` is required
+    (ValueError without it). Raises PurchaseOrderAlreadyDecidedError if
+    it isn't pending anymore."""
     return _decide(order_id, "rejected", note, decided_by)

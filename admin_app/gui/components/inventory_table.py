@@ -21,10 +21,15 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
+from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.models import Product
 
-_COLUMNS = ("SKU", "Product", "Total", "Reorder At", "Status")
+_COLUMN_KEYS = ("sku", "product", "total", "reorder", "status")
+
+
+def _columns() -> tuple[str, ...]:
+    return tuple(tr(f"admin.inventory.col_{key}") for key in _COLUMN_KEYS)
 
 
 def status_for(product: Product) -> tuple[str, str]:
@@ -32,10 +37,10 @@ def status_for(product: Product) -> tuple[str, str]:
     (e.g. Inventory's detail panel) that needs the same status logic."""
     p = CLASSICAL_PALETTE
     if product.stock_quantity <= 0:
-        return "Out of stock", p["alert_critical"]
+        return enum_label("stock_status", "Out of stock"), p["alert_critical"]
     if product.is_below_critical_stock:
-        return "Low stock", p["alert_warning"]
-    return "In stock", p["alert_success"]
+        return enum_label("stock_status", "Low stock"), p["alert_warning"]
+    return enum_label("stock_status", "In stock"), p["alert_success"]
 
 
 class InventoryTableModel(QAbstractTableModel):
@@ -55,12 +60,12 @@ class InventoryTableModel(QAbstractTableModel):
         return 0 if parent.isValid() else len(self._products)
 
     def columnCount(self, parent: QModelIndex = QModelIndex()) -> int:
-        return 0 if parent.isValid() else len(_COLUMNS)
+        return 0 if parent.isValid() else len(_COLUMN_KEYS)
 
     def headerData(self, section: int, orientation: Qt.Orientation, role: int = Qt.DisplayRole):
         if role != Qt.DisplayRole or orientation != Qt.Horizontal:
             return None
-        return _COLUMNS[section]
+        return _columns()[section]
 
     def data(self, index: QModelIndex, role: int = Qt.DisplayRole):
         if not index.isValid():

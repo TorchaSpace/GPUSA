@@ -13,6 +13,7 @@ import sqlite3
 
 from database.connection import connection_scope
 from database.exceptions import DataAccessError
+from shared import i18n
 from shared import store_settings as ss
 
 
@@ -47,6 +48,19 @@ def load_store_profile() -> ss.StoreProfile:
 
 def save_store_profile(profile: ss.StoreProfile) -> None:
     set_many(ss.profile_to_values(profile))
+
+
+def save_profile_and_language(profile: ss.StoreProfile, language: str) -> None:
+    """Store profile and interface language together, in ONE transaction -
+    either both are saved or neither. Raises ValueError for an unknown
+    language code."""
+    code = (language or "").strip().lower()
+    known = [known_code for known_code, _name in i18n.available_languages()]
+    if code not in known:
+        raise ValueError(f"Unknown language {language!r}")
+    values = ss.profile_to_values(profile)
+    values[ss.KEY_LANGUAGE] = code
+    set_many(values)
 
 
 def load_notifications() -> ss.NotificationPrefs:

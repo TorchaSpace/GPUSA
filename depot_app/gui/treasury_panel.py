@@ -28,6 +28,7 @@ the whole company's receivables/payables are reconciled.
 
 from __future__ import annotations
 
+import html
 from datetime import date
 
 from PySide6.QtCore import Qt
@@ -45,13 +46,13 @@ from PySide6.QtWidgets import (
 )
 
 from database import ledger_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.industry_button import IndustryButton
-from depot_app.gui.ledger_entry_dialog import DEPOT_TYPE_LABELS, LedgerEntryDialog
+from depot_app.gui.ledger_entry_dialog import LedgerEntryDialog, depot_type_label
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import format_amount
 from shared.models import LedgerEntry
-from shared.treasury import display_status, is_overdue
+from shared.treasury import display_status, is_overdue, summarize
 
 # Cell order and plural labels exactly as the mockup's `types` map.
 _TYPE_CELLS = (
@@ -69,6 +70,41 @@ def _short_date(value: date) -> str:
 
 def signed_text(entry: LedgerEntry) -> str:
     return ("+" if entry.direction == "in" else "−") + format_amount(entry.amount)
+
+
+def signed_net_text(net: float) -> str:
+    """A signed position: "+1,200.00", "−30.00", "0.00" - the sign is the
+    direction, the number is never abs() of a mixed-sign sum."""
+    return ("+" if net > 0 else "−" if net < 0 else "") + format_amount(abs(net))
+
+
+def type_caption(doc_type: str, entries: list[LedgerEntry]) -> str:
+    """Cell / filter caption for a document type, named by the directions
+    actually present: invoices are Receivables when incoming, Payables
+    when outgoing, plain Invoices when both; transfers likewise."""
+    directions = {e.direction for e in entries}
+    if doc_type == "invoice":
+        return {frozenset({"out"}): "Payables", frozenset({"in", "out"}): "Invoices"}.get(
+            frozenset(directions), "Receivables"
+        )
+    if doc_type == "transfer":
+        return {frozenset({"in"}): "Incoming transfers", frozenset({"in", "out"}): "Transfers"}.get(
+            frozenset(directions), "Payments"
+        )
+    return dict(_TYPE_CELLS)[doc_type]
+
+
+def cell_total_text(entries: list[LedgerEntry], today: date) -> str:
+    """OPEN documents only, split by direction as shared.treasury.summarize
+    counts them (so these agree with Admin): "+X" for money coming in,
+    "−Y" for money going out, "+X / −Y" when both are open."""
+    summary = summarize(entries, today)
+    parts = []
+    if summary.receivables_total:
+        parts.append(f"+{format_amount(summary.receivables_total)}")
+    if summary.payables_total:
+        parts.append(f"−{format_amount(summary.payables_total)}")
+    return " / ".join(parts) or format_amount(0)
 
 
 class _TypeCell(QPushButton):
@@ -154,7 +190,8 @@ class TreasuryPanel(QWidget):
         filters_row.addWidget(record)
         outer.addLayout(filters_row)
 
-        scope = QLabel(f"Filtered to <b>{site}</b>")
+        scope = QLabel(f"Filtered to <b>{html.escape(site)}</b>")
+        scope.setTextFormat(Qt.RichText)
         scope.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
         outer.addWidget(scope, alignment=Qt.AlignRight)
 
@@ -179,11 +216,13 @@ class TreasuryPanel(QWidget):
         outer.addWidget(self._table)
 
         self._message = QLabel()
+        self._message.setTextFormat(Qt.PlainText)  # shows document numbers and error text
         self._message.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         outer.addWidget(self._message)
 
         footer = QHBoxLayout()
-        footer_caption = QLabel(f"NET POSITION · {site} · SHOWN ROWS")
+        footer_caption = QLabel(f"OPEN NET POSITION · {site} · SHOWN ROWS")
+        footer_caption.setTextFormat(Qt.PlainText)
         footer_caption.setStyleSheet(f"font-size: 13px; letter-spacing: 1px; color: {p['text_secondary']};")
         self._net_label = QLabel()
         self._net_label.setStyleSheet(
@@ -209,18 +248,30 @@ class TreasuryPanel(QWidget):
     def reload(self) -> None:
         try:
             self._entries = ledger_repository.list_entries(site=self._site)
-        except Exception:  # a transient lock shouldn't blank the portal
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            # Keep what's showing (a transient lock shouldn't blank the
+            # portal) but say it may be out of date.
+            self._message.setText(f"Couldn't refresh the ledger - showing the last data. ({exc})")
             return
         # Newest document first, like the mockup's ledger.
         self._entries.sort(key=lambda e: (e.issue_date, e.id or 0), reverse=True)
-        for key, label in _TYPE_CELLS:
+        today = self.today()
+        for key, _label in _TYPE_CELLS:
             items = [e for e in self._entries if e.doc_type == key]
-            open_count = sum(1 for e in items if e.is_open)
-            total = abs(sum(e.signed_amount for e in items))
+            open_in = sum(1 for e in items if e.is_open and e.direction == "in")
+            open_out = sum(1 for e in items if e.is_open and e.direction == "out")
+            label = type_caption(key, items)
             cell = self._cells[key]
             cell.caption.setText(f"{label.upper()} · {len(items)}")
-            cell.total.setText(format_amount(total))
-            cell.sub.setText(f"{open_count} open to collect" if key == "invoice" else f"{open_count} not yet settled")
+            cell.total.setText(cell_total_text(items, today))
+            if key == "invoice":
+                parts = ([f"{open_in} open to collect"] if open_in or not open_out else []) + (
+                    [f"{open_out} open to pay"] if open_out else []
+                )
+                cell.sub.setText(" · ".join(parts))
+            else:
+                cell.sub.setText(f"{open_in + open_out} not yet settled")
+            self._filter_buttons[key].setText(label)
         self._render()
 
     def set_filter(self, key: str | None) -> None:
@@ -244,7 +295,7 @@ class TreasuryPanel(QWidget):
             status = display_status(entry, today)
             values = [
                 _short_date(entry.issue_date),
-                DEPOT_TYPE_LABELS.get(entry.doc_type, entry.doc_type),
+                depot_type_label(entry.direction, entry.doc_type),
                 entry.doc_no,
                 entry.counterparty,
                 _short_date(entry.due_date),
@@ -275,8 +326,9 @@ class TreasuryPanel(QWidget):
                         item.setForeground(QColor(p["text_secondary"]))
                 item.setFont(font)
                 self._table.setItem(index, column, item)
-        net = sum(e.signed_amount for e in rows)
-        self._net_label.setText(("+" if net > 0 else "−" if net < 0 else "") + format_amount(abs(net)))
+        # Open documents only, receivables minus payables - the same
+        # arithmetic as Admin's net position (shared.treasury.summarize).
+        self._net_label.setText(signed_net_text(summarize(rows, today).net_position))
 
     def shown_entries(self) -> list[LedgerEntry]:
         return list(self._shown)
@@ -290,18 +342,18 @@ class TreasuryPanel(QWidget):
     def _record(self) -> None:
         try:
             names = ledger_repository.known_counterparties()
-        except Exception:
+        except (ValueError, *DATABASE_ERRORS):
             names = []
         dialog = LedgerEntryDialog(self._site, names, self.today(), self)
         while self._run_dialog(dialog):
             try:
                 saved = ledger_repository.create(dialog.result_entry())
-            except (DataAccessError, ValueError) as exc:
+            except (ValueError, *DATABASE_ERRORS) as exc:
                 dialog.show_error(f"Couldn't save: {exc}")
                 continue
             self.reload()
             self._message.setText(
-                f"Recorded {DEPOT_TYPE_LABELS[saved.doc_type].lower()} {saved.doc_no} · {signed_text(saved)}. "
+                f"Recorded {depot_type_label(saved.direction, saved.doc_type).lower()} {saved.doc_no} · {signed_text(saved)}. "
                 f"It's settled from Admin > Treasury & Ledger."
             )
             return

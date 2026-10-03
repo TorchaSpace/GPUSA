@@ -91,11 +91,12 @@ def test_settings_account_actions(settings, monkeypatch):
     settings.select("B-2")
     assert settings._buttons["active"].text() == "Switch on"
 
-    warnings = []
-    monkeypatch.setattr(QMessageBox, "warning", lambda *a, **k: warnings.append(a[2]))
+    infos = []
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: infos.append(a[2]))
     settings.select("A-1")
-    settings.toggle_active()  # the only administrator
-    assert warnings and "no active administrator" in warnings[0]
+    assert not settings._buttons["active"].isEnabled()  # you can't switch yourself off
+    settings.toggle_active()
+    assert infos and account_repository.get("A-1").is_active
     events = [settings._events.item(r, 3).text() for r in range(settings._events.rowCount())]
     assert "Account changed" in events and "Account created" in events
 
@@ -159,9 +160,12 @@ def test_forgot_pin_with_nothing_set_up_offers_to_start_over(qapp, tmp_path):
     employee_repository.create(Employee("B-2", "Selin", "Sales & service", "Dealership", "Harbor Point"))
     dialog = ResetAdminAccessDialog()
     assert dialog.mode == "reset" and not dialog.switch_button.isVisible()
-    assert not dialog.erase()  # nothing happens until the box is ticked
-    assert accounts.admin_exists()
-    dialog.confirm_box.setChecked(True)
+    assert not dialog.erase()  # nothing happens until the word is typed
+    assert accounts.admin_exists() and not dialog.erase_button.isEnabled()
+    dialog.confirm_input.setText("yes")
+    assert not dialog.erase_button.isEnabled() and not dialog.erase() and accounts.admin_exists()
+    dialog.confirm_input.setText(" sil ")  # SIL or ERASE, any case
+    assert dialog.erase_button.isEnabled()
     assert dialog.erase() and dialog.erased
     assert not accounts.admin_exists() and employee_repository.list_all() == []
     assert dialog.backup_path.exists()  # the old data is kept in a file beside the database

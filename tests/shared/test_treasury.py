@@ -118,3 +118,29 @@ def test_milestones_put_overdue_on_today_and_run_the_net():
 )
 def test_compact_amount(value, expected):
     assert compact_amount(value) == expected
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [
+        (999_950, "1.00M"),
+        (999_949, "999.9k"),
+        (999_499, "999.5k"),
+        (-999_950, "-1.00M"),
+        (999.995, "1k"),
+        (999.994, "999.99"),
+        (-0.4, "0"),
+        (0.4, "0"),
+        (-0.0, "0"),
+        (0.6, "1"),
+        (12.5, "12.50"),
+        (-12.5, "-12.50"),
+        (12.004, "12"),
+        (1000, "1k"),
+        (1_000_000, "1.00M"),
+        (float("nan"), "—"),
+        (float("inf"), "—"),
+    ],
+)
+def test_compact_amount_rounds_before_choosing_the_unit(value, expected):
+    assert compact_amount(value) == expected

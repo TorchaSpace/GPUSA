@@ -18,6 +18,7 @@ from database.exceptions import (
     SignInFailedError,
 )
 from shared import auth
+from shared.auth import Actor
 from shared.formatting import to_db_timestamp
 from shared.models import UNASSIGNED, Employee, LineItem, Product, Transaction
 
@@ -81,7 +82,8 @@ def test_lockout_after_repeated_wrong_pins_and_unlock(people):
     for attempt in range(auth.MAX_FAILED_ATTEMPTS - 1):
         with pytest.raises(SignInFailedError) as info:
             accounts.authenticate("B-3", "9999", auth.AREA_DEPOT_CONSOLE, "Depot")
-    assert "1 more try" in str(info.value)
+    # Never says how many tries are left - that would only help a guesser.
+    assert str(info.value) == "Badge or PIN is wrong." and "more tr" not in str(info.value)
     with pytest.raises(AccountLockedError):
         accounts.authenticate("B-3", "9999", auth.AREA_DEPOT_CONSOLE, "Depot")
     with pytest.raises(AccountLockedError):  # even the right PIN, while locked
@@ -154,7 +156,8 @@ def test_the_last_administrator_cannot_be_removed(people):
     with pytest.raises(LastAdminError):
         employee_repository.delete("B-1")
     accounts.create_account("B-3", "admin", "739184")
-    accounts.set_role("B-1", "depot_manager", by=people.actor)  # fine now: B-3 is an admin
+    # Fine now that B-3 is an admin - but B-3 does it, an admin can't demote themselves.
+    accounts.set_role("B-1", "depot_manager", by=Actor("B-3", "Murat Yılmaz"))
     assert accounts.get("B-1").role == "depot_manager"
 
 

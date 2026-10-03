@@ -101,7 +101,7 @@ def test_update_missing_raises():
 
 
 def test_delete_removes_product():
-    product = _make_product()
+    product = _make_product(stock_quantity=0)
     product_repository.create(product)
 
     product_repository.delete(product.barcode)

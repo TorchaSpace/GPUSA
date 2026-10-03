@@ -18,8 +18,15 @@ CREATE TABLE IF NOT EXISTS products (
     stock_quantity      INTEGER NOT NULL DEFAULT 0 CHECK (stock_quantity >= 0),
     critical_stock_level INTEGER NOT NULL DEFAULT 0 CHECK (critical_stock_level >= 0),
     created_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- 0 = deactivated (migration v3): kept for history and shown dimmed in
+    -- Admin, but not sellable / receivable / shippable. A product with stock
+    -- or history can't be deleted, only deactivated.
+    is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
 );
+-- Barcodes are stored trimmed + upper-case by product_repository; the
+-- case-insensitive UNIQUE index on them is created by database/migrations.py
+-- (v3), which skips it if an old database already holds case-only duplicates.
 
 CREATE TABLE IF NOT EXISTS transactions (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -316,6 +323,8 @@ CREATE INDEX IF NOT EXISTS idx_shipments_dealership_code
     ON shipments(dealership_code);
 CREATE INDEX IF NOT EXISTS idx_shipment_lines_shipment_id
     ON shipment_lines(shipment_id);
+CREATE INDEX IF NOT EXISTS idx_shipment_lines_product_barcode
+    ON shipment_lines(product_barcode);
 
 -- Warehouse domain (admin_app's Warehouses page; each depot_app
 -- instance IS one warehouse - the setup wizard asks for its details and

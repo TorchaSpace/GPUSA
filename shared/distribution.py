@@ -20,7 +20,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 
-from shared.formatting import parse_db_timestamp
+from shared.formatting import day_month_text, parse_db_timestamp
+from shared.i18n import tr
 from shared.models import Shipment
 
 ARRIVING_WINDOW = timedelta(minutes=60)
@@ -96,10 +97,10 @@ def duration_text(delta: timedelta) -> str:
     minutes = int(round(delta.total_seconds() / 60))
     hours, minutes = divmod(minutes, 60)
     if hours and minutes:
-        return f"+{hours}h {minutes}m"
+        return tr("format.dur_hm").format(h=hours, m=minutes)
     if hours:
-        return f"+{hours}h"
-    return f"+{minutes}m"
+        return tr("format.dur_h").format(h=hours)
+    return tr("format.dur_m").format(m=minutes)
 
 
 def eta_text(shipment: Shipment, now: datetime | None = None) -> str:
@@ -108,16 +109,16 @@ def eta_text(shipment: Shipment, now: datetime | None = None) -> str:
     now = now or _utc_now()
     if shipment.status == "delivered" and shipment.delivered_at:
         at = parse_db_timestamp(shipment.delivered_at).astimezone()
-        return f"Arrived {at.strftime('%H:%M')}"
+        return tr("distribution.arrived").format(time=at.strftime("%H:%M"))
     at = parse_db_timestamp(shipment.eta).astimezone()
     today = now.astimezone().date()
     if at.date() == today:
         return at.strftime("%H:%M")
     if at.date() == today + timedelta(days=1):
-        return f"Tomorrow {at.strftime('%H:%M')}"
+        return tr("distribution.tomorrow").format(time=at.strftime("%H:%M"))
     if at.date() == today - timedelta(days=1):
-        return f"Yesterday {at.strftime('%H:%M')}"
-    return at.strftime("%a %d %b %H:%M")
+        return tr("distribution.yesterday").format(time=at.strftime("%H:%M"))
+    return f"{tr(f'format.weekday.{at.weekday()}')} {day_month_text(at)} {at.strftime('%H:%M')}"
 
 
 @dataclass

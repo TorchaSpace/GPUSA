@@ -15,6 +15,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from admin_app.gui.components.admin_page import AdminPage
 
@@ -30,7 +31,7 @@ class PlaceholderPage(AdminPage):
         layout.setSpacing(8)
         layout.setAlignment(Qt.AlignHCenter)
 
-        heading = QLabel("Not built yet")
+        heading = QLabel(tr("admin.placeholder.title"))
         heading.setAlignment(Qt.AlignHCenter)
         heading.setStyleSheet(f"font-size: 16px; color: {p['text_secondary']};")
         layout.addWidget(heading)

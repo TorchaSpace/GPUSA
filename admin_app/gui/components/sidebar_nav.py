@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.gui_kit.icon_kit import svg_to_icon
 
@@ -236,7 +237,7 @@ class SidebarNav(QWidget):
         # The signed-in administrator can sign out (Admin then asks for a
         # sign-in again before showing anything). A small link under the
         # role, so the name and role keep the footer's full width.
-        self.sign_out_button = QPushButton("Sign out")
+        self.sign_out_button = QPushButton(tr("admin.shell.sign_out"))
         self.sign_out_button.setCursor(Qt.PointingHandCursor)
         self.sign_out_button.setFlat(True)
         self.sign_out_button.setStyleSheet(

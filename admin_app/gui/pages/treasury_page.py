@@ -36,6 +36,7 @@ Deliberately different from the mockup:
 
 from __future__ import annotations
 
+import html
 from datetime import date
 
 from PySide6.QtCore import Qt
@@ -57,11 +58,11 @@ from admin_app.gui.components.milestone_strip import MilestoneStrip
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
-from shared.i18n import tr
+from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import ledger_repository, purchase_order_repository
-from database.exceptions import DataAccessError
-from shared.formatting import format_amount
+from database.exceptions import DATABASE_ERRORS, LedgerEntryStateError
+from shared.formatting import format_amount, month_abbr
 from shared.models import LedgerEntry
 from shared.treasury import (
     compact_amount,
@@ -73,13 +74,18 @@ from shared.treasury import (
     summarize,
 )
 
-_TABS = (("in", "Received Checks & Notes"), ("out", "Issued Checks & Payments"))
+_TABS = ("in", "out")
 _STATUS_FILTERS = ("All", "Pending", "Cleared", "Overdue")
+
+
+def _item_label(key: str) -> str:
+    """Card footer captions; the English words are also the lookup keys."""
+    return tr("admin.treasury.i_" + {"Net position": "net"}.get(key, key.lower()))
 
 
 def long_date(value: date) -> str:
     """The mockup's en-GB style: "26 Sep 2026"."""
-    return f"{value.day:02d} {value.strftime('%b')} {value.year}"
+    return f"{value.day:02d} {month_abbr(value)} {value.year}"
 
 
 def _status_color(status: str) -> str:
@@ -119,6 +125,7 @@ class TreasuryPage(AdminPage):
         self._status_filter = "All"
         self._ascending = True
         self._shown: list[LedgerEntry] = []
+        self._load_error: str | None = None
 
         refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
@@ -144,17 +151,17 @@ class TreasuryPage(AdminPage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
 
-        self._recv_card = StatCard("Total receivables", "—")
-        self._recv_items = {k: stat_breakdown_item(k, "—") for k in ("Checks", "Notes", "Overdue")}
+        self._recv_card = StatCard(tr("admin.treasury.kpi_recv"), "—")
+        self._recv_items = {k: stat_breakdown_item(_item_label(k), "—") for k in ("Checks", "Notes", "Overdue")}
         for item in self._recv_items.values():
             self._recv_card.footer_layout().addWidget(item)
 
-        self._pay_card = StatCard("Total payables", "—")
-        self._pay_items = {k: stat_breakdown_item(k, "—") for k in ("Checks", "Transfers", "Net position")}
+        self._pay_card = StatCard(tr("admin.treasury.kpi_pay"), "—")
+        self._pay_items = {k: stat_breakdown_item(_item_label(k), "—") for k in ("Checks", "Transfers", "Net position")}
         for item in self._pay_items.values():
             self._pay_card.footer_layout().addWidget(item)
 
-        self._due_card = StatCard("Upcoming due dates", "—", corner_note="Next 7 days")
+        self._due_card = StatCard(tr("admin.treasury.kpi_due"), "—", corner_note=tr("admin.treasury.kpi_due_note"))
         due_list = QWidget()
         self._due_list_layout = QVBoxLayout(due_list)
         self._due_list_layout.setContentsMargins(0, 0, 0, 0)
@@ -176,11 +183,9 @@ class TreasuryPage(AdminPage):
 
     def _build_milestones(self) -> Section:
         p = CLASSICAL_PALETTE
-        self._milestone_section = Section("Next 30 days", "Payment & collection milestones")
+        self._milestone_section = Section(tr("admin.treasury.ms_kicker"), tr("admin.treasury.ms_heading"))
         legend = QLabel(
-            f"<span style='color:{p['alert_success']}'>●</span> Collection &nbsp;&nbsp;"
-            f"<span style='color:{p['alert_warning']}'>●</span> Payment &nbsp;&nbsp;"
-            f"<span style='color:{p['accent']}'>—</span> Net of scheduled items"
+            tr("admin.treasury.legend").format(green=p["alert_success"], orange=p["alert_warning"], gold=p["accent"])
         )
         legend.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         self._milestone_section.add_header_control(legend)
@@ -190,7 +195,7 @@ class TreasuryPage(AdminPage):
         layout.setContentsMargins(16, 10, 16, 12)
         layout.setSpacing(6)
         ends = QHBoxLayout()
-        self._net_start_label = QLabel("Net 0")
+        self._net_start_label = QLabel(tr("admin.treasury.net0"))
         self._net_end_label = QLabel()
         for label in (self._net_start_label, self._net_end_label):
             label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
@@ -214,6 +219,7 @@ class TreasuryPage(AdminPage):
 
     def _focus_html(self, title: str, entries: list[LedgerEntry]) -> str:
         p = CLASSICAL_PALETTE
+        title = html.escape(title)
         if not entries:
             return f"<b>{title}</b>"
         parts = []
@@ -221,7 +227,8 @@ class TreasuryPage(AdminPage):
             sign, color = ("+", p["alert_success"]) if entry.direction == "in" else ("−", p["alert_warning"])
             parts.append(
                 f"<span style='color:{color}'>{sign}{compact_amount(entry.amount)}</span> "
-                f"{entry.counterparty} <span style='color:#7d7979'>{entry.type_label} {entry.doc_no}</span>"
+                f"{html.escape(entry.counterparty)} <span style='color:#7d7979'>"
+                f"{html.escape(entry.type_label)} {html.escape(entry.doc_no)}</span>"
             )
         return f"<b>{title}</b> &nbsp; " + " &nbsp;·&nbsp; ".join(parts)
 
@@ -230,18 +237,21 @@ class TreasuryPage(AdminPage):
         if 0 <= index < len(days):
             day = days[index]
             items = day.incoming + day.outgoing
-            title = day.day.strftime("%A ") + f"{day.day.day} {day.day.strftime('%b')}"
-            self._focus_label.setText(self._focus_html(title if items else f"{title} · nothing due", items))
+            title = tr(f"format.weekday_long.{day.day.weekday()}") + f" {day.day.day} {month_abbr(day.day)}"
+            self._focus_label.setText(
+                self._focus_html(title if items else tr("admin.treasury.nothing_due").format(title=title), items)
+            )
             return
         upcoming = [e for d in days for e in d.incoming + d.outgoing][:4]
-        self._focus_label.setText(self._focus_html("Next up", upcoming) if upcoming else "<b>Nothing scheduled in the next 30 days.</b>")
+        self._focus_label.setText(self._focus_html(tr("admin.treasury.next_up"), upcoming) if upcoming
+            else f"<b>{tr('admin.treasury.nothing_30')}</b>")
 
     # --- document table ------------------------------------------------------
 
     def _build_documents(self) -> Section:
         p = CLASSICAL_PALETTE
-        section = Section("Ledger", "Checks, notes & payments")
-        self._record_button = CompactButton("+ Record receipt", variant="primary")
+        section = Section(tr("admin.treasury.ledger_kicker"), tr("admin.treasury.ledger_heading"))
+        self._record_button = CompactButton(tr("admin.treasury.record_receipt"), variant="primary")
         self._record_button.clicked.connect(self._open_record)
         section.add_header_control(self._record_button)
 
@@ -251,8 +261,8 @@ class TreasuryPage(AdminPage):
         bar.setSpacing(4)
         self._tab_group = QButtonGroup(self)
         self._tab_buttons: dict[str, _SegmentButton] = {}
-        for key, label in _TABS:
-            button = _SegmentButton(label)
+        for key in _TABS:
+            button = _SegmentButton(tr(f"admin.treasury.tab_{key}"))
             button.clicked.connect(lambda _c=False, k=key: self._set_tab(k))
             self._tab_group.addButton(button)
             self._tab_buttons[key] = button
@@ -261,7 +271,7 @@ class TreasuryPage(AdminPage):
         self._status_group = QButtonGroup(self)
         self._status_buttons: dict[str, _SegmentButton] = {}
         for status in _STATUS_FILTERS:
-            button = _SegmentButton(status)
+            button = _SegmentButton(enum_label("ledger_filter", status))
             button.clicked.connect(lambda _c=False, s=status: self._set_status_filter(s))
             self._status_group.addButton(button)
             self._status_buttons[status] = button
@@ -271,7 +281,8 @@ class TreasuryPage(AdminPage):
         section.body_layout().addWidget(toolbar)
 
         self._table = styled_table(
-            ["Document", "Counterparty", "Site", "Issue date", "Due date ↑", "Amount", "Status"]
+            [tr(f"admin.treasury.col_{key}") if key != "due" else tr("admin.treasury.date_asc")
+             for key in ("document", "counterparty", "site", "issue", "due", "amount", "status")]
         )
         header = self._table.horizontalHeader()
         header.setStretchLastSection(False)
@@ -288,26 +299,28 @@ class TreasuryPage(AdminPage):
         row = QHBoxLayout(actions)
         row.setContentsMargins(12, 8, 12, 10)
         row.setSpacing(6)
-        self._clear_button = CompactButton("Mark cleared")
+        self._clear_button = CompactButton(tr("admin.treasury.mark_cleared"))
         self._clear_button.clicked.connect(lambda: self._change_status("clear"))
-        self._endorse_button = CompactButton("Mark endorsed")
-        self._endorse_button.setToolTip("A received check or note passed on to someone else instead of cashed")
+        self._endorse_button = CompactButton(tr("admin.treasury.mark_endorsed"))
+        self._endorse_button.setToolTip(tr("admin.treasury.endorse_tip"))
         self._endorse_button.clicked.connect(lambda: self._change_status("endorse"))
-        self._reopen_button = CompactButton("Reopen")
+        self._reopen_button = CompactButton(tr("admin.treasury.reopen"))
         self._reopen_button.clicked.connect(lambda: self._change_status("reopen"))
-        self._edit_button = CompactButton("Edit")
+        self._edit_button = CompactButton(tr("admin.treasury.edit"))
         self._edit_button.clicked.connect(self._open_edit)
-        self._delete_button = CompactButton("Delete")
+        self._delete_button = CompactButton(tr("admin.treasury.delete"))
         self._delete_button.clicked.connect(self._delete_selected)
         for button in (self._clear_button, self._endorse_button, self._reopen_button, self._edit_button, self._delete_button):
             row.addWidget(button)
         row.addStretch(1)
         self._message_label = QLabel()
+        self._message_label.setTextFormat(Qt.PlainText)  # shows document numbers / error text
         self._message_label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         row.addWidget(self._message_label)
         section.body_layout().addWidget(actions)
 
         self._footer_label = QLabel()
+        self._footer_label.setTextFormat(Qt.PlainText)
         self._footer_label.setStyleSheet(
             f"font-size: 11px; color: {p['text_secondary']}; padding: 0 16px 10px 16px;"
         )
@@ -316,11 +329,43 @@ class TreasuryPage(AdminPage):
 
     # --- data ----------------------------------------------------------------
 
+    def load_error(self) -> str | None:
+        """The message shown instead of the ledger when the last reload
+        failed, else None."""
+        return self._load_error
+
+    def _show_load_error(self, exc: Exception) -> None:
+        """A failed read must not look like an empty ledger (zero totals,
+        "0 documents"): blank the numbers and say what happened."""
+        self._entries = []
+        self._shown = []
+        self._load_error = tr("admin.treasury.load_failed").format(error=exc)
+        for card in (self._recv_card, self._pay_card, self._due_card):
+            card.set_value("—")
+        for item in (*self._recv_items.values(), *self._pay_items.values()):
+            self._set_item(item, "—")
+        while self._due_list_layout.count():
+            item = self._due_list_layout.takeAt(0)
+            if item.widget():
+                item.widget().hide()
+                item.widget().deleteLater()
+        self._strip.set_days([])
+        self._net_end_label.setText("")
+        self._focus_label.setText("")
+        for key in _TABS:
+            self._tab_buttons[key].setText(tr(f"admin.treasury.tab_{key}").replace("&", "&&"))
+        self._table.setRowCount(0)
+        self._footer_label.setText(self._load_error)
+        self._message_label.setText("")
+        self._update_actions()
+
     def reload(self) -> None:
         try:
             self._entries = ledger_repository.list_entries()
-        except DataAccessError:
-            self._entries = []
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._show_load_error(exc)
+            return
+        self._load_error = None
         today = self.today()
         p = CLASSICAL_PALETTE
 
@@ -349,16 +394,19 @@ class TreasuryPage(AdminPage):
             if item.widget():
                 item.widget().hide()
                 item.widget().deleteLater()
-        caption = QLabel(f"items · {compact_amount(summary.due_soon_amount)}")
+        caption = QLabel(tr("admin.treasury.items_amount").format(amount=compact_amount(summary.due_soon_amount)))
         caption.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']}; border: none;")
         self._due_list_layout.addWidget(caption)
         for entry in summary.due_soon[:3]:
             days = (entry.due_date - today).days
-            when = "today" if days == 0 else "tomorrow" if days == 1 else entry.due_date.strftime("%a ") + str(entry.due_date.day)
+            when = (
+                tr("admin.treasury.when_today") if days == 0 else tr("admin.treasury.when_tomorrow") if days == 1
+                else tr(f"format.weekday.{entry.due_date.weekday()}") + " " + str(entry.due_date.day)
+            )
             arrow, color = ("↙", p["alert_success"]) if entry.direction == "in" else ("↗", p["alert_warning"])
             when_color = p["alert_warning"] if days <= 1 else "#9b9797"
             line = QLabel(
-                f"<span style='color:{color}'>{arrow}</span> {entry.counterparty} "
+                f"<span style='color:{color}'>{arrow}</span> {html.escape(entry.counterparty)} "
                 f"<span style='float:right'>{compact_amount(entry.amount)}</span>"
                 f"<span style='color:{when_color}'> · {when}</span>"
             )
@@ -369,21 +417,29 @@ class TreasuryPage(AdminPage):
         self._strip.set_days(days)
         end = days[-1]
         self._milestone_section.set_kicker(
-            f"Next 30 days · {today.day} {today.strftime('%b')} – {end.day.day} {end.day.strftime('%b')}"
+            tr("admin.treasury.kicker_range").format(
+                start=f"{today.day} {month_abbr(today)}", end=f"{end.day.day} {month_abbr(end.day)}"
+            )
         )
         sign = "+" if end.cumulative_net > 0 else ""
-        self._net_end_label.setText(f"{sign}{compact_amount(end.cumulative_net)} net scheduled by {end.day.day} {end.day.strftime('%b')}")
+        self._net_end_label.setText(
+            tr("admin.treasury.net_end").format(
+                amount=f"{sign}{compact_amount(end.cumulative_net)}", day=f"{end.day.day} {month_abbr(end.day)}"
+            )
+        )
         self._show_focus(-1)
 
-        counts = {key: sum(1 for e in self._entries if e.direction == key) for key, _ in _TABS}
-        for key, label in _TABS:
-            self._tab_buttons[key].setText(f"{label}  {counts[key]}".replace("&", "&&"))
+        counts = {key: sum(1 for e in self._entries if e.direction == key) for key in _TABS}
+        for key in _TABS:
+            self._tab_buttons[key].setText(f"{tr(f'admin.treasury.tab_{key}')}  {counts[key]}".replace("&", "&&"))
         self._render_table()
 
     def _set_tab(self, key: str) -> None:
         self._tab = key
         self._tab_buttons[key].setChecked(True)
-        self._record_button.setText("+ Record receipt" if key == "in" else "+ Record payment")
+        self._record_button.setText(
+            tr("admin.treasury.record_receipt") if key == "in" else tr("admin.treasury.record_payment")
+        )
         self._render_table()
 
     def _set_status_filter(self, status: str) -> None:
@@ -394,7 +450,9 @@ class TreasuryPage(AdminPage):
     def _on_header_clicked(self, column: int) -> None:
         if column == 4:
             self._ascending = not self._ascending
-            self._table.horizontalHeaderItem(4).setText("Due date ↑" if self._ascending else "Due date ↓")
+            self._table.horizontalHeaderItem(4).setText(
+                tr("admin.treasury.date_asc") if self._ascending else tr("admin.treasury.date_desc")
+            )
             self._render_table()
 
     def _render_table(self) -> None:
@@ -420,17 +478,18 @@ class TreasuryPage(AdminPage):
             values = [
                 cell(f"{entry.type_label} · {entry.doc_no}", color=type_color),
                 cell(counterparty),
-                cell(entry.site or "Company"),
+                cell(entry.site or tr("admin.treasury.company")),
                 cell(long_date(entry.issue_date)),
                 cell(f"{long_date(entry.due_date)} · {due_relative_text(entry, today)}", color=due_color),
                 cell(format_amount(entry.amount), right=True),
-                cell(status, color=_status_color(status)),
+                cell(enum_label("ledger_display", status), color=_status_color(status)),
             ]
             for column, item in enumerate(values):
                 self._table.setItem(index, column, item)
-        total = sum(e.amount for e in rows)
-        noun = "document" if len(rows) == 1 else "documents"
-        self._footer_label.setText(f"{len(rows)} {noun} · {format_amount(total)}")
+        total = round(sum(e.amount for e in rows), 2)
+        self._footer_label.setText(
+            tr("admin.treasury.footer").format(n=plural("admin.treasury.documents", len(rows)), total=format_amount(total))
+        )
         self._update_actions()
 
     # --- selection + actions ----------------------------------------------
@@ -450,8 +509,9 @@ class TreasuryPage(AdminPage):
     def _update_actions(self) -> None:
         entry = self.selected_entry()
         has = entry is not None
-        self._edit_button.setEnabled(has)
-        self._delete_button.setEnabled(has)
+        # Settled entries are history: reopen first to edit or delete.
+        self._edit_button.setEnabled(has and entry.is_open)
+        self._delete_button.setEnabled(has and entry.is_open)
         self._clear_button.setEnabled(has and entry.is_open)
         self._reopen_button.setEnabled(has and not entry.is_open)
         self._endorse_button.setEnabled(
@@ -465,15 +525,19 @@ class TreasuryPage(AdminPage):
         try:
             if action == "clear":
                 updated = ledger_repository.mark_cleared(entry.id)
-                message = f"{entry.type_label} {entry.doc_no} marked cleared."
+                message = tr("admin.treasury.msg_cleared").format(type=entry.type_label, doc=entry.doc_no)
             elif action == "endorse":
                 updated = ledger_repository.mark_endorsed(entry.id)
-                message = f"{entry.type_label} {entry.doc_no} marked endorsed."
+                message = tr("admin.treasury.msg_endorsed").format(type=entry.type_label, doc=entry.doc_no)
             else:
                 updated = ledger_repository.reopen(entry.id)
-                message = f"{entry.type_label} {entry.doc_no} reopened."
-        except (DataAccessError, ValueError) as exc:
-            self._message_label.setText(f"Couldn't update: {exc}")
+                message = tr("admin.treasury.msg_reopened").format(type=entry.type_label, doc=entry.doc_no)
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._message_label.setText(tr("admin.treasury.update_failed").format(error=exc))
+            if isinstance(exc, LedgerEntryStateError):  # someone else settled it first: show the truth
+                self.reload()
+                self.select_entry(entry.id)
+                self._message_label.setText(tr("admin.treasury.update_failed").format(error=exc))
             return
         self.reload()
         self.select_entry(updated.id)
@@ -484,7 +548,7 @@ class TreasuryPage(AdminPage):
             names = ledger_repository.known_counterparties()
             sites = {e.site for e in self._entries if e.site}
             sites |= {o.site for o in purchase_order_repository.list_orders(limit=200)}
-        except DataAccessError:
+        except (ValueError, *DATABASE_ERRORS):
             names, sites = [], set()
         return names, sorted(sites)
 
@@ -496,6 +560,9 @@ class TreasuryPage(AdminPage):
         entry = self.selected_entry()
         if entry is None:
             return
+        if not entry.is_open:
+            self._message_label.setText(tr("admin.treasury.reopen_first"))
+            return
         names, sites = self._suggestions()
         self._popup.open_or_refresh(entry=entry, counterparties=names, sites=sites, today=self.today())
 
@@ -503,19 +570,22 @@ class TreasuryPage(AdminPage):
         entry = self._popup.result_entry()
         try:
             saved = ledger_repository.update(entry) if self._popup.is_editing() else ledger_repository.create(entry)
-        except (DataAccessError, ValueError) as exc:
-            self._popup.show_error(f"Couldn't save: {exc}")
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._popup.show_error(tr("admin.treasury.save_failed").format(error=exc))
             return
         if saved.direction != self._tab:
             self._set_tab(saved.direction)
         self.reload()
         self.select_entry(saved.id)
-        self._message_label.setText(f"Saved {saved.type_label.lower()} {saved.doc_no}.")
+        self._message_label.setText(
+            tr("admin.treasury.saved").format(type=saved.type_label.lower(), doc=saved.doc_no)
+        )
 
     def _confirm_delete(self, entry: LedgerEntry) -> bool:
         """Separate so tests can answer without a modal dialog."""
         answer = QMessageBox.question(
-            self, "Delete document?", f"Delete {entry.type_label.lower()} {entry.doc_no}? This can't be undone."
+            self, tr("admin.treasury.delete_title"),
+            tr("admin.treasury.delete_confirm").format(type=entry.type_label.lower(), doc=entry.doc_no),
         )
         return answer == QMessageBox.Yes
 
@@ -525,8 +595,11 @@ class TreasuryPage(AdminPage):
             return
         try:
             ledger_repository.delete(entry.id)
-        except DataAccessError as exc:
-            self._message_label.setText(f"Couldn't delete: {exc}")
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self.reload()  # e.g. it was settled/removed elsewhere
+            self._message_label.setText(tr("admin.treasury.delete_failed").format(error=exc))
             return
         self.reload()
-        self._message_label.setText(f"Deleted {entry.type_label.lower()} {entry.doc_no}.")
+        self._message_label.setText(
+            tr("admin.treasury.deleted").format(type=entry.type_label.lower(), doc=entry.doc_no)
+        )

@@ -6,8 +6,45 @@ matters when this layer is eventually swapped for a hosted backend.
 """
 
 
+from shared.formatting import format_int
+from shared.i18n import enum_label, english, tr
+
+
+def _word(group: str, code: str) -> str:
+    """A status/action word in the current language (the English code with
+    underscores read as spaces when there is no translation)."""
+    label = enum_label(group, code)
+    return label if label != code else code.replace("_", " ")
+
+
+def _r(value) -> str:
+    """repr(), as the English messages always quoted codes and barcodes."""
+    return repr(value)
+
+
 class DataAccessError(Exception):
-    """Base class for all database/ layer errors."""
+    """Base class for all database/ layer errors.
+
+    Messages are shown to people, so a subclass can call _localize(key, ...)
+    after super().__init__(english_text): str() then returns tr(key) in the
+    language the app runs in (formatted with the same values), and the
+    English text when the key is missing."""
+
+    _i18n: tuple[str, dict] | None = None
+
+    def _localize(self, key: str, **values) -> None:
+        self._i18n = (key, values)
+
+    def __str__(self) -> str:
+        if self._i18n is not None:
+            key, values = self._i18n
+            text = tr(key)
+            if text != key:
+                try:
+                    return text.format(**values)
+                except (KeyError, IndexError, ValueError):
+                    pass
+        return super().__str__()
 
 
 class ProductNotFoundError(DataAccessError):
@@ -15,6 +52,7 @@ class ProductNotFoundError(DataAccessError):
 
     def __init__(self, barcode: str):
         super().__init__(f"No product found with barcode {barcode!r}")
+        self._localize("err.product_not_found", barcode=_r(barcode))
         self.barcode = barcode
 
 
@@ -23,6 +61,7 @@ class DuplicateBarcodeError(DataAccessError):
 
     def __init__(self, barcode: str):
         super().__init__(f"Product with barcode {barcode!r} already exists")
+        self._localize("err.duplicate_barcode", barcode=_r(barcode))
         self.barcode = barcode
 
 
@@ -31,6 +70,7 @@ class TransactionNotFoundError(DataAccessError):
 
     def __init__(self, transaction_id: int):
         super().__init__(f"No transaction found with id {transaction_id!r}")
+        self._localize("err.transaction_not_found", id=_r(transaction_id))
         self.transaction_id = transaction_id
 
 
@@ -39,6 +79,7 @@ class DealershipNotFoundError(DataAccessError):
 
     def __init__(self, code: str):
         super().__init__(f"No dealership found with code {code!r}")
+        self._localize("err.dealership_not_found", code=_r(code))
         self.code = code
 
 
@@ -47,6 +88,7 @@ class DuplicateDealershipCodeError(DataAccessError):
 
     def __init__(self, code: str):
         super().__init__(f"Dealership with code {code!r} already exists")
+        self._localize("err.duplicate_dealership", code=_r(code))
         self.code = code
 
 
@@ -55,6 +97,7 @@ class EmployeeNotFoundError(DataAccessError):
 
     def __init__(self, badge_id: str):
         super().__init__(f"No employee found with badge id {badge_id!r}")
+        self._localize("err.employee_not_found", badge_id=_r(badge_id))
         self.badge_id = badge_id
 
 
@@ -63,6 +106,7 @@ class DuplicateBadgeIdError(DataAccessError):
 
     def __init__(self, badge_id: str):
         super().__init__(f"Employee with badge id {badge_id!r} already exists")
+        self._localize("err.duplicate_badge", badge_id=_r(badge_id))
         self.badge_id = badge_id
 
 
@@ -72,6 +116,7 @@ class AlreadyCheckedInError(DataAccessError):
 
     def __init__(self, badge_id: str):
         super().__init__(f"{badge_id!r} is already checked in")
+        self._localize("err.already_checked_in", badge_id=_r(badge_id))
         self.badge_id = badge_id
 
 
@@ -81,6 +126,7 @@ class NoOpenAttendanceRecordError(DataAccessError):
 
     def __init__(self, badge_id: str):
         super().__init__(f"{badge_id!r} is not currently checked in")
+        self._localize("err.not_checked_in", badge_id=_r(badge_id))
         self.badge_id = badge_id
 
 
@@ -98,6 +144,10 @@ class InsufficientStockError(DataAccessError):
         super().__init__(
             f"Cannot remove {requested} of {barcode!r}: only {available} in stock{where}"
         )
+        self._localize(
+            "err.insufficient_stock_at" if location else "err.insufficient_stock",
+            requested=requested, barcode=_r(barcode), available=available, location=location,
+        )
         self.barcode = barcode
         self.requested = requested
         self.available = available
@@ -109,6 +159,7 @@ class PurchaseOrderNotFoundError(DataAccessError):
 
     def __init__(self, order_id: int):
         super().__init__(f"No purchase order found with id {order_id!r}")
+        self._localize("err.po_not_found", id=_r(order_id))
         self.order_id = order_id
 
 
@@ -119,6 +170,9 @@ class PurchaseOrderAlreadyDecidedError(DataAccessError):
 
     def __init__(self, order_number: str, status: str):
         super().__init__(f"{order_number} is no longer awaiting approval (it is {status!r})")
+        self._localize(
+            "err.po_decided", number=order_number, status=_r(enum_label("status_plain", status))
+        )
         self.order_number = order_number
         self.status = status
 
@@ -128,6 +182,7 @@ class LedgerEntryNotFoundError(DataAccessError):
 
     def __init__(self, entry_id: int):
         super().__init__(f"No ledger entry found with id {entry_id!r}")
+        self._localize("err.ledger_not_found", id=_r(entry_id))
         self.entry_id = entry_id
 
 
@@ -137,6 +192,7 @@ class DuplicateLedgerDocumentError(DataAccessError):
 
     def __init__(self, doc_no: str):
         super().__init__(f"A document numbered {doc_no!r} of that type is already recorded")
+        self._localize("err.duplicate_ledger_doc", doc_no=_r(doc_no))
         self.doc_no = doc_no
 
 
@@ -145,6 +201,7 @@ class ShipmentNotFoundError(DataAccessError):
 
     def __init__(self, shipment_id: int):
         super().__init__(f"No shipment found with id {shipment_id!r}")
+        self._localize("err.shipment_not_found", id=_r(shipment_id))
         self.shipment_id = shipment_id
 
 
@@ -155,6 +212,10 @@ class ShipmentStateError(DataAccessError):
 
     def __init__(self, shipment_number: str, status: str, action: str):
         super().__init__(f"{shipment_number} can't be {action} - it is {status.replace('_', ' ')}")
+        self._localize(
+            "err.shipment_state", number=shipment_number, action=_word("shipment_action", action),
+            status=_word("shipment_status", status),
+        )
         self.shipment_number = shipment_number
         self.status = status
 
@@ -164,6 +225,7 @@ class WarehouseNotFoundError(DataAccessError):
 
     def __init__(self, code: str):
         super().__init__(f"No warehouse with code {code!r}")
+        self._localize("err.warehouse_not_found", code=_r(code))
         self.code = code
 
 
@@ -172,6 +234,7 @@ class DuplicateWarehouseCodeError(DataAccessError):
 
     def __init__(self, code: str):
         super().__init__(f"A warehouse with code {code!r} already exists")
+        self._localize("err.duplicate_warehouse", code=_r(code))
         self.code = code
 
 
@@ -182,6 +245,7 @@ class UnknownLocationError(DataAccessError):
 
     def __init__(self, kind: str, code: str):
         super().__init__(f"No {kind} with code {code!r}")
+        self._localize("err.unknown_location", kind=_word("kind", kind), code=_r(code))
         self.kind = kind
         self.code = code
 
@@ -192,6 +256,7 @@ class LocationHasStockError(DataAccessError):
 
     def __init__(self, code: str, units: int):
         super().__init__(f"{code} still holds {units} units - move them elsewhere before deleting it.")
+        self._localize("err.location_has_stock", code=code, units=units)
         self.code = code
         self.units = units
 
@@ -202,6 +267,14 @@ class AuthError(DataAccessError):
     """Base class for sign-in / account errors; str() is safe to show."""
 
 
+def localized_auth(key: str, **values) -> "AuthError":
+    """An AuthError whose text comes from the string table (English as the
+    plain message, the current language at str() time)."""
+    error = AuthError(english(key, **values))
+    error._localize(key, **values)
+    return error
+
+
 class SignInFailedError(AuthError):
     """Wrong badge or PIN. Deliberately doesn't say which."""
 
@@ -210,29 +283,41 @@ class SignInFailedError(AuthError):
         if attempts_left is not None and attempts_left <= 2:
             text += f" {attempts_left} more tr{'y' if attempts_left == 1 else 'ies'} before the account locks."
         super().__init__(text)
+        self._localize("err.sign_in_failed")
         self.attempts_left = attempts_left
+
+    def __str__(self) -> str:
+        text = super().__str__()
+        n = self.attempts_left
+        if n is not None and n <= 2:
+            text += " " + tr("err.sign_in_tries_one" if n == 1 else "err.sign_in_tries_other").format(attempts_left=n)
+        return text
 
 
 class AccountLockedError(AuthError):
     def __init__(self, until_text: str):
         super().__init__(f"Too many wrong PINs - this account is locked until {until_text}. "
                          "An administrator can unlock it in Admin > Settings.")
+        self._localize("err.account_locked", until=until_text)
         self.until_text = until_text
 
 
 class AccountDisabledError(AuthError):
     def __init__(self):
         super().__init__("This account is switched off. Ask an administrator.")
+        self._localize("err.account_disabled")
 
 
 class NotAllowedError(AuthError):
     def __init__(self, role_text: str, area_text: str):
         super().__init__(f"A {role_text.lower()} account can't open {area_text}.")
+        self._localize("err.not_allowed", role=role_text.lower(), area=area_text)
 
 
 class AccountNotFoundError(AuthError):
     def __init__(self, badge_id: str):
         super().__init__(f"No sign-in account for badge {badge_id!r}")
+        self._localize("err.account_not_found", badge_id=_r(badge_id))
         self.badge_id = badge_id
 
 
@@ -242,6 +327,47 @@ class LastAdminError(AuthError):
 
     def __init__(self):
         super().__init__("That would leave no active administrator - add or keep another one first.")
+        self._localize("err.last_admin")
+
+
+class EmployeeInactiveError(DataAccessError):
+    """Raised by attendance_repository.check_in() for a deactivated employee."""
+
+    def __init__(self, badge_id: str):
+        super().__init__(f"{badge_id} is marked inactive in Workforce and can't check in.")
+        self._localize("err.employee_inactive", badge_id=badge_id)
+        self.badge_id = badge_id
+
+
+class SessionInvalidError(AuthError):
+    """The signed-in account was switched off, its employee deactivated,
+    removed, or its role changed since sign-in."""
+
+    def __init__(self):
+        super().__init__("This sign-in is no longer valid - the account was changed or switched off. Sign in again.")
+        self._localize("err.session_invalid")
+
+
+class SelfActionError(AuthError):
+    """An administrator tried to demote, switch off or remove their own account."""
+
+    def __init__(self, action: str):
+        super().__init__(f"You can't {action} your own account - ask another administrator.")
+        key = {"change the role of": "err.self_role", "switch off": "err.self_off", "remove": "err.self_remove"}.get(action)
+        if key:
+            self._localize(key)
+        self.action = action
+
+
+class DealershipInactiveError(AuthError):
+    """A till (POS) belongs to a dealership that is switched off in Admin:
+    it can't take sales."""
+
+    def __init__(self, name: str = ""):
+        who = f"{name} is" if name else "This dealership is"
+        super().__init__(f"{who} switched off in Admin, so its till can't be used. Ask an administrator.")
+        self._localize("err.dealership_inactive_named" if name else "err.dealership_inactive", name=name)
+        self.name = name
 
 
 # What a page should catch around a database read: this layer's own errors
@@ -250,3 +376,116 @@ class LastAdminError(AuthError):
 import sqlite3 as _sqlite3
 
 DATABASE_ERRORS = (DataAccessError, _sqlite3.Error)
+
+
+class LedgerEntryStateError(DataAccessError):
+    """Raised by ledger_repository when a transition or edit isn't allowed
+    from the entry's CURRENT status - e.g. clearing an already-cleared
+    entry (another admin got there first), or editing/deleting a settled
+    one. `status` is its current status, `action` what was attempted."""
+
+    def __init__(self, entry_id: int, status: str, action: str):
+        super().__init__(f"Can't {action} ledger entry {entry_id}: it is {status!r}")
+        known = enum_label("ledger_status", status)
+        self._localize(
+            "err.ledger_state", id=entry_id, action=_word("ledger_action", action),
+            status=known if known != status else _r(status),
+        )
+        self.entry_id = entry_id
+        self.status = status
+        self.action = action
+
+
+# --- products / locations / shipments: refusals added with the stock-safety fixes ----
+
+class ProductInUseError(DataAccessError):
+    """Refused: deleting a product that still has stock or any history
+    (stock movements, sales, shipment lines). Deactivate it instead."""
+
+    def __init__(self, barcode: str, reason: str, reason_key: str | None = None, **reason_values):
+        super().__init__(f"{barcode} can't be deleted: {reason}. Deactivate it instead.")
+        if reason_key:
+            reason = tr(reason_key).format(**reason_values)
+        self._localize("err.product_in_use", barcode=barcode, reason=reason)
+        self.barcode = barcode
+        self.reason = reason
+
+
+class LocationInUseError(DataAccessError):
+    """Refused: deleting a warehouse/dealership that scheduled or in-transit
+    shipments still point at (as origin or destination)."""
+
+    def __init__(self, kind: str, code: str, shipments: int):
+        super().__init__(
+            f"{kind.capitalize()} {code} can't be deleted: {shipments} shipment{'s' if shipments != 1 else ''} "
+            "still scheduled or in transit. Deactivate it instead, or finish/cancel those shipments first."
+        )
+        self._localize(
+            "err.location_in_use_one" if shipments == 1 else "err.location_in_use_other",
+            kind=_word("kind", kind).capitalize(), code=code, n=format_int(shipments),
+        )
+        self.kind = kind
+        self.code = code
+        self.shipments = shipments
+
+
+class ShipmentNotDispatchedError(ShipmentStateError):
+    """Refused: receiving a shipment that never left (status scheduled) -
+    it would create stock out of nothing. Dispatch it first."""
+
+    def __init__(self, shipment_number: str, status: str):
+        super().__init__(shipment_number, status, "received")
+        self.args = (f"{shipment_number} can't be received - it hasn't been dispatched yet "
+                     f"(it is {status.replace('_', ' ')}). The depot must dispatch it first.",)
+        self._localize("err.not_dispatched", number=shipment_number, status=_word("shipment_status", status))
+
+
+class LocationInactiveError(DataAccessError):
+    """Refused: putting stock into a deactivated warehouse."""
+
+    def __init__(self, code: str):
+        super().__init__(f"Warehouse {code} is inactive - reactivate it before putting stock there.")
+        self._localize("err.location_inactive", code=code)
+        self.code = code
+
+
+class CapacityExceededError(DataAccessError):
+    """Refused: an inbound movement would take a warehouse over its capacity."""
+
+    def __init__(self, code: str, capacity: int, used: int, adding: int):
+        super().__init__(
+            f"Warehouse {code} holds {used:,} of {capacity:,} units - adding {adding:,} would exceed its capacity "
+            f"by {used + adding - capacity:,}."
+        )
+        self._localize(
+            "err.capacity_exceeded", code=code, used=format_int(used), capacity=format_int(capacity),
+            adding=format_int(adding), over=format_int(used + adding - capacity),
+        )
+        self.code = code
+        self.capacity = capacity
+        self.used = used
+        self.adding = adding
+
+
+class CapacityBelowUsageError(DataAccessError):
+    """Refused: setting a warehouse's capacity below the units it holds now."""
+
+    def __init__(self, code: str, capacity: int, used: int):
+        super().__init__(
+            f"Warehouse {code} holds {used:,} units, which is more than the new capacity of {capacity:,}. "
+            "Move stock out first, or set a capacity of at least that many units."
+        )
+        self._localize("err.capacity_below_usage", code=code, used=format_int(used), capacity=format_int(capacity))
+        self.code = code
+        self.capacity = capacity
+        self.used = used
+
+
+class ProductInactiveError(ProductNotFoundError):
+    """Raised when an inactive (deactivated) product is looked up for a sale
+    or a movement. It is still in the database, just no longer in use."""
+
+    def __init__(self, barcode: str):
+        DataAccessError.__init__(self, f"Product {barcode!r} is deactivated and can't be used")
+        self._localize("err.product_inactive", barcode=_r(barcode))
+        self.barcode = barcode

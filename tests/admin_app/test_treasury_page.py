@@ -162,3 +162,117 @@ def test_milestone_strip_and_focus(page):
     page._show_focus(2)
     assert "Harbor Point" in page._focus_label.text()
     assert "84.2k" in page._net_end_label.text()
+
+
+# --- review fixes -------------------------------------------------------------
+
+
+def test_a_database_error_shows_an_error_state_not_an_empty_ledger(page, monkeypatch):
+    import sqlite3
+
+    _add(doc_no="CHK-1")
+    page.reload()
+    assert page._table.rowCount() == 1
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    real = ledger.list_entries
+    monkeypatch.setattr(ledger, "list_entries", boom)
+    page.reload()
+
+    assert "locked" in page.load_error()
+    assert page._table.rowCount() == 0
+    assert page._recv_card._value_label.text() == "—" and page._pay_card._value_label.text() == "—"
+    assert "Couldn't load the ledger" in page._footer_label.text()
+    assert "0 documents" not in page._footer_label.text()
+
+    monkeypatch.setattr(ledger, "list_entries", real)
+    page.reload()
+    assert page.load_error() is None and page._table.rowCount() == 1
+    assert "1 document" in page._footer_label.text()
+
+
+def test_user_text_is_escaped_in_the_focus_line_and_due_soon_list(page):
+    _add(doc_no="<i>X</i>", counterparty="<b>Evil</b> & Co", due=date(2026, 9, 26))
+    page.reload()
+
+    page._show_focus(2)
+    text = page._focus_label.text()
+    assert "<b>Evil</b>" not in text and "&lt;b&gt;Evil&lt;/b&gt; &amp; Co" in text
+    assert "&lt;I&gt;X&lt;/I&gt;" in text  # doc numbers are stored upper-cased
+
+    from PySide6.QtWidgets import QLabel
+
+    labels = [l.text() for l in page._due_card.findChildren(QLabel)]
+    assert any("&lt;b&gt;Evil&lt;/b&gt;" in t for t in labels)
+    assert not any("<b>Evil</b>" in t for t in labels)
+
+
+def test_html_title_in_focus_html_is_escaped(page):
+    assert "<script>" not in page._focus_html("<script>", [])
+
+
+def test_settled_documents_cant_be_edited_or_deleted_from_the_ui(page):
+    entry = _add()
+    ledger.mark_cleared(entry.id)
+    page.reload()
+    page.select_entry(entry.id)
+
+    assert not page._edit_button.isEnabled() and not page._delete_button.isEnabled()
+    page._open_edit()
+    assert "Reopen" in page._message_label.text()
+
+    page._change_status("reopen")
+    assert page._edit_button.isEnabled() and page._delete_button.isEnabled()
+
+
+def test_a_stale_clear_is_reported_and_the_page_shows_the_truth(page):
+    entry = _add()
+    page.reload()
+    page.select_entry(entry.id)
+    settled_at = ledger.mark_cleared(entry.id).settled_at  # another admin, first
+
+    page._change_status("clear")
+
+    assert "Couldn't update" in page._message_label.text()
+    assert ledger.get(entry.id).settled_at == settled_at
+    assert _texts(page, 6) == ["Cleared"]  # reloaded: no longer shows it as pending
+
+
+def test_a_stale_delete_is_reported_not_raised(page, monkeypatch):
+    entry = _add()
+    page.reload()
+    page.select_entry(entry.id)
+    ledger.mark_cleared(entry.id)
+    monkeypatch.setattr(page, "_confirm_delete", lambda e: True)
+
+    page._delete_selected()
+
+    assert "Couldn't delete" in page._message_label.text()
+    assert len(ledger.list_entries()) == 1
+
+
+def test_a_raw_sqlite_error_while_saving_is_shown_in_the_popup_not_raised(page, monkeypatch):
+    import sqlite3
+
+    page._open_record()
+    popup = page._popup
+    popup._doc_no_input.setText("CHK-9")
+    popup._counterparty_input.setText("Harbor")
+    popup._amount_input.setValue(5)
+
+    def boom(entry):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ledger, "create", boom)
+    page._save_popup()
+
+    assert "locked" in popup._error.text()
+    popup.close()
+
+
+def test_popup_amount_range_matches_the_repository_cap(page):
+    from shared.formatting import MAX_AMOUNT
+
+    assert page._popup._amount_input.maximum() == MAX_AMOUNT

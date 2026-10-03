@@ -116,11 +116,24 @@ def apply_warehouse_sidecar(sidecar: Path, applied_by: str) -> None:
 
         db_path_display = str(get_db_path())
         from database import warehouse_repository
-        from database.exceptions import DuplicateWarehouseCodeError, WarehouseNotFoundError
+        from database.exceptions import CapacityBelowUsageError, DuplicateWarehouseCodeError, WarehouseNotFoundError
 
         def _update() -> str:
-            warehouse_repository.update(warehouse)
-            return f"updated '{warehouse.code}' ('{warehouse.name}') with the latest setup details"
+            # A sidecar can't know that an administrator switched this
+            # warehouse off since setup: keep its current active flag.
+            existing = warehouse_repository.get_by_code(warehouse.code)
+            warehouse.is_active = existing.is_active
+            note = ""
+            try:
+                warehouse_repository.update(warehouse)
+            except CapacityBelowUsageError as exc:
+                # The warehouse already holds more than the sidecar's capacity:
+                # apply everything else and keep the current capacity.
+                warehouse.capacity_units = existing.capacity_units
+                warehouse_repository.update(warehouse)
+                note = f" (capacity left at {existing.capacity_units}: {exc})"
+            kept = "" if existing.is_active else " (it is inactive in Admin, so it stays inactive)"
+            return f"updated '{warehouse.code}' ('{warehouse.name}') with the latest setup details{kept}{note}"
 
         try:
             warehouse_repository.get_by_code(warehouse.code)

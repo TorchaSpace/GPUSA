@@ -31,10 +31,13 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from shared.i18n import tr
 from database import stock_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from shared.models import UNASSIGNED, Dealership, Product, StockLocation, Warehouse
 from shared import current_session
+from shared.formatting import format_int, signed_int
+from shared.warehousing import location_label
 
 
 class StockMovePopup(QDialog):
@@ -42,11 +45,11 @@ class StockMovePopup(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.setWindowTitle("Move / count stock")
+        self.setWindowTitle(tr("admin.warehouses.mv_title"))
         self.setMinimumWidth(460)
 
-        self._move_radio = QRadioButton("Move between locations")
-        self._count_radio = QRadioButton("Record a stock count")
+        self._move_radio = QRadioButton(tr("admin.warehouses.mv_move"))
+        self._count_radio = QRadioButton(tr("admin.warehouses.mv_count"))
         self._move_radio.setChecked(True)
         group = QButtonGroup(self)
         group.addButton(self._move_radio)
@@ -67,22 +70,22 @@ class StockMovePopup(QDialog):
         self._qty_input = QSpinBox()
         self._qty_input.setRange(0, 10_000_000)
         self._note_input = QLineEdit()
-        self._note_input.setPlaceholderText("optional - why")
+        self._note_input.setPlaceholderText(tr("admin.warehouses.mv_note_ph"))
         self._error = QLabel()
         self._error.setWordWrap(True)
         self._error.hide()
 
         form = QFormLayout()
         form.addRow(mode)
-        form.addRow("Product", self._product_input)
-        self._from_label = QLabel("From")
+        form.addRow(tr("admin.warehouses.mv_product"), self._product_input)
+        self._from_label = QLabel(tr("admin.warehouses.mv_from"))
         form.addRow(self._from_label, self._from_input)
         form.addRow("", self._on_hand)
-        self._to_label = QLabel("To")
+        self._to_label = QLabel(tr("admin.warehouses.mv_to"))
         form.addRow(self._to_label, self._to_input)
-        self._qty_label = QLabel("Quantity")
+        self._qty_label = QLabel(tr("admin.warehouses.mv_qty"))
         form.addRow(self._qty_label, self._qty_input)
-        form.addRow("Note", self._note_input)
+        form.addRow(tr("admin.warehouses.mv_note"), self._note_input)
         form.addRow(self._error)
         buttons = QDialogButtonBox(QDialogButtonBox.Save | QDialogButtonBox.Close)
         buttons.accepted.connect(self._save)
@@ -105,9 +108,9 @@ class StockMovePopup(QDialog):
         for product in products:
             self._product_input.addItem(f"{product.barcode} · {product.name}", product.barcode)
         self._product_input.blockSignals(False)
-        locations = [(f"Warehouse · {w.site_label}", w.location) for w in warehouses]
-        locations += [(f"Dealership · {d.code} · {d.name}", StockLocation.dealership(d.code)) for d in dealerships]
-        locations.append(("Unassigned (not placed yet)", UNASSIGNED))
+        locations = [(tr("wh.location_site").format(site=w.site_label), w.location) for w in warehouses]
+        locations += [(tr("wh.location_dealer").format(code=d.code, name=d.name), StockLocation.dealership(d.code)) for d in dealerships]
+        locations.append((tr("wh.location_unassigned_long"), UNASSIGNED))
         for combo in (self._from_input, self._to_input):
             combo.blockSignals(True)
             combo.clear()
@@ -128,10 +131,10 @@ class StockMovePopup(QDialog):
 
     def _apply_mode(self) -> None:
         moving = self._move_radio.isChecked()
-        self._from_label.setText("From" if moving else "Location")
+        self._from_label.setText(tr("admin.warehouses.mv_from") if moving else tr("admin.warehouses.mv_location"))
         self._to_label.setVisible(moving)
         self._to_input.setVisible(moving)
-        self._qty_label.setText("Quantity" if moving else "Counted")
+        self._qty_label.setText(tr("admin.warehouses.mv_qty") if moving else tr("admin.warehouses.mv_counted"))
         self._qty_input.setMinimum(1 if moving else 0)
         self._update_on_hand()
 
@@ -146,10 +149,10 @@ class StockMovePopup(QDialog):
             return
         try:
             here = stock_repository.quantity_at(location, barcode)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             self._on_hand.setText("")
             return
-        self._on_hand.setText(f"{here:,} on hand there")
+        self._on_hand.setText(tr("admin.warehouses.mv_on_hand").format(n=format_int(here)))
         if self._count_radio.isChecked():
             self._qty_input.setValue(here)
 
@@ -163,19 +166,26 @@ class StockMovePopup(QDialog):
         barcode = self._barcode()
         source = self._from_input.currentData()
         if barcode is None or source is None:
-            self._fail("Pick a product and a location.")
+            self._fail(tr("admin.warehouses.mv_pick"))
             return
         quantity, note = self._qty_input.value(), self._note_input.text()
         try:
             if self._move_radio.isChecked():
                 destination = self._to_input.currentData()
                 stock_repository.transfer(source, destination, barcode, quantity, note, actor=current_session.actor())
-                done = f"Moved {quantity:,} × {barcode} from {source.label} to {destination.label}."
+                done = tr("admin.warehouses.mv_moved").format(
+                    qty=format_int(quantity), barcode=barcode, source=location_label(source), destination=location_label(destination)
+                )
             else:
                 diff = stock_repository.set_count(source, barcode, quantity, note, actor=current_session.actor())
-                done = (f"{source.label}: count matches ({quantity:,})." if diff == 0
-                        else f"{source.label}: {barcode} set to {quantity:,} ({diff:+,}).")
-        except (DataAccessError, ValueError) as exc:
+                done = (
+                    tr("admin.warehouses.mv_match").format(source=location_label(source), qty=format_int(quantity))
+                    if diff == 0 else
+                    tr("admin.warehouses.mv_set").format(
+                        source=location_label(source), barcode=barcode, qty=format_int(quantity), diff=signed_int(diff)
+                    )
+                )
+        except (ValueError, *DATABASE_ERRORS) as exc:  # e.g. not enough stock, over capacity, inactive warehouse
             self._fail(str(exc))
             return
         self._error.setText(done)

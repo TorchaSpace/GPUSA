@@ -211,7 +211,8 @@ class HomePage(QWidget):
 
     def reload_badges(self) -> None:
         try:
-            products = stock_repository.products_at(self._location)
+            products = [p for p in stock_repository.products_at(self._location)
+                        if p.stocked_here or p.stock_quantity > 0]
         except DataAccessError:
             products = []
         out_count = sum(1 for product in products if stock_status(product) == "out")

@@ -8,7 +8,7 @@ import pytest
 
 import database.connection as connection
 from database import dealership_repository, ledger_repository as ledger, product_repository, purchase_order_repository
-from database.exceptions import DuplicateLedgerDocumentError, LedgerEntryNotFoundError
+from database.exceptions import DataAccessError, DuplicateLedgerDocumentError, LedgerEntryNotFoundError, LedgerEntryStateError
 from shared.models import Dealership, LedgerEntry, PriceRange, Product
 
 
@@ -125,11 +125,12 @@ def test_only_received_checks_and_notes_can_be_endorsed(overrides):
 
 
 def test_an_endorsed_check_cant_be_edited_into_an_invoice():
+    # Settled entries are history: any edit is refused until it's reopened.
     entry = ledger.create(_entry())
     ledger.mark_endorsed(entry.id)
     entry = ledger.get(entry.id)
     entry.doc_type = "invoice"
-    with pytest.raises(ValueError):
+    with pytest.raises(LedgerEntryStateError):
         ledger.update(entry)
 
 
@@ -157,3 +158,133 @@ def test_known_counterparties_merges_every_source():
     names = ledger.known_counterparties()
 
     assert names == ["Etiket Pro", "Harbor Point Equipment", "Kuzey Ambalaj A.Ş.", "Riverbend Machinery"]
+
+
+# --- amount validation ------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "amount",
+    [float("nan"), float("inf"), float("-inf"), 0.004, 0.0049, 1e300, 1_000_000_001, "12", None, True],
+)
+def test_create_rejects_bad_amounts_with_value_error(amount):
+    with pytest.raises(ValueError):
+        ledger.create(_entry(amount=amount))
+    assert ledger.list_entries() == []
+
+
+def test_amount_is_rounded_half_up_to_cents_before_the_positive_check():
+    assert ledger.create(_entry(doc_no="A", amount=0.005)).amount == 0.01
+    assert ledger.create(_entry(doc_no="B", amount=2.675)).amount == 2.68
+    assert ledger.create(_entry(doc_no="C", amount=1_000_000_000)).amount == 1_000_000_000
+
+
+def test_update_rejects_non_finite_amount():
+    entry = ledger.create(_entry())
+    entry.amount = float("nan")
+    with pytest.raises(ValueError):
+        ledger.update(entry)
+    assert ledger.get(entry.id).amount == 84200
+
+
+def test_stray_sqlite_errors_become_data_access_errors(monkeypatch):
+    import sqlite3
+
+    def boom(*a, **k):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(ledger, "connection_scope", boom)
+    for call in (lambda: ledger.get(1), lambda: ledger.list_entries(), lambda: ledger.mark_cleared(1),
+                 lambda: ledger.delete(1), lambda: ledger.known_counterparties()):
+        with pytest.raises(DataAccessError):
+            call()
+
+
+# --- state machine ----------------------------------------------------------
+
+
+def test_double_clear_is_refused_and_keeps_the_first_settled_at():
+    entry = ledger.create(_entry())
+    first = ledger.mark_cleared(entry.id)
+    with pytest.raises(LedgerEntryStateError) as info:
+        ledger.mark_cleared(entry.id)
+    assert info.value.status == "cleared"
+    assert ledger.get(entry.id).settled_at == first.settled_at
+
+
+def test_cant_clear_or_endorse_a_settled_entry():
+    cleared = ledger.create(_entry(doc_no="A"))
+    ledger.mark_cleared(cleared.id)
+    with pytest.raises(LedgerEntryStateError):
+        ledger.mark_endorsed(cleared.id)
+    endorsed = ledger.create(_entry(doc_no="B"))
+    ledger.mark_endorsed(endorsed.id)
+    with pytest.raises(LedgerEntryStateError):
+        ledger.mark_cleared(endorsed.id)
+    assert ledger.get(endorsed.id).status == "endorsed"
+
+
+def test_reopen_only_from_settled():
+    entry = ledger.create(_entry())
+    with pytest.raises(LedgerEntryStateError):
+        ledger.reopen(entry.id)
+    ledger.mark_cleared(entry.id)
+    assert ledger.reopen(entry.id).status == "pending"
+    with pytest.raises(LedgerEntryStateError):
+        ledger.reopen(entry.id)
+    with pytest.raises(LedgerEntryNotFoundError):
+        ledger.reopen(999)
+
+
+def test_settled_entries_cant_be_edited_or_deleted_until_reopened():
+    entry = ledger.create(_entry())
+    ledger.mark_cleared(entry.id)
+    edited = ledger.get(entry.id)
+    edited.amount = 5
+    with pytest.raises(LedgerEntryStateError):
+        ledger.update(edited)
+    with pytest.raises(LedgerEntryStateError):
+        ledger.delete(entry.id)
+    assert ledger.get(entry.id).amount == 84200
+    ledger.reopen(entry.id)
+    edited.amount = 5
+    assert ledger.update(edited).amount == 5
+    ledger.delete(entry.id)
+
+
+def test_update_and_delete_of_a_missing_entry_raise_not_found():
+    entry = ledger.create(_entry())
+    ledger.delete(entry.id)
+    with pytest.raises(LedgerEntryNotFoundError):
+        ledger.update(entry)
+
+
+# --- normalisation ----------------------------------------------------------
+
+
+def test_doc_no_collides_regardless_of_case_and_spacing():
+    ledger.create(_entry(doc_no="chk-1"))
+    for variant in ("CHK-1", " Chk-1 "):
+        with pytest.raises(DuplicateLedgerDocumentError):
+            ledger.create(_entry(doc_no=variant))
+    assert ledger.list_entries()[0].doc_no == "CHK-1"
+    ledger.create(_entry(doc_no="chk  2"))
+    with pytest.raises(DuplicateLedgerDocumentError):
+        ledger.create(_entry(doc_no="CHK 2"))
+
+
+def test_site_is_normalised_on_write_and_matched_case_insensitively():
+    ledger.create(_entry(doc_no="A", site=" wh-01 "))
+    ledger.create(_entry(doc_no="B", site="WH-02"))
+    ledger.create(_entry(doc_no="C", site=None))
+    assert ledger.list_entries()[0].site == "WH-01"
+    assert [e.doc_no for e in ledger.list_entries(site="wh-01")] == ["A"]
+    assert [e.doc_no for e in ledger.list_entries(site=" Wh-01")] == ["A"]
+    assert ledger.list_entries(site="nowhere") == []
+
+
+def test_legacy_lowercase_site_rows_still_match():
+    created = ledger.create(_entry(doc_no="A", site="WH-01"))
+    with connection.connection_scope() as conn:
+        conn.execute("UPDATE ledger_entries SET site = 'wh-01' WHERE id = ?", (created.id,))
+    assert [e.id for e in ledger.list_entries(site="WH-01")] == [created.id]

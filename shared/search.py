@@ -13,6 +13,8 @@ from __future__ import annotations
 import unicodedata
 from dataclasses import dataclass
 
+from shared.formatting import format_int
+from shared.i18n import enum_label, region_label, tr
 from shared.models import Dealership, Employee, Product, Warehouse
 
 KIND_PRODUCT, KIND_DEALERSHIP, KIND_WAREHOUSE, KIND_EMPLOYEE = "Product", "Dealership", "Warehouse", "Employee"
@@ -85,11 +87,11 @@ def search(
             scored.append((score, order[hit.kind], fold(hit.title), hit))
 
     for p in products:
-        add(SearchHit(KIND_PRODUCT, p.barcode, p.name, f"{p.barcode} · {p.stock_quantity:,} in stock",
+        add(SearchHit(KIND_PRODUCT, p.barcode, p.name, f"{p.barcode} · " + tr("search.in_stock").format(n=format_int(p.stock_quantity)),
                       PAGE_FOR_KIND[KIND_PRODUCT]),
             _score(words, p.barcode, p.name, f"{p.barcode} {p.name}"))
     for d in dealerships:
-        add(SearchHit(KIND_DEALERSHIP, d.code, d.name, f"{d.code} · {d.city} · {d.region}",
+        add(SearchHit(KIND_DEALERSHIP, d.code, d.name, f"{d.code} · {d.city} · {region_label(d.region)}",
                       PAGE_FOR_KIND[KIND_DEALERSHIP]),
             _score(words, d.code, d.name, f"{d.code} {d.name} {d.city} {d.region} {d.manager_name or ''}"))
     for w in warehouses:
@@ -97,7 +99,7 @@ def search(
                       PAGE_FOR_KIND[KIND_WAREHOUSE]),
             _score(words, w.code, w.name, f"{w.code} {w.name} {w.city}"))
     for e in employees:
-        add(SearchHit(KIND_EMPLOYEE, e.badge_id, e.name, f"{e.badge_id} · {e.title or e.role} · {e.location_name}",
+        add(SearchHit(KIND_EMPLOYEE, e.badge_id, e.name, f"{e.badge_id} · {e.title or enum_label('role', e.role)} · {e.location_name}",
                       PAGE_FOR_KIND[KIND_EMPLOYEE]),
             _score(words, e.badge_id, e.name, f"{e.badge_id} {e.name} {e.title or ''} {e.role} {e.location_name}"))
     scored.sort(key=lambda item: item[:3])

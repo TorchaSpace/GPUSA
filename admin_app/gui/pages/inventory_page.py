@@ -29,10 +29,14 @@ from __future__ import annotations
 
 import csv
 
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor
 from PySide6.QtWidgets import (
+    QComboBox,
     QFileDialog,
     QFrame,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QMessageBox,
     QVBoxLayout,
@@ -41,25 +45,67 @@ from PySide6.QtWidgets import (
 
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
-from admin_app.gui.components.inventory_table import InventoryTable, status_for
+from admin_app.gui.components.inventory_table import InventoryTable, InventoryTableModel, status_for
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
-from shared.i18n import tr
+from shared.formatting import format_amount, format_int
+from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import product_repository, stock_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared.models import Product
+
+# What the "Show" filter offers: (key, label, predicate).
+FILTER_ALL, FILTER_ACTIVE, FILTER_INACTIVE = "all", "active", "inactive"
+
+
+def filter_products(products: list[Product], mode: str) -> list[Product]:
+    """The products the table shows for a Show-filter value (pure, testable)."""
+    if mode == FILTER_ACTIVE:
+        return [p for p in products if p.is_active]
+    if mode == FILTER_INACTIVE:
+        return [p for p in products if not p.is_active]
+    return list(products)
+
+
+class _PageTableModel(InventoryTableModel):
+    """The inventory table model, with deactivated products dimmed and
+    badged "(inactive)" - they stay listed (history, stock) but are plainly
+    out of use."""
+
+    def data(self, index, role=Qt.DisplayRole):
+        value = super().data(index, role)
+        if not index.isValid():
+            return value
+        product = self.product_at(index.row())
+        if product.is_active:
+            return value
+        if role == Qt.DisplayRole and index.column() == 1:
+            return f"{value}  ({tr('admin.inactive_badge')})"
+        if role == Qt.ForegroundRole:
+            return QColor("#8a8a8a")
+        return value
+
+
+class _PageTable(InventoryTable):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._table_model = _PageTableModel(self)
+        self.setModel(self._table_model)
+        header = self.horizontalHeader()  # a new model re-initialises the header's section modes
+        header.setStretchLastSection(True)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
 
 
 class InventoryPage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
         super().__init__(tr("page.inventory.title"), parent, subtitle=tr("page.inventory.subtitle"))
 
-        export_button = CompactButton("Export Price List")
+        export_button = CompactButton(tr("admin.inventory.export_price"))
         export_button.clicked.connect(self._export_price_list)
         self.add_header_action(export_button)
 
-        add_button = CompactButton("Add Product", variant="primary")
+        add_button = CompactButton(tr("admin.inventory.add"), variant="primary")
         add_button.clicked.connect(self._open_add_popup)
         self.add_header_action(add_button)
 
@@ -75,8 +121,19 @@ class InventoryPage(AdminPage):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(16)
 
-        table_section = Section("Stock", "Product inventory")
-        self._table = InventoryTable()
+        table_section = Section(tr("admin.inventory.kicker"), tr("admin.inventory.heading"))
+        filter_row = QHBoxLayout()
+        filter_row.setContentsMargins(0, 0, 0, 0)
+        filter_row.addWidget(QLabel(tr("admin.inventory_show")))
+        self._filter_combo = QComboBox()
+        self._filter_combo.addItem(tr("admin.inventory_show_all"), FILTER_ALL)
+        self._filter_combo.addItem(tr("admin.inventory_show_active"), FILTER_ACTIVE)
+        self._filter_combo.addItem(tr("admin.inventory_show_inactive"), FILTER_INACTIVE)
+        self._filter_combo.currentIndexChanged.connect(lambda _i: self._apply_filter())
+        filter_row.addWidget(self._filter_combo)
+        filter_row.addStretch(1)
+        table_section.body_layout().addLayout(filter_row)
+        self._table = _PageTable()
         self._table.setMinimumHeight(380)
         self._table.doubleClicked.connect(lambda _index: self._open_edit_popup())
         table_section.body_layout().addWidget(self._table)
@@ -100,9 +157,9 @@ class InventoryPage(AdminPage):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(40)
 
-        self._sku_count_label, sku_container = self._kpi_stat("Active SKUs")
-        self._units_label, units_container = self._kpi_stat("Units on hand")
-        self._value_label, value_container = self._kpi_stat("Stock value")
+        self._sku_count_label, sku_container = self._kpi_stat(tr("admin.inventory.kpi_skus"))
+        self._units_label, units_container = self._kpi_stat(tr("admin.inventory.kpi_units"))
+        self._value_label, value_container = self._kpi_stat(tr("admin.inventory.kpi_value"))
         for container in (sku_container, units_container, value_container):
             layout.addWidget(container)
         layout.addStretch(1)
@@ -154,10 +211,7 @@ class InventoryPage(AdminPage):
         self._detail_rows_container.setSpacing(6)
         layout.addLayout(self._detail_rows_container)
 
-        note = QLabel(
-            "Per-warehouse and per-dealership stock breakdown isn't tracked yet - "
-            "totals above are network-wide."
-        )
+        note = QLabel(tr("admin.inventory_detail_note"))
         note.setWordWrap(True)
         note.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         layout.addWidget(note)
@@ -165,11 +219,14 @@ class InventoryPage(AdminPage):
         layout.addStretch(1)
 
         button_row = QHBoxLayout()
-        self._detail_edit_button = CompactButton("Edit")
+        self._detail_edit_button = CompactButton(tr("admin.inventory.edit"))
         self._detail_edit_button.clicked.connect(self._open_edit_popup)
-        self._detail_delete_button = CompactButton("Delete")
+        self._detail_active_button = CompactButton(tr("admin.deactivate"))
+        self._detail_active_button.clicked.connect(self._toggle_active_selected)
+        self._detail_delete_button = CompactButton(tr("admin.inventory.delete"))
         self._detail_delete_button.clicked.connect(self._delete_selected)
         button_row.addWidget(self._detail_edit_button)
+        button_row.addWidget(self._detail_active_button)
         button_row.addWidget(self._detail_delete_button)
         button_row.addStretch(1)
         layout.addLayout(button_row)
@@ -199,33 +256,42 @@ class InventoryPage(AdminPage):
         has_selection = product is not None
         self._detail_edit_button.setEnabled(has_selection)
         self._detail_delete_button.setEnabled(has_selection)
+        self._detail_active_button.setEnabled(has_selection)
+        if product is not None and not product.is_active:
+            self._detail_active_button.setText(tr("admin.reactivate"))
+        else:
+            self._detail_active_button.setText(tr("admin.deactivate"))
 
         if product is None:
-            self._detail_name.setText("No product selected")
-            self._detail_sku.setText("Click a row to see its detail.")
+            self._detail_name.setText(tr("admin.inventory.none_selected"))
+            self._detail_sku.setText(tr("admin.inventory.click_row"))
             return
 
-        self._detail_name.setText(product.name)
+        self._detail_name.setText(product.name if product.is_active else f"{product.name} ({tr('admin.inactive_badge')})")
         self._detail_sku.setText(product.barcode)
 
         status_label, status_color = status_for(product)
-        self._detail_rows_container.addWidget(self._detail_row("Base price", f"${product.price:,.2f}"))
-        self._detail_rows_container.addWidget(self._detail_row("Total stock", str(product.stock_quantity)))
+        self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.base_price"), f"${format_amount(product.price)}"))
+        self._detail_rows_container.addWidget(
+            self._detail_row(tr("admin.inventory_total_network"), str(product.stock_quantity)))
         # Where those units are (per-location stock - see stock_repository).
         try:
             levels = stock_repository.levels_for_product(product.barcode)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             levels = []
         placed = 0
         for level in levels:
-            kind = {"warehouse": "Warehouse", "dealership": "Dealership"}.get(level.location.kind, "")
-            label = f"  {kind} {level.location.code}".rstrip() if kind else "  Unassigned"
+            kind = enum_label("location_type", {"warehouse": "Warehouse", "dealership": "Dealership"}.get(level.location.kind, ""))
+            label = tr("admin.inventory.loc_row").format(kind=kind, code=level.location.code).rstrip() if kind else tr("admin.inventory.unassigned")
             self._detail_rows_container.addWidget(self._detail_row(label, str(level.quantity)))
             placed += level.quantity
         if product.stock_quantity > placed:
-            self._detail_rows_container.addWidget(self._detail_row("  On the road", str(product.stock_quantity - placed)))
-        self._detail_rows_container.addWidget(self._detail_row("Reorder at", str(product.critical_stock_level)))
-        self._detail_rows_container.addWidget(self._detail_row("Status", status_label, color=status_color))
+            self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.on_road"), str(product.stock_quantity - placed)))
+        self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.reorder_at"), str(product.critical_stock_level)))
+        if not product.is_active:
+            status_label, status_color = tr("admin.inactive_badge").capitalize(), CLASSICAL_PALETTE["text_secondary"]
+        self._detail_rows_container.addWidget(
+            self._detail_row(tr("admin.inventory_status_network"), status_label, color=status_color))
 
     def _on_selection_changed(self) -> None:
         self._show_detail(self._table.selected_product())
@@ -235,14 +301,27 @@ class InventoryPage(AdminPage):
     def reload(self) -> None:
         try:
             self._all_products = product_repository.list_all()
-        except DataAccessError:
+        except DATABASE_ERRORS:
             self._all_products = []
-        self._table.set_products(self._all_products)
-        self._sku_count_label.setText(str(len(self._all_products)))
-        self._units_label.setText(f"{sum(p.stock_quantity for p in self._all_products):,}")
+        self._apply_filter()
+        active = [p for p in self._all_products if p.is_active]
+        self._sku_count_label.setText(str(len(active)))
+        self._units_label.setText(format_int(sum(p.stock_quantity for p in self._all_products)))
         self._value_label.setText(
-            f"${sum(p.stock_quantity * p.price for p in self._all_products):,.2f}"
+            f"${format_amount(sum(p.stock_quantity * p.price for p in self._all_products))}"
         )
+
+    def _apply_filter(self) -> None:
+        """Re-fill the table for the Show filter, keeping the selection if the product is still listed."""
+        keep = self._table.selected_product()
+        shown = filter_products(self._all_products, self._filter_combo.currentData() or FILTER_ALL)
+        self._table.set_products(shown)
+        if keep is not None:
+            for row, product in enumerate(shown):
+                if product.barcode == keep.barcode:
+                    self._table.selectRow(row)
+                    return
+        self._show_detail(None)
 
     def _open_add_popup(self) -> None:
         self._popup.open_or_refresh(product=None)
@@ -250,44 +329,63 @@ class InventoryPage(AdminPage):
     def _open_edit_popup(self) -> None:
         product = self._table.selected_product()
         if product is None:
-            QMessageBox.information(self, "No product selected", "Select a product in the table first.")
+            QMessageBox.information(self, tr("admin.inventory.none_selected"), tr("admin.inventory.select_first"))
             return
         self._popup.open_or_refresh(product=product)
 
     def _save_popup(self) -> None:
         product = self._popup.result_product()
+        editing = self._popup.is_editing()
         try:
-            if self._popup.is_editing():
+            if editing:
                 product_repository.update(product)
             else:
                 product_repository.create(product)
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            QMessageBox.warning(self, tr("admin.inventory.save_failed"), str(exc))
+            # Re-open with what was typed so nothing has to be re-entered.
+            original = next((p for p in self._all_products if p.barcode == product.barcode), None) if editing else None
+            self._popup.open_or_refresh(product=original, draft=product)
+            return
+        self.reload()
+
+    def _toggle_active_selected(self) -> None:
+        product = self._table.selected_product()
+        if product is None:
+            QMessageBox.information(self, tr("admin.inventory.none_selected"), tr("admin.inventory.select_first"))
+            return
+        try:
+            product_repository.set_active(product.barcode, not product.is_active)
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            QMessageBox.warning(self, tr("admin.inventory.save_failed"), str(exc))
             return
         self.reload()
 
     def _delete_selected(self) -> None:
         product = self._table.selected_product()
         if product is None:
-            QMessageBox.information(self, "No product selected", "Select a product in the table first.")
+            QMessageBox.information(self, tr("admin.inventory.none_selected"), tr("admin.inventory.select_first"))
             return
 
         confirm = QMessageBox.question(
-            self, "Delete product?", f"Delete {product.name}? This cannot be undone."
+            self, tr("admin.inventory.delete_title"), tr("admin.inventory.delete_confirm").format(name=product.name)
         )
         if confirm != QMessageBox.Yes:
             return
 
         try:
             product_repository.delete(product.barcode)
-        except DataAccessError as exc:
-            QMessageBox.warning(self, "Couldn't save", str(exc))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            # e.g. ProductInUseError: it has stock or history - the message says to deactivate instead.
+            QMessageBox.warning(self, tr("admin.inventory.delete_failed"), str(exc))
             return
         self.reload()
         self._show_detail(None)
 
     def _export_price_list(self) -> None:
-        path_str, _ = QFileDialog.getSaveFileName(self, "Export Price List", "price_list.csv", "CSV Files (*.csv)")
+        path_str, _ = QFileDialog.getSaveFileName(
+            self, tr("admin.inventory.export_title"), "price_list.csv", tr("admin.inventory.csv_filter")
+        )
         if not path_str:
             return
         try:
@@ -299,6 +397,6 @@ class InventoryPage(AdminPage):
                         [product.barcode, product.name, f"{product.price:.2f}", product.stock_quantity, product.critical_stock_level]
                     )
         except OSError as exc:
-            QMessageBox.warning(self, "Export failed", str(exc))
+            QMessageBox.warning(self, tr("admin.inventory.export_failed"), str(exc))
             return
-        QMessageBox.information(self, "Export complete", f"Saved to {path_str}")
+        QMessageBox.information(self, tr("admin.export_done_title"), tr("admin.export_done_body").format(path=path_str))

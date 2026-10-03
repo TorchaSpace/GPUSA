@@ -22,4 +22,8 @@ from __future__ import annotations
 
 BUNDLED_DATA_FILES: list[tuple[str, str]] = [
     ("database/schema.sql", "database"),
+    # TTFs the PDF export embeds (Helvetica cannot draw Turkish letters).
+    ("shared/assets/fonts/DejaVuSans.ttf", "shared/assets/fonts"),
+    ("shared/assets/fonts/DejaVuSans-Bold.ttf", "shared/assets/fonts"),
+    ("shared/assets/fonts/LICENSE-DejaVu.txt", "shared/assets/fonts"),
 ]

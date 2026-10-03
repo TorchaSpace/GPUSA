@@ -14,7 +14,7 @@ from database import dealership_repository, employee_repository, product_reposit
 from database.exceptions import DATABASE_ERRORS
 from admin_app.theme import CLASSICAL_PALETTE, FONT_BODY_CSS
 from shared import search as search_logic
-from shared.i18n import tr
+from shared.i18n import enum_label, tr
 
 
 
@@ -72,7 +72,7 @@ class GlobalSearchDialog(QDialog):
         self._hits = search_logic.search(text, products, dealerships, warehouses, employees)
         self._list.clear()
         for hit in self._hits:
-            item = QListWidgetItem(f"{hit.kind}   {hit.label}")
+            item = QListWidgetItem(f"{enum_label('search_kind', hit.kind)}   {hit.label}")
             self._list.addItem(item)
         if self._hits:
             self._list.setCurrentRow(0)

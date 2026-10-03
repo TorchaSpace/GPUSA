@@ -144,7 +144,9 @@ def test_local_product_views(world):
     stock.transfer(UNASSIGNED, SHOP, "BOX", 8)  # critical level 10
     local = {p.barcode: p.stock_quantity for p in stock.products_at(SHOP)}
     assert local == {"BOX": 8, "TAPE": 0}
-    assert [p.barcode for p in stock.critical_at(SHOP)] == ["BOX", "TAPE"]
+    # TAPE (critical level 3, none on hand) is NOT flagged: this shop has never stocked it.
+    assert [p.barcode for p in stock.critical_at(SHOP)] == ["BOX"]
+    assert {p.barcode: p.stocked_here for p in stock.products_at(SHOP)} == {"BOX": True, "TAPE": False}
     assert stock.product_at(SHOP, "BOX").stock_quantity == 8
     assert [(lvl.location, lvl.quantity) for lvl in stock.levels_for_product("BOX")] == [(UNASSIGNED, 92), (SHOP, 8)]
     assert [lvl.product_barcode for lvl in stock.levels_at(SHOP)] == ["BOX"]
@@ -162,7 +164,7 @@ def test_movement_totals_since(world):
     stock.dispatch(WH1, "TAPE", 2)
     stock.transfer(UNASSIGNED, WH2, "BOX", 5)
     totals = stock.movement_totals_since("2000-01-01T00:00:00")
-    assert totals[WH1] == (9, 2) and totals[WH2] == (5, 0) and totals[UNASSIGNED] == (0, 5)
+    assert totals[WH1] == (9, 2) and totals[WH2] == (5, 0) and totals[UNASSIGNED] == (100, 5)  # 100 = BOX's initial stock
     assert stock.movement_totals_since("2999-01-01T00:00:00") == {}
 
 

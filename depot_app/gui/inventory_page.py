@@ -30,18 +30,24 @@ from PySide6.QtWidgets import (
 )
 
 from database import product_repository, stock_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.components.industry_widgets import AMBER, industry_table, item, kicker
 from depot_app.theme import INDUSTRY_PALETTE
 from shared import current_session
 from shared.formatting import local_datetime_text
 from shared.models import Product, Warehouse
+from shared.warehousing import tr_or
 
 FILTERS = ("All", "Held here", "Low", "Out")
 
 
 def status_here(product: Product) -> str:
+    """Out / Low / OK for THIS warehouse. A product it has never stocked
+    (no stock level row here) is "Not stocked", not "Out" - there is
+    nothing to run out of, and it must not count in the Out / Low filters."""
+    if product.stock_quantity <= 0 and not product.stocked_here:
+        return "Not stocked"
     if product.stock_quantity <= 0:
         return "Out"
     if product.is_below_critical_stock:
@@ -125,7 +131,7 @@ class InventoryPage(QWidget):
             self._products = stock_repository.products_at(self.warehouse.location)
             self._totals = {pr.barcode: pr.stock_quantity for pr in product_repository.list_all()}
             self._last = stock_repository.last_movement_at(self.warehouse.location)
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             self.message.setText(f"Couldn't load stock: {exc}")
             return
         held = [pr for pr in self._products if pr.stock_quantity > 0]
@@ -159,7 +165,9 @@ class InventoryPage(QWidget):
             color = AMBER if status == "Low" else "#b07f00" if status == "Out" else None
             last = self._last.get(pr.barcode)
             for c, cell in enumerate([
-                item(pr.barcode), item(pr.name), item(f"{pr.stock_quantity:,}", right=True),
+                item(pr.barcode),
+                item(pr.name if pr.is_active else f"{pr.name} ({tr_or('admin.inactive_badge', 'inactive')})"),
+                item(f"{pr.stock_quantity:,}", right=True),
                 item(pr.critical_stock_level, right=True), item(status, color=color),
                 item(f"{self._totals.get(pr.barcode, 0) - pr.stock_quantity:,}", right=True),
                 item(local_datetime_text(last) if last else "—"),
@@ -207,5 +215,5 @@ class InventoryPage(QWidget):
         note, _ok = QInputDialog.getText(self, "Stock count", "Note (optional):")
         try:
             self.record_count(product.barcode, counted, note)
-        except (DataAccessError, ValueError) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:
             self.message.setText(f"Couldn't record the count: {exc}")

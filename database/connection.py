@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from pathlib import Path
 from threading import Lock
 
+from shared.i18n import UserError
 from database.migrations import run_migrations
 from shared.paths import get_db_path, resource_path
 
@@ -111,15 +112,33 @@ def copy_database_to(destination: Path) -> None:
         raise
 
 
-def erase_all_data() -> Path:
+# What must be typed to confirm "start over" (either, any letter case).
+ERASE_CONFIRM_WORDS = ("SIL", "ERASE")
+
+
+def erase_confirmed(text: str | None) -> bool:
+    return (text or "").strip().upper() in ERASE_CONFIRM_WORDS
+
+
+def erase_all_data(confirmation: str | None = None) -> Path:
     """"Start over": copy the whole database to a timestamped backup file
     beside it, then empty every table (apps keep their connections; the
     schema stays). Returns the backup's path. Used only by Admin's "Forgot
-    your PIN" last resort - it can destroy data, never reveal it."""
+    your PIN" last resort - it can destroy data, never reveal it, and it
+    keeps a backup copy. `confirmation` must be one of ERASE_CONFIRM_WORDS
+    (ValueError otherwise, nothing touched) so a stray call can't wipe
+    the store."""
     from datetime import datetime
 
+    if not erase_confirmed(confirmation):
+        raise UserError("err.erase_confirm", words=" or ".join(ERASE_CONFIRM_WORDS))
     db_path = Path(get_db_path())
-    backup = db_path.with_name(f"{db_path.stem}.backup-{datetime.now():%Y%m%d-%H%M%S}{db_path.suffix}")
+    stamp = f"{datetime.now():%Y%m%d-%H%M%S}"
+    backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}{db_path.suffix}")
+    counter = 1
+    while backup.exists():  # two start-overs in the same second must not collide
+        counter += 1
+        backup = db_path.with_name(f"{db_path.stem}.backup-{stamp}-{counter}{db_path.suffix}")
     copy_database_to(backup)
     with connection_scope() as conn:
         conn.execute("PRAGMA foreign_keys = OFF")  # must be set outside a transaction

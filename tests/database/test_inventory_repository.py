@@ -19,6 +19,14 @@ def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "_initialized", False)
 
 
+_INITIAL = "Initial stock entered when the product was created"
+
+
+def _moves(**kwargs):
+    """list_recent_movements() without the audit row product creation writes for its starting stock."""
+    return [m for m in inventory_repository.list_recent_movements(**kwargs) if m["note"] != _INITIAL]
+
+
 def _make_product(barcode: str = "SKU-1", **overrides) -> Product:
     fields = dict(barcode=barcode, name="Pallet Wrap", price=5.0, stock_quantity=10, critical_stock_level=3)
     fields.update(overrides)
@@ -33,7 +41,7 @@ def test_receive_stock_increases_quantity_and_logs_movement():
     updated = product_repository.get_by_barcode("SKU-1")
     assert updated.stock_quantity == 50
 
-    movements = inventory_repository.list_recent_movements()
+    movements = _moves()
     assert len(movements) == 1
     assert movements[0]["movement_type"] == "receive"
     assert movements[0]["quantity"] == 40
@@ -61,7 +69,7 @@ def test_dispatch_stock_insufficient_raises_and_writes_nothing():
         inventory_repository.dispatch_stock("SKU-1", 6)
 
     assert product_repository.get_by_barcode("SKU-1").stock_quantity == 5
-    assert inventory_repository.list_recent_movements() == []
+    assert _moves() == []
 
 
 def test_receive_unknown_barcode_raises():
@@ -90,11 +98,11 @@ def test_list_recent_movements_orders_newest_first_and_filters_by_type():
     inventory_repository.dispatch_stock("SKU-1", 5)
     inventory_repository.receive_stock("SKU-1", 20)
 
-    all_moves = inventory_repository.list_recent_movements()
+    all_moves = _moves()
     assert [m["movement_type"] for m in all_moves] == ["receive", "dispatch", "receive"]
     assert [m["quantity"] for m in all_moves] == [20, 5, 10]
 
-    receives_only = inventory_repository.list_recent_movements(movement_type="receive")
+    receives_only = _moves(movement_type="receive")
     assert all(m["movement_type"] == "receive" for m in receives_only)
     assert len(receives_only) == 2
 

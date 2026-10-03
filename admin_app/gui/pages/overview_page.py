@@ -49,7 +49,7 @@ from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
-from shared.i18n import tr
+from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
     attendance_repository,
@@ -61,12 +61,12 @@ from database import (
 )
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics, overview
-from shared.formatting import format_amount, local_time_text
+from shared.formatting import format_amount, format_int, local_time_text, month_abbr
 
-_FILTER_LABELS = (
-    (overview.FILTER_ALL, "All"),
-    (overview.FILTER_WAREHOUSES, "Warehouses"),
-    (overview.FILTER_DEALERSHIPS, "Dealerships"),
+_FILTER_KEYS = (
+    (overview.FILTER_ALL, "all"),
+    (overview.FILTER_WAREHOUSES, "warehouses"),
+    (overview.FILTER_DEALERSHIPS, "dealerships"),
 )
 _STATUS_COLORS = {
     overview.STATUS_OUT: CLASSICAL_PALETTE["alert_critical"],
@@ -103,7 +103,7 @@ class OverviewPage(AdminPage):
         self._roster = []
 
         self._approvals_button = CompactButton(tr("header.pending_approvals"))
-        self._approvals_button.setToolTip("Purchase orders held for your approval")
+        self._approvals_button.setToolTip(tr("admin.overview.approvals_tip"))
         self._approvals_button.clicked.connect(self.open_purchase_requests.emit)
         self.add_header_action(self._approvals_button)
 
@@ -128,39 +128,39 @@ class OverviewPage(AdminPage):
         layout = QHBoxLayout(row)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(16)
-        self._revenue_card = StatCard("Total revenue · MTD", "—")
-        self._warehouse_card = StatCard("Warehouses", "—")
-        self._dealership_card = StatCard("Dealerships", "—")
+        self._revenue_card = StatCard(tr("admin.overview.revenue_mtd"), "—")
+        self._warehouse_card = StatCard(tr("admin.overview.card_warehouses"), "—")
+        self._dealership_card = StatCard(tr("admin.overview.card_dealerships"), "—")
         for card in (self._revenue_card, self._warehouse_card, self._dealership_card):
             layout.addWidget(card, stretch=1)
         return row
 
     def _build_stock_section(self) -> QWidget:
         p = CLASSICAL_PALETTE
-        self._stock_section = Section("Stock by location", "Product inventory")
+        self._stock_section = Section(tr("admin.overview.stock_kicker"), tr("admin.overview.stock_heading"))
 
         self._filter_group = QButtonGroup(self)
         self._filter_buttons: dict[str, SegmentButton] = {}
-        for key, label in _FILTER_LABELS:
-            button = SegmentButton(label)
+        for key, label_key in _FILTER_KEYS:
+            button = SegmentButton(tr(f"admin.overview.{label_key}"))
             button.clicked.connect(lambda _c=False, k=key: self.set_location_filter(k))
             self._filter_group.addButton(button)
             self._filter_buttons[key] = button
             self._stock_section.add_header_control(button)
         self._filter_buttons[overview.FILTER_ALL].setChecked(True)
 
-        self._low_only_checkbox = QCheckBox("Below reorder only")
+        self._low_only_checkbox = QCheckBox(tr("admin.overview.below_reorder"))
         self._low_only_checkbox.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
         self._low_only_checkbox.toggled.connect(self.set_low_only)
         self._stock_section.add_header_control(self._low_only_checkbox)
 
         self._query_input = QLineEdit()
-        self._query_input.setPlaceholderText("Filter SKU or name")
+        self._query_input.setPlaceholderText(tr("admin.overview.filter_placeholder"))
         self._query_input.setMaximumWidth(180)
         self._query_input.textChanged.connect(self.set_query)
         self._stock_section.add_header_control(self._query_input)
 
-        self._stock_table = styled_table(["SKU", "Product"])
+        self._stock_table = styled_table([tr("admin.overview.col_sku"), tr("admin.overview.col_product")])
         self._stock_table.setMinimumHeight(300)
         self._stock_section.body_layout().addWidget(self._stock_table)
 
@@ -171,11 +171,11 @@ class OverviewPage(AdminPage):
 
     def _build_attendance_section(self) -> QWidget:
         p = CLASSICAL_PALETTE
-        self._attendance_section = Section("Attendance · today", "Employee log")
+        self._attendance_section = Section(tr("admin.overview.att_kicker"), tr("admin.overview.att_heading"))
         self._attendance_summary = QLabel("")
         self._attendance_summary.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
         self._attendance_section.add_header_control(self._attendance_summary)
-        self._attendance_table = styled_table(["Employee", "Site", "In", "Out", "Status"])
+        self._attendance_table = styled_table([tr(f"admin.overview.att_{key}") for key in ("employee", "site", "in", "out", "status")])
         self._attendance_table.setMinimumHeight(180)
         self._attendance_section.body_layout().addWidget(self._attendance_table)
         return self._attendance_section
@@ -216,7 +216,7 @@ class OverviewPage(AdminPage):
             self._roster = attendance_repository.list_roster()
         except DATABASE_ERRORS:
             self._products, self._levels, self._warehouses, self._roster = [], [], [], []
-            self._stock_footer.setText("Couldn't load the figures from the database.")
+            self._stock_footer.setText(tr("admin.overview.load_failed"))
             return
         self._render_revenue(period, sales, previous, dealerships)
         self._render_warehouses(overview.capacity_summary(self._warehouses, used))
@@ -230,27 +230,31 @@ class OverviewPage(AdminPage):
     # --- rendering ----------------------------------------------------
 
     def _render_revenue(self, period, sales, previous, dealerships) -> None:
-        revenue = round(sum(t.total for t in sales), 2)
-        change = analytics.percent_change(revenue, round(sum(t.total for t in previous), 2))
+        revenue = analytics.revenue_between(sales, period.start, period.end)
+        _, _, change = analytics.period_comparison(period, sales, previous)
+        direction = analytics.change_direction(change)  # decided on the rounded figure; 0 = neutral
         self._revenue_card.set_value(format_amount(revenue))
         self._revenue_card.set_trend(
-            analytics.change_text(change) if change is not None else "", None if change is None else change >= 0
+            analytics.change_text(change) if change is not None else "",
+            None if not direction else direction > 0,
         )
-        self._revenue_card.set_corner_note(f"vs {period.prev_start:%b}" if change is not None else "")
+        self._revenue_card.set_corner_note(tr("admin.overview.vs_month").format(month=month_abbr(period.prev_start)) if change is not None else "")
         self._revenue_card.clear_footer()
         regions = [(r, v) for r, v in analytics.revenue_by_region(sales, dealerships).items() if v > 0]
         regions.sort(key=lambda pair: -pair[1])
         footer = self._revenue_card.footer_layout()
         if not regions:
-            footer.addWidget(stat_breakdown_item("This month", "No sales yet"))
+            footer.addWidget(stat_breakdown_item(tr("admin.overview.this_month"), tr("admin.overview.no_sales_yet")))
         for region, value in regions[:3]:
-            footer.addWidget(stat_breakdown_item(region, analytics.compact_amount(value)))
+            footer.addWidget(stat_breakdown_item(region_label(region), analytics.compact_amount(value)))
 
     def _render_warehouses(self, summary: overview.CapacitySummary) -> None:
         p = CLASSICAL_PALETTE
         self._warehouse_card.set_value("—" if summary.overall is None else f"{round(summary.overall * 100)}%")
-        self._warehouse_card.set_trend("capacity used" if summary.overall is not None else "no capacities set", None)
-        self._warehouse_card.set_corner_note(f"{summary.active} active")
+        self._warehouse_card.set_trend(
+            tr("admin.overview.capacity_used") if summary.overall is not None else tr("admin.overview.no_capacities"), None
+        )
+        self._warehouse_card.set_corner_note(tr("admin.overview.n_active").format(n=summary.active))
         self._warehouse_card.clear_footer()
         footer = self._warehouse_card.footer_layout()
         holder = QWidget()
@@ -258,7 +262,7 @@ class OverviewPage(AdminPage):
         rows.setContentsMargins(0, 0, 0, 0)
         rows.setSpacing(6)
         if not summary.warehouses:
-            note = QLabel("No warehouses yet")
+            note = QLabel(tr("admin.overview.no_warehouses"))
             note.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']}; border: none;")
             rows.addWidget(note)
         for w in summary.warehouses:
@@ -286,21 +290,26 @@ class OverviewPage(AdminPage):
     def _render_dealerships(self, summary: overview.DealershipSummary, today: tuple[int, float], on_road: int) -> None:
         self._dealership_card.set_value(str(summary.active))
         self._dealership_card.set_trend(
-            f"active · {summary.silent} with no sales this month" if summary.silent else "active · all selling", None
+            tr("admin.overview.active_silent").format(n=summary.silent) if summary.silent else tr("admin.overview.active_all"),
+            None,
         )
         regions = len(summary.by_region)
-        self._dealership_card.set_corner_note(f"{regions} region{'s' if regions != 1 else ''}")
+        self._dealership_card.set_corner_note(plural("admin.overview.regions", regions))
         self._dealership_card.clear_footer()
         footer = self._dealership_card.footer_layout()
-        footer.addWidget(stat_breakdown_item("Sales today", str(today[0])))
-        footer.addWidget(stat_breakdown_item("Revenue today", analytics.compact_amount(today[1])))
-        footer.addWidget(stat_breakdown_item("Units on the road", f"{on_road:,}"))
+        footer.addWidget(stat_breakdown_item(tr("admin.overview.sales_today"), str(today[0])))
+        footer.addWidget(stat_breakdown_item(tr("admin.overview.revenue_today"), analytics.compact_amount(today[1])))
+        footer.addWidget(stat_breakdown_item(tr("admin.overview.units_road"), format_int(on_road)))
 
     def _render_stock(self) -> None:
         grid = overview.stock_grid(
             self._products, self._levels, self._warehouses, self._filter, self._low_only, self._query
         )
-        headers = ["SKU", "Product", *grid.columns, "Total", "Reorder at", "Status"]
+        headers = [
+            tr("admin.overview.col_sku"), tr("admin.overview.col_product"),
+            *(enum_label("stock_col", name) for name in grid.columns),
+            tr("admin.overview.col_total"), tr("admin.overview.col_reorder"), tr("admin.overview.col_status"),
+        ]
         table = self._stock_table
         table.clear()
         table.setColumnCount(len(headers))
@@ -314,24 +323,28 @@ class OverviewPage(AdminPage):
                 zero = value == 0
                 table.setItem(
                     r, first_number + c,
-                    cell(f"{value:,}", right=True, color=CLASSICAL_PALETTE["accent"] if zero else None),
+                    cell(format_int(value), right=True, color=CLASSICAL_PALETTE["accent"] if zero else None),
                 )
             total_col = first_number + len(row.cells)
-            table.setItem(r, total_col, cell(f"{row.total:,}", right=True))
-            table.setItem(r, total_col + 1, cell(f"{row.reorder_at:,}", right=True))
-            status = cell(row.status)
+            table.setItem(r, total_col, cell(format_int(row.total), right=True))
+            table.setItem(r, total_col + 1, cell(format_int(row.reorder_at), right=True))
+            status = cell(enum_label("stock_status", row.status))
             status.setForeground(QColor(_STATUS_COLORS[row.status]))
             table.setItem(r, total_col + 2, status)
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
-        shown_note = "" if self._filter == overview.FILTER_ALL else " · totals cover the visible columns, status the whole network"
-        self._stock_footer.setText(f"{len(grid.rows)} of {len(self._products)} products · units{shown_note}")
+        shown_note = "" if self._filter == overview.FILTER_ALL else tr("admin.overview.footer_totals_note")
+        self._stock_footer.setText(
+            tr("admin.overview.stock_footer").format(shown=len(grid.rows), total=len(self._products), note=shown_note)
+        )
 
     def _render_attendance(self) -> None:
         today = overview.attendance_today(self._roster)
         self._attendance_summary.setText(
-            f"{today.on_site} on site · {today.checked_out} checked out · {today.not_in} not in yet"
+            tr("admin.overview.att_summary").format(
+                on_site=today.on_site, checked_out=today.checked_out, not_in=today.not_in
+            )
         )
         table = self._attendance_table
         table.setRowCount(len(today.rows))
@@ -340,7 +353,7 @@ class OverviewPage(AdminPage):
             table.setItem(r, 1, cell(entry["location_name"]))
             table.setItem(r, 2, cell(local_time_text(entry["check_in_at"]), right=True))
             table.setItem(r, 3, cell(local_time_text(entry["check_out_at"]), right=True))
-            table.setItem(r, 4, cell(entry["status"]))
+            table.setItem(r, 4, cell(enum_label("attendance", entry["status"])))
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(0, QHeaderView.Stretch)

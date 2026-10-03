@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import dealership_repository, shipment_repository, stock_repository
-from database.exceptions import DataAccessError, InsufficientStockError
+from database.exceptions import DATABASE_ERRORS, InsufficientStockError
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
@@ -236,11 +236,12 @@ class ShipmentsPage(QWidget):
         try:
             dealerships = [d for d in dealership_repository.list_all() if d.is_active]
             if self._origin_code:
-                products = stock_repository.products_at(StockLocation.warehouse(self._origin_code))
+                here = stock_repository.products_at(StockLocation.warehouse(self._origin_code))
             else:
-                products = stock_repository.products_at(UNASSIGNED)
+                here = stock_repository.products_at(UNASSIGNED)
+            products = [p for p in here if p.is_active]  # a deactivated product can't go on a shipment
             carriers = sorted({s.carrier for s in shipment_repository.list_shipments()}, key=str.casefold)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             return
         current_dest, current_product = self._dest_input.currentData(), self._product_input.currentData()
         self._dest_input.clear()
@@ -309,7 +310,7 @@ class ShipmentsPage(QWidget):
                 eta=_from_qdatetime(self._eta_input.dateTime()),
                 lines=[(barcode, qty) for barcode, _label, qty in self._draft_lines],
             )
-        except (DataAccessError, ValueError) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:  # blank carrier, bad ETA, inactive product, ...
             self._show_form_error(str(exc))
             return
         dispatch_problem = None
@@ -319,7 +320,7 @@ class ShipmentsPage(QWidget):
             except InsufficientStockError as exc:
                 dispatch_problem = (f" Not dispatched: only {exc.available} of {exc.barcode} on hand here "
                                     f"({exc.requested} needed) - it stays scheduled.")
-            except DataAccessError as exc:
+            except (ValueError, *DATABASE_ERRORS) as exc:
                 dispatch_problem = f" Not dispatched: {exc}"
         self._draft_lines = []
         self._render_draft()
@@ -525,7 +526,7 @@ class ShipmentsPage(QWidget):
             message = (f"Couldn't dispatch {shipment.number}: only {exc.available} of {exc.barcode} "
                        f"on hand at {exc.location or 'this warehouse'} ({exc.requested} needed).")
             updated = shipment
-        except DataAccessError as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:  # e.g. an ETA before the departure, a vanished location
             message = f"Couldn't update: {exc}"
             updated = shipment
         self.reload()
