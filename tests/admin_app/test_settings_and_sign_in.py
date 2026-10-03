@@ -116,27 +116,6 @@ def test_locked_accounts_show_and_unlock(settings):
     assert not account_repository.is_locked(account_repository.get("B-2"))
 
 
-def test_forgot_pin_needs_the_proof_file_then_resets(qapp, tmp_path):
-    from database import account_repository as accounts
-    from shared import auth, recovery
-    from admin_app.gui.auth_flow import ResetAdminAccessDialog
-
-    accounts.create_first_admin("B-1", "Erol", "482913")
-    flag = tmp_path / recovery.RECOVERY_FILENAME
-    dialog = ResetAdminAccessDialog(flag_path=flag)
-    assert not dialog.check_file()  # no file yet: stays on step 1
-    assert "isn't in that folder" in dialog.message.text()
-    flag.write_text("")
-    assert dialog.check_file() and dialog.admin_input.count() == 1
-    dialog.pin_input.setText("739184")
-    dialog.pin_again_input.setText("739185")
-    assert not dialog.save() and "match" in dialog.message.text()
-    dialog.pin_again_input.setText("739184")
-    assert dialog.save() and dialog.reset_badge == "B-1"
-    assert not flag.exists()  # one use only
-    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
-
-
 def test_forgot_pin_with_the_recovery_code(qapp, tmp_path):
     from database import account_repository as accounts
     from shared import auth
@@ -144,7 +123,7 @@ def test_forgot_pin_with_the_recovery_code(qapp, tmp_path):
 
     session = accounts.create_first_admin("B-1", "Erol", "482913")
     code = accounts.create_recovery_code(session)
-    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
+    dialog = ResetAdminAccessDialog()
     assert dialog.mode == "code" and dialog.admin_input.count() == 1
     dialog.code_input.setText("AAAA-BBBB-CCCC-DDDD")
     dialog.pin_input.setText("739184")
@@ -155,16 +134,37 @@ def test_forgot_pin_with_the_recovery_code(qapp, tmp_path):
     assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
 
 
-def test_forgot_pin_can_switch_to_the_file_way_when_a_code_exists(qapp, tmp_path):
+def test_forgot_pin_cycles_through_the_ways_back_in(qapp):
     from database import account_repository as accounts
     from admin_app.gui.auth_flow import ResetAdminAccessDialog
 
-    accounts.create_recovery_code(accounts.create_first_admin("B-1", "Erol", "482913"))
-    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
-    dialog.switch_mode()
-    assert dialog.mode == "file"
-    dialog.switch_mode()
-    assert dialog.mode == "code"
+    session = accounts.create_first_admin("B-1", "Erol", "482913")
+    accounts.set_security_question(session, "482913", "Name of my first pet?", "Pamuk")
+    accounts.create_recovery_code(session)
+    dialog = ResetAdminAccessDialog()
+    seen = [dialog.mode]
+    for _ in range(3):
+        dialog.switch_mode()
+        seen.append(dialog.mode)
+    assert seen == ["question", "code", "reset", "question"]
+
+
+def test_forgot_pin_with_nothing_set_up_offers_to_start_over(qapp, tmp_path):
+    import database.connection as connection
+    from database import account_repository as accounts, employee_repository
+    from shared.models import Employee
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    accounts.create_first_admin("B-1", "Erol", "482913")
+    employee_repository.create(Employee("B-2", "Selin", "Sales & service", "Dealership", "Harbor Point"))
+    dialog = ResetAdminAccessDialog()
+    assert dialog.mode == "reset" and not dialog.switch_button.isVisible()
+    assert not dialog.erase()  # nothing happens until the box is ticked
+    assert accounts.admin_exists()
+    dialog.confirm_box.setChecked(True)
+    assert dialog.erase() and dialog.erased
+    assert not accounts.admin_exists() and employee_repository.list_all() == []
+    assert dialog.backup_path.exists()  # the old data is kept in a file beside the database
 
 
 def test_forgot_pin_with_the_security_question(qapp, tmp_path):
@@ -174,7 +174,7 @@ def test_forgot_pin_with_the_security_question(qapp, tmp_path):
 
     session = accounts.create_first_admin("B-1", "Erol", "482913")
     accounts.set_security_question(session, "482913", "Name of my first pet?", "Pamuk")
-    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
+    dialog = ResetAdminAccessDialog()
     assert dialog.mode == "question" and dialog._code_caption.text() == "Name of my first pet?"
     dialog.code_input.setText("Karamel")
     dialog.pin_input.setText("739184")

@@ -8,16 +8,16 @@ from __future__ import annotations
 import socket
 from pathlib import Path
 
-from PySide6.QtCore import Qt, QUrl
-from PySide6.QtGui import QDesktopServices
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QComboBox, QDialog, QWidget, QFormLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout,
+    QCheckBox, QComboBox, QDialog, QWidget, QFormLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout,
 )
 
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
+from database.connection import erase_all_data
 from database.exceptions import DATABASE_ERRORS, DataAccessError
-from shared import auth, paths, recovery, security_question
+from shared import auth, security_question
 from shared.i18n import tr
 from shared.auth import Session
 from shared.gui_kit.sign_in_dialog import SignInDialog
@@ -226,31 +226,31 @@ class RecoveryCodeDialog(QDialog):
 
 
 class ResetAdminAccessDialog(QDialog):
-    """"Forgot your PIN?". Two ways in, both safe:
+    """"Forgot your PIN or badge?" - three ways back in, easiest first:
 
-    - the recovery code (default once one exists): type it, pick the
-      administrator, set a new PIN. Guessing is rate-limited.
-    - the proof file (when there is no code, or the code is lost):
-      create RESET_ADMIN_ACCESS.txt in the data folder - something only a
-      person with access to this computer's files can do.
+    - the security question: answer it, pick the administrator, set a new PIN;
+    - the recovery code, if one was made (Settings > My account);
+    - start over: when nothing else is possible, the data is backed up to a
+      file beside the database and erased, and a new administrator is
+      created. Nothing is exposed by this - it can only destroy, and it
+      keeps a copy.
 
-    `reset_badge` holds who was reset, for the sign-in dialog to prefill."""
+    `reset_badge` holds who was reset (for the sign-in dialog to prefill);
+    `erased` is True after a start-over."""
 
-    def __init__(self, parent=None, flag_path: Path | None = None):
+    def __init__(self, parent=None):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
-        self._flag = Path(flag_path) if flag_path else recovery.recovery_flag_path(paths.get_db_path())
         self.reset_badge: str | None = None
+        self.erased = False
+        self.backup_path: Path | None = None
         try:
             self._has_code = account_repository.has_recovery_code()
-        except DATABASE_ERRORS:
-            self._has_code = False
-        try:
             self._question = account_repository.get_security_question()
         except DATABASE_ERRORS:
-            self._question = None
+            self._has_code, self._question = False, None
         # Ways back in, most everyday first; "Try another way" cycles through them.
-        self._modes = [m for m, on in (("question", bool(self._question)), ("code", self._has_code), ("file", True)) if on]
+        self._modes = [m for m, on in (("question", bool(self._question)), ("code", self._has_code), ("reset", True)) if on]
         self._mode = self._modes[0]
         self.setWindowTitle(tr("recovery.title"))
         self.setMinimumWidth(480)
@@ -265,38 +265,17 @@ class ResetAdminAccessDialog(QDialog):
         self._intro.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         layout.addWidget(self._intro)
 
-        # file mode, step 1: proof of file access
-        self._file_host = QWidget()
-        file_layout = QVBoxLayout(self._file_host)
-        file_layout.setContentsMargins(0, 0, 0, 0)
-        self.folder_label = QLabel(str(self._flag.parent))
-        self.folder_label.setWordWrap(True)
-        self.folder_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
-        self.folder_label.setStyleSheet(f"font-size: 13px; color: {p['text_primary']};")
-        file_layout.addWidget(self.folder_label)
-        row = QHBoxLayout()
-        open_button = QPushButton(tr("recovery.open_folder"))
-        open_button.clicked.connect(self._open_folder)
-        self.continue_button = QPushButton(tr("recovery.continue"))
-        self.continue_button.clicked.connect(self.check_file)
-        row.addWidget(open_button)
-        row.addStretch(1)
-        row.addWidget(self.continue_button)
-        file_layout.addLayout(row)
-        layout.addWidget(self._file_host)
-
-        # the form: (code), administrator, new PIN twice
+        # the form: (question / code), administrator, new PIN twice
         self._form_host = QWidget()
         form_layout = QVBoxLayout(self._form_host)
         form_layout.setContentsMargins(0, 0, 0, 0)
         form = QFormLayout()
         self.code_input = QLineEdit()
-        self.code_input.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
-        self.code_input.setMaxLength(24)
         self.admin_input = QComboBox()
         self.pin_input = _pin_field()
         self.pin_again_input = _pin_field()
-        self._code_caption = QLabel(tr("recovery.code"))
+        self._code_caption = QLabel()
+        self._code_caption.setWordWrap(True)
         form.addRow(self._code_caption, self.code_input)
         form.addRow(tr("recovery.admin"), self.admin_input)
         form.addRow(tr("recovery.new_pin").format(n=auth.MIN_ADMIN_PIN_LENGTH), self.pin_input)
@@ -306,6 +285,20 @@ class ResetAdminAccessDialog(QDialog):
         self.save_button.clicked.connect(self.save)
         form_layout.addWidget(self.save_button)
         layout.addWidget(self._form_host)
+
+        # start over
+        self._reset_host = QWidget()
+        reset_layout = QVBoxLayout(self._reset_host)
+        reset_layout.setContentsMargins(0, 0, 0, 0)
+        self.confirm_box = QCheckBox(tr("recovery.erase_confirm"))
+        self.confirm_box.toggled.connect(lambda on: self.erase_button.setEnabled(on))
+        reset_layout.addWidget(self.confirm_box)
+        self.erase_button = QPushButton(tr("recovery.erase"))
+        self.erase_button.setEnabled(False)
+        self.erase_button.setStyleSheet(f"QPushButton {{ color: {p['alert_critical']}; border: 1px solid {p['alert_critical']}; }}")
+        self.erase_button.clicked.connect(self.erase)
+        reset_layout.addWidget(self.erase_button)
+        layout.addWidget(self._reset_host)
 
         self.message = QLabel()
         self.message.setWordWrap(True)
@@ -335,35 +328,23 @@ class ResetAdminAccessDialog(QDialog):
 
     def _show_mode(self) -> None:
         self._say("")
-        self.code_input.setEchoMode(QLineEdit.Normal)
-        if self._mode == "question":
-            self._intro.setText(tr("recovery.question_intro"))
-            self._file_host.hide()
-            self._code_caption.setText(self._question or "")
-            self._code_caption.setWordWrap(True)
-            self._code_caption.show()
-            self.code_input.setPlaceholderText(tr("question.answer"))
-            self.code_input.setMaxLength(120)
-            self.code_input.show()
-            self._form_host.setVisible(self._load_admins(show_badge=False))
-        elif self._mode == "code":
-            self._intro.setText(tr("recovery.code_intro"))
-            self._file_host.hide()
-            self._code_caption.setText(tr("recovery.code"))
-            self._code_caption.show()
-            self.code_input.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
-            self.code_input.setMaxLength(24)
-            self.code_input.show()
-            if not self._load_admins(show_badge=False):
-                self._form_host.hide()
-            else:
-                self._form_host.show()
-        else:
-            self._intro.setText(tr("recovery.step1").format(name=recovery.RECOVERY_FILENAME))
-            self._file_host.show()
+        self._reset_host.setVisible(self._mode == "reset")
+        if self._mode == "reset":
+            self._intro.setText(tr("recovery.erase_intro"))
             self._form_host.hide()
-            self._code_caption.hide()
-            self.code_input.hide()
+        else:
+            self.code_input.clear()
+            if self._mode == "question":
+                self._intro.setText(tr("recovery.question_intro"))
+                self._code_caption.setText(self._question or "")
+                self.code_input.setPlaceholderText(tr("question.answer"))
+                self.code_input.setMaxLength(120)
+            else:
+                self._intro.setText(tr("recovery.code_intro"))
+                self._code_caption.setText(tr("recovery.code"))
+                self.code_input.setPlaceholderText("XXXX-XXXX-XXXX-XXXX")
+                self.code_input.setMaxLength(24)
+            self._form_host.setVisible(self._load_admins())
         self.switch_button.setText(tr("recovery.another_way"))
         self.switch_button.setVisible(len(self._modes) > 1)
 
@@ -371,7 +352,9 @@ class ResetAdminAccessDialog(QDialog):
         self._mode = self._modes[(self._modes.index(self._mode) + 1) % len(self._modes)]
         self._show_mode()
 
-    def _load_admins(self, show_badge: bool) -> bool:
+    def _load_admins(self) -> bool:
+        """Names only: the badge is exactly what a person who forgot it
+        cannot give, and it is filled in for them afterwards."""
         try:
             admins = account_repository.list_active_admins()
         except DATABASE_ERRORS as exc:
@@ -382,32 +365,14 @@ class ResetAdminAccessDialog(QDialog):
             return False
         self.admin_input.clear()
         for account in admins:
-            label = f"{account.name} ({account.badge_id})" if show_badge else account.name
-            self.admin_input.addItem(label, account.badge_id)
+            self.admin_input.addItem(account.name, account.badge_id)
         return True
 
     def _say(self, text: str) -> None:
         self.message.setText(text)
         self.message.setVisible(bool(text))
 
-    def _open_folder(self) -> None:
-        QDesktopServices.openUrl(QUrl.fromLocalFile(str(self._flag.parent)))
-
-    # --- file mode -------------------------------------------------------------
-
-    def check_file(self) -> bool:
-        if not recovery.is_armed(self._flag):
-            self._say(tr("recovery.not_found").format(name=recovery.RECOVERY_FILENAME))
-            return False
-        if not self._load_admins(show_badge=True):
-            return False
-        self._say("")
-        self._intro.setText(tr("recovery.step2"))
-        self._file_host.hide()
-        self._form_host.show()
-        return True
-
-    # --- both modes ------------------------------------------------------------
+    # --- actions ---------------------------------------------------------------
 
     def save(self) -> bool:
         if self.pin_input.text() != self.pin_again_input.text():
@@ -418,15 +383,9 @@ class ResetAdminAccessDialog(QDialog):
             if self._mode == "question":
                 account_repository.reset_with_security_answer(
                     self.code_input.text(), badge, self.pin_input.text(), terminal_name())
-            elif self._mode == "code":
+            else:
                 account_repository.reset_with_recovery_code(
                     self.code_input.text(), badge, self.pin_input.text(), terminal_name())
-            else:
-                if not recovery.is_armed(self._flag):  # re-checked: the proof must still be there
-                    self._say(tr("recovery.not_found").format(name=recovery.RECOVERY_FILENAME))
-                    return False
-                account_repository.reset_admin_access(badge, self.pin_input.text(), terminal_name())
-                recovery.disarm(self._flag)
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._say(str(exc))
             return False
@@ -434,10 +393,29 @@ class ResetAdminAccessDialog(QDialog):
         self.accept()
         return True
 
+    def erase(self) -> bool:
+        """Back everything up, then wipe it, so a new administrator can be created."""
+        if not self.confirm_box.isChecked():
+            return False
+        try:
+            self.backup_path = erase_all_data()
+        except (OSError, *DATABASE_ERRORS) as exc:
+            self._say(str(exc))
+            return False
+        self.erased = True
+        self.accept()
+        return True
+
 
 def _offer_recovery(dialog: SignInDialog) -> None:
     reset = ResetAdminAccessDialog(dialog)
-    if reset.exec() == QDialog.Accepted and reset.reset_badge:
+    accepted = reset.exec() == QDialog.Accepted
+    if accepted and reset.erased:
+        # Everything is gone: close this sign-in so the "create the first
+        # administrator" screen takes over (see sign_in()).
+        dialog.erased = True
+        dialog.reject()
+    elif accepted and reset.reset_badge:
         dialog.badge_input.setText(reset.reset_badge)
         dialog.pin_input.clear()
         dialog.pin_input.setFocus()
@@ -468,11 +446,17 @@ def admin_sign_in_dialog(parent=None, cancel_text: str = "Quit") -> SignInDialog
     )
 
 
-def sign_in(parent=None) -> Session | None:
+def sign_in(parent=None, cancel_text: str = "Quit") -> Session | None:
     """Run the right dialog and return the Session, or None if cancelled.
-    Raises DataAccessError if the database can't be read at all."""
-    if not account_repository.admin_exists():
-        dialog = FirstAdminDialog(parent)
-    else:
-        dialog = admin_sign_in_dialog(parent)
-    return dialog.session if dialog.exec() == QDialog.Accepted else None
+    Raises DataAccessError if the database can't be read at all. After a
+    "start over" from Forgot your PIN, the loop comes round to the
+    first-administrator screen."""
+    while True:
+        if not account_repository.admin_exists():
+            dialog = FirstAdminDialog(parent)
+        else:
+            dialog = admin_sign_in_dialog(parent, cancel_text=cancel_text)
+        accepted = dialog.exec() == QDialog.Accepted
+        if not accepted and getattr(dialog, "erased", False):
+            continue
+        return dialog.session if accepted else None

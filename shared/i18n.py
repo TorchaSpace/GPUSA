@@ -133,7 +133,10 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings.data_location": "Data location",
         "settings.change_folder": "Change folder...",
         # Forgotten PIN
-        "signin.forgot": "Forgot your PIN?",
+        "signin.forgot": "Forgot your PIN or badge ID?",
+        "recovery.erase_intro": "No way back in is set up for this account. You can start over: everything is saved to a backup file beside the database, the app is emptied, and you create a new administrator.",
+        "recovery.erase_confirm": "I understand all data will be erased (a backup file is kept)",
+        "recovery.erase": "Erase and start over",
         "recovery.title": "Get back into Admin",
         "recovery.step1": "To protect your data, a PIN can only be reset by someone who can reach this computer's files. Create an empty file named {name} in this folder, then press Continue:",
         "recovery.open_folder": "Open the folder",

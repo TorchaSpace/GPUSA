@@ -30,7 +30,7 @@ from database import account_repository, purchase_order_repository, settings_rep
 from database.exceptions import DataAccessError
 
 import admin_app.gui.icons as icons
-from admin_app.gui.auth_flow import admin_sign_in_dialog
+from admin_app.gui.auth_flow import sign_in
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.global_search import GlobalSearchDialog
 from admin_app.gui.components.sidebar_nav import NavItem, NavSection, SidebarNav
@@ -169,9 +169,9 @@ class MainWindow(QMainWindow):
         self.session = None
         current_session.clear()
         self.hide()
-        dialog = admin_sign_in_dialog(cancel_text="Quit")
-        if dialog.exec() == QDialog.Accepted and dialog.session is not None:
-            self.session = dialog.session
+        session = sign_in(cancel_text="Quit")
+        if session is not None:
+            self.session = session
             current_session.set(self.session)
             self._sidebar.set_user(self.session.name, self.session.role_label)
             self.navigate("overview")  # the next administrator starts at Overview, not where the last one left off

@@ -109,3 +109,33 @@ def copy_database_to(destination: Path) -> None:
     except BaseException:
         destination.unlink(missing_ok=True)  # never leave a stub that looks like a database
         raise
+
+
+def erase_all_data() -> Path:
+    """"Start over": copy the whole database to a timestamped backup file
+    beside it, then empty every table (apps keep their connections; the
+    schema stays). Returns the backup's path. Used only by Admin's "Forgot
+    your PIN" last resort - it can destroy data, never reveal it."""
+    from datetime import datetime
+
+    db_path = Path(get_db_path())
+    backup = db_path.with_name(f"{db_path.stem}.backup-{datetime.now():%Y%m%d-%H%M%S}{db_path.suffix}")
+    copy_database_to(backup)
+    with connection_scope() as conn:
+        conn.execute("PRAGMA foreign_keys = OFF")  # must be set outside a transaction
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            tables = [row[0] for row in conn.execute(
+                "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
+            for table in tables:  # names come from sqlite_master itself, quoted anyway
+                conn.execute('DELETE FROM "%s"' % table.replace('"', '""'))
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
+                conn.execute("DELETE FROM sqlite_sequence")
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
+    return backup
