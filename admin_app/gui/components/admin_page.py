@@ -1,0 +1,59 @@
+"""Base class for one page hosted in the sidebar's QStackedWidget: a
+header row (page title + optional right-aligned action widgets, matching
+every mockup page's `<h1>...</h1>` + action-buttons row) above a
+scrollable body. Subclasses build their content into `self.body_layout()`
+rather than owning their own top-level layout, so every page gets the
+same header treatment for free.
+"""
+
+from __future__ import annotations
+
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+
+
+class AdminPage(QWidget):
+    def __init__(self, title: str, parent: QWidget | None = None):
+        super().__init__(parent)
+        p = CLASSICAL_PALETTE
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(32, 28, 32, 28)
+        outer.setSpacing(20)
+
+        header = QWidget()
+        self._header_layout = QHBoxLayout(header)
+        self._header_layout.setContentsMargins(0, 0, 0, 0)
+
+        self._title_label = QLabel(title)
+        self._title_label.setStyleSheet(
+            f"font-family: '{FONT_HEADING}'; font-size: 28px; font-weight: 400; color: {p['text_primary']};"
+        )
+        self._header_layout.addWidget(self._title_label)
+        self._header_layout.addStretch(1)
+        outer.addWidget(header)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QScrollArea.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
+        body = QWidget()
+        body.setStyleSheet("background: transparent;")
+        self._body_layout = QVBoxLayout(body)
+        self._body_layout.setContentsMargins(0, 0, 0, 0)
+        self._body_layout.setSpacing(16)
+        scroll.setWidget(body)
+        outer.addWidget(scroll, stretch=1)
+
+    def set_title(self, title: str) -> None:
+        self._title_label.setText(title)
+
+    def add_header_action(self, widget: QWidget) -> None:
+        """Add a widget (e.g. a button) to the header row, right of the title."""
+        self._header_layout.addWidget(widget)
+
+    def body_layout(self) -> QVBoxLayout:
+        """Subclasses add their content widgets to this layout."""
+        return self._body_layout
