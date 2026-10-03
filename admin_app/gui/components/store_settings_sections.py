@@ -86,7 +86,7 @@ class GeneralSection(Section):
             profile = ss.validate_profile(self._name_input.text(), self._address_input.toPlainText())
             settings_repository.save_store_profile(profile)
             settings_repository.save_language(self._language_input.currentData())
-        except (ValueError, DATABASE_ERRORS) as exc:
+        except (ValueError, *DATABASE_ERRORS) as exc:
             self._error.setText(str(exc))
             return False
         self._error.setText("")
@@ -169,7 +169,7 @@ class DataLocationSection(Section):
             else:
                 connection.copy_database_to(target)
             paths.set_db_path(target)
-        except (OSError, DATABASE_ERRORS) as exc:
+        except (OSError, *DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, "Couldn't move the data", str(exc))
             return False
         self.reload()

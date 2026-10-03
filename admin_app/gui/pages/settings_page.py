@@ -204,7 +204,7 @@ class SettingsPage(AdminPage):
     def _run(self, fn, done: str | None = None) -> bool:
         try:
             fn()
-        except (DATABASE_ERRORS, ValueError) as exc:
+        except (*DATABASE_ERRORS, ValueError) as exc:
             QMessageBox.warning(self, "Couldn't save", str(exc))
             return False
         self.reload()
