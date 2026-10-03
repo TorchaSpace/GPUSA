@@ -60,6 +60,7 @@ from admin_app.gui.components.stock_move_popup import StockMovePopup
 from admin_app.gui.components.styled_table import cell, styled_table
 from admin_app.gui.components.warehouse_capacity_card import WarehouseCapacityCard
 from admin_app.gui.components.warehouse_form_popup import WarehouseFormPopup
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
     attendance_repository,
@@ -124,18 +125,18 @@ def _segments(labels, on_click) -> tuple[QWidget, dict[str, _Segment]]:
 
 class WarehousesPage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Warehouses", parent)
+        super().__init__(tr("page.warehouses.title"), parent, subtitle=tr("page.warehouses.subtitle"))
         self._data: dict | None = None
         self._site: str | None = None  # card filter (warehouse code)
         self._tab = "moves"
         self._direction = "All"
         self._cards: list[WarehouseCapacityCard] = []
 
-        add = CompactButton("Add warehouse")
+        add = CompactButton("Add warehouse", variant="primary")
         add.clicked.connect(self._open_add)
         move = CompactButton("Move / count stock")
         move.clicked.connect(self._open_move)
-        refresh = CompactButton("Refresh")
+        refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
         for button in (add, move, refresh):
             self.add_header_action(button)

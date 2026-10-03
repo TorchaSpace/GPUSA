@@ -35,6 +35,7 @@ from admin_app.gui.components.price_range_form_popup import PriceRangeFormPopup
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import product_repository, purchase_order_repository
 from database.exceptions import DataAccessError, PurchaseOrderAlreadyDecidedError
@@ -70,9 +71,9 @@ class PurchaseRequestsPage(AdminPage):
     pending_count_changed = Signal(int)
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Purchase Requests", parent)
+        super().__init__(tr("page.purchase_requests.title"), parent, subtitle=tr("page.purchase_requests.subtitle"))
 
-        refresh = CompactButton("Refresh")
+        refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
         self.add_header_action(refresh)
 

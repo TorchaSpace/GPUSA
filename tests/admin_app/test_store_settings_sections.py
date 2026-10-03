@@ -62,3 +62,13 @@ def test_data_location_copies_and_repoints(qapp, tmp_path, monkeypatch):
     new_dir = tmp_path / "new"
     assert section.move_to(new_dir)
     assert (new_dir / "shared_backend.db").exists() and saved == [new_dir / "shared_backend.db"]
+
+
+def test_language_choice_is_saved(qapp):
+    from admin_app.gui.components.store_settings_sections import GeneralSection
+
+    section = GeneralSection()
+    section._language_input.setCurrentIndex(section._language_input.findData("tr"))
+    assert section.save()
+    assert settings_repository.safe_language() == "tr"
+    assert GeneralSection()._language_input.currentData() == "tr"

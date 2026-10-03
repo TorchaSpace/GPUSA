@@ -37,6 +37,7 @@ from admin_app.gui.components.employee_form_popup import EmployeeFormPopup
 from admin_app.gui.components.employee_table import WorkforceTable, status_color
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import attendance_repository, employee_repository
 from database.exceptions import DataAccessError
@@ -45,9 +46,9 @@ from shared.models import EMPLOYEE_ROLES, Employee
 
 class WorkforcePage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Workforce Management", parent)
+        super().__init__(tr("page.workforce.title"), parent, subtitle=tr("page.workforce.subtitle"))
 
-        add_button = CompactButton("Add Employee")
+        add_button = CompactButton("Add Employee", variant="primary")
         add_button.clicked.connect(self._open_add_popup)
         self.add_header_action(add_button)
 

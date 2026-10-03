@@ -44,6 +44,7 @@ from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.inventory_table import InventoryTable, status_for
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import product_repository, stock_repository
 from database.exceptions import DataAccessError
@@ -52,13 +53,13 @@ from shared.models import Product
 
 class InventoryPage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Inventory Management", parent)
+        super().__init__(tr("page.inventory.title"), parent, subtitle=tr("page.inventory.subtitle"))
 
         export_button = CompactButton("Export Price List")
         export_button.clicked.connect(self._export_price_list)
         self.add_header_action(export_button)
 
-        add_button = CompactButton("Add Product")
+        add_button = CompactButton("Add Product", variant="primary")
         add_button.clicked.connect(self._open_add_popup)
         self.add_header_action(add_button)
 

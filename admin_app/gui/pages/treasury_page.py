@@ -57,6 +57,7 @@ from admin_app.gui.components.milestone_strip import MilestoneStrip
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import ledger_repository, purchase_order_repository
 from database.exceptions import DataAccessError
@@ -111,7 +112,7 @@ class _SegmentButton(QPushButton):
 
 class TreasuryPage(AdminPage):
     def __init__(self, parent: QWidget | None = None, today_provider=date.today):
-        super().__init__("Treasury & Ledger", parent)
+        super().__init__(tr("page.treasury.title"), parent, subtitle=tr("page.treasury.subtitle"))
         self._today_provider = today_provider  # injectable so tests can pin "today"
         self._entries: list[LedgerEntry] = []
         self._tab = "in"
@@ -119,7 +120,7 @@ class TreasuryPage(AdminPage):
         self._ascending = True
         self._shown: list[LedgerEntry] = []
 
-        refresh = CompactButton("Refresh")
+        refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
         self.add_header_action(refresh)
 
@@ -240,7 +241,7 @@ class TreasuryPage(AdminPage):
     def _build_documents(self) -> Section:
         p = CLASSICAL_PALETTE
         section = Section("Ledger", "Checks, notes & payments")
-        self._record_button = CompactButton("+ Record receipt")
+        self._record_button = CompactButton("+ Record receipt", variant="primary")
         self._record_button.clicked.connect(self._open_record)
         section.add_header_control(self._record_button)
 

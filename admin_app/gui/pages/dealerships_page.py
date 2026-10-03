@@ -26,6 +26,7 @@ from admin_app.gui.components.dealership_form_popup import DealershipFormPopup
 from admin_app.gui.components.dealership_table import DealershipTable, status_for
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, stock_repository
 from database.exceptions import DataAccessError
@@ -34,9 +35,9 @@ from shared.models import DEALERSHIP_REGIONS, Dealership, StockLocation
 
 class DealershipsPage(AdminPage):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Dealership Network", parent)
+        super().__init__(tr("page.dealerships.title"), parent, subtitle=tr("page.dealerships.subtitle"))
 
-        add_button = CompactButton("Add Dealership")
+        add_button = CompactButton("Add Dealership", variant="primary")
         add_button.clicked.connect(self._open_add_popup)
         self.add_header_action(add_button)
 

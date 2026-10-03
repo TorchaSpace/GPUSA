@@ -10,7 +10,7 @@ from pathlib import Path
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox, QFileDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QWidget,
+    QCheckBox, QComboBox, QFileDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QWidget,
 )
 
 from admin_app.gui.components.compact_button import CompactButton
@@ -18,9 +18,10 @@ from admin_app.gui.components.section import Section
 from admin_app.theme import CLASSICAL_PALETTE
 from database import connection, settings_repository
 from database.exceptions import DATABASE_ERRORS
-from shared import paths
+from shared import i18n, paths
 from shared import store_settings as ss
 from shared.constants import DATABASE_FILENAME
+from shared.i18n import tr
 
 _INPUT_CSS = (
     f"background: {CLASSICAL_PALETTE['surface']}; color: {CLASSICAL_PALETTE['text_primary']};"
@@ -48,22 +49,27 @@ class GeneralSection(Section):
     saved = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Store", "General", parent)
+        super().__init__(tr("settings.store.kicker"), tr("settings.general"), parent)
         self._name_input = QLineEdit()
         self._name_input.setStyleSheet(_INPUT_CSS)
         self._name_input.setMaxLength(ss.MAX_NAME_LENGTH)
         self._address_input = QPlainTextEdit()
         self._address_input.setStyleSheet(_INPUT_CSS)
         self._address_input.setFixedHeight(84)
-        self._address_input.setPlaceholderText("One line per row, up to 4 (street, city, phone ...)")
+        self._address_input.setPlaceholderText(tr("settings.address_hint"))
         form = _form_host(self)
-        form.addRow("Store name", self._name_input)
-        form.addRow("Address", self._address_input)
-        form.addRow(_note("Printed at the top of every till receipt and every exported report."))
+        form.addRow(tr("settings.store_name"), self._name_input)
+        form.addRow(tr("settings.address"), self._address_input)
+        self._language_input = QComboBox()
+        for code, name in i18n.available_languages():
+            self._language_input.addItem(name, code)
+        form.addRow(tr("settings.language"), self._language_input)
+        form.addRow(_note(tr("settings.store_note")))
+        form.addRow(_note(tr("settings.language_note")))
         self._error = QLabel("")
         self._error.setStyleSheet(f"font-size: 12px; color: {CLASSICAL_PALETTE['alert_critical']};")
         form.addRow(self._error)
-        save = CompactButton("Save")
+        save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
         self.reload()
@@ -72,11 +78,14 @@ class GeneralSection(Section):
         profile = settings_repository.safe_store_profile()
         self._name_input.setText(profile.name)
         self._address_input.setPlainText("\n".join(profile.address_lines))
+        index = self._language_input.findData(settings_repository.safe_language())
+        self._language_input.setCurrentIndex(max(0, index))
 
     def save(self) -> bool:
         try:
             profile = ss.validate_profile(self._name_input.text(), self._address_input.toPlainText())
             settings_repository.save_store_profile(profile)
+            settings_repository.save_language(self._language_input.currentData())
         except (ValueError, DATABASE_ERRORS) as exc:
             self._error.setText(str(exc))
             return False
@@ -90,16 +99,16 @@ class NotificationsSection(Section):
     changed = Signal()
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Alerts", "Notifications", parent)
-        self._low_stock = QCheckBox("Show the low-stock alert banner on the depot floor")
-        self._pending = QCheckBox("Show the pending-approvals count on Purchase requests and page headers")
+        super().__init__(tr("settings.alerts.kicker"), tr("settings.notifications"), parent)
+        self._low_stock = QCheckBox(tr("settings.low_stock_alerts"))
+        self._pending = QCheckBox(tr("settings.pending_badge"))
         for box in (self._low_stock, self._pending):
             box.setStyleSheet(f"color: {CLASSICAL_PALETTE['text_primary']}; font-size: 13px; padding: 4px 0;")
         form = _form_host(self)
         form.addRow(self._low_stock)
         form.addRow(self._pending)
-        form.addRow(_note("Turning an alert off only hides it; purchase requests and stock levels are unaffected."))
-        save = CompactButton("Save")
+        form.addRow(_note(tr("settings.notifications_note")))
+        save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
         self.reload()
@@ -122,7 +131,7 @@ class NotificationsSection(Section):
 
 class DataLocationSection(Section):
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Storage", "Data location", parent)
+        super().__init__(tr("settings.storage.kicker"), tr("settings.data_location"), parent)
         self._path_label = QLabel()
         self._path_label.setWordWrap(True)
         self._path_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
@@ -133,7 +142,7 @@ class DataLocationSection(Section):
             "All apps read and write this one database file. To move it, pick a folder: a copy is made there "
             "and every app uses it after its next restart. The old file is left untouched."
         ))
-        change = CompactButton("Change folder...")
+        change = CompactButton(tr("settings.change_folder"))
         change.clicked.connect(self.choose_folder)
         self.add_header_control(change)
         self.reload()

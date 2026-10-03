@@ -71,3 +71,15 @@ def safe_notifications() -> ss.NotificationPrefs:
         return load_notifications()
     except (DataAccessError, sqlite3.Error):
         return ss.NotificationPrefs()
+
+
+def safe_language() -> str:
+    """The saved interface language code; English if unset or unreadable."""
+    try:
+        return ss.language_from(get_all())
+    except (DataAccessError, sqlite3.Error):
+        return ss.DEFAULT_LANGUAGE
+
+
+def save_language(code: str) -> None:
+    set_many({ss.KEY_LANGUAGE: code})

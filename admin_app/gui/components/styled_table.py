@@ -21,6 +21,13 @@ def styled_table(headers: list[str]) -> QTableWidget:
     table.setSelectionBehavior(QAbstractItemView.SelectRows)
     table.setSelectionMode(QAbstractItemView.SingleSelection)
     table.setAlternatingRowColors(True)
+    table.setShowGrid(False)  # hairline rules between rows come from the items, not a full grid
+    table.setFocusPolicy(Qt.StrongFocus)
+    table.setVerticalScrollMode(QAbstractItemView.ScrollPerPixel)  # smooth, not row-jumping
+    table.setHorizontalScrollMode(QAbstractItemView.ScrollPerPixel)
+    table.verticalHeader().setDefaultSectionSize(40)  # room to breathe, like the mockup's rows
+    table.horizontalHeader().setHighlightSections(False)
+    table.setCornerButtonEnabled(False)
     table.horizontalHeader().setStretchLastSection(True)
     table.setStyleSheet(
         f"""
@@ -32,9 +39,10 @@ def styled_table(headers: list[str]) -> QTableWidget:
         }}
         QHeaderView::section {{
             background-color: {p['surface']}; color: {p['text_secondary']}; border: none;
-            border-bottom: 1px solid {p['border']}; padding: 8px 10px; font-size: 11px; letter-spacing: 1px;
+            border-bottom: 1px solid {p['border']}; padding: 10px 10px; font-size: 11px; font-weight: 600;
         }}
-        QTableWidget::item {{ padding: 4px 10px; }}
+        QTableWidget::item {{ padding: 4px 10px; border-bottom: 1px solid {p['border']}; }}
+        QTableWidget::item:hover {{ background-color: rgba(234, 231, 231, 12); }}
         QTableWidget::item:selected {{ background-color: rgba(225, 173, 102, 30); color: {p['text_primary']}; }}
         """
     )

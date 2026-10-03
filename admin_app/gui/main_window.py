@@ -51,28 +51,32 @@ from shared.constants import PURCHASE_REQUEST_POLL_INTERVAL_MS
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
 
-NAV_SECTIONS = [
-    NavSection(
-        "Operations",
-        [
-            NavItem("overview", "Overview", icons.OVERVIEW),
-            NavItem("inventory", "Inventory", icons.INVENTORY),
-            NavItem("warehouses", "Warehouses", icons.WAREHOUSES),
-            NavItem("dealerships", "Dealerships", icons.DEALERSHIPS),
-            NavItem("distribution", "Distribution", icons.DISTRIBUTION),
-            NavItem("purchase_requests", "Purchase requests", icons.PURCHASE_REQUESTS),  # badge: live, see module docstring
-        ],
-    ),
-    NavSection(
-        "People & records",
-        [
-            NavItem("workforce", "Workforce", icons.WORKFORCE),
-            NavItem("reports", "Reports", icons.REPORTS),
-            NavItem("treasury", "Treasury & Ledger", icons.TREASURY),
-            NavItem("settings", "Settings", icons.SETTINGS),
-        ],
-    ),
-]
+def build_nav_sections() -> list[NavSection]:
+    """Built when the window opens (not at import) so the labels follow the
+    interface language chosen in Settings."""
+    return [
+        NavSection(
+            tr("nav.section.operations"),
+            [
+                NavItem("overview", tr("nav.overview"), icons.OVERVIEW),
+                NavItem("inventory", tr("nav.inventory"), icons.INVENTORY),
+                NavItem("warehouses", tr("nav.warehouses"), icons.WAREHOUSES),
+                NavItem("dealerships", tr("nav.dealerships"), icons.DEALERSHIPS),
+                NavItem("distribution", tr("nav.distribution"), icons.DISTRIBUTION),
+                NavItem("purchase_requests", tr("nav.purchase_requests"), icons.PURCHASE_REQUESTS),  # badge: live, see module docstring
+            ],
+        ),
+        NavSection(
+            tr("nav.section.people"),
+            [
+                NavItem("workforce", tr("nav.workforce"), icons.WORKFORCE),
+                NavItem("reports", tr("nav.reports"), icons.REPORTS),
+                NavItem("treasury", tr("nav.treasury"), icons.TREASURY),
+                NavItem("settings", tr("nav.settings"), icons.SETTINGS),
+            ],
+        ),
+    ]
+
 
 class MainWindow(QMainWindow):
     def __init__(self, session: Session | None = None):
@@ -90,9 +94,9 @@ class MainWindow(QMainWindow):
         layout.setSpacing(0)
 
         self._sidebar = SidebarNav(
-            NAV_SECTIONS,
+            build_nav_sections(),
             brand_title="GPUSA",
-            brand_subtitle="Admin Dashboard",
+            brand_subtitle=tr("admin.brand_subtitle"),
             user_name=session.name if session else "Not signed in",
             user_role=session.role_label if session else "",
         )
@@ -217,8 +221,8 @@ class MainWindow(QMainWindow):
         data, PDF/Excel export) still works and answers a different
         question - what sold, by product, over any date range - so the
         Reports page keeps a button that opens it."""
-        button = CompactButton("Sales by product")
-        button.setToolTip("Per-product sales for any date range")
+        button = CompactButton(tr("reports.sales_by_product"))
+        button.setToolTip(tr("reports.sales_by_product_tip"))
         button.clicked.connect(self._open_legacy_reports)
         self._reports_page.add_header_action(button)
 
@@ -239,13 +243,14 @@ class MainWindow(QMainWindow):
         for key, page in self._pages.items():
             if not hasattr(page, "add_leading_header_action"):
                 continue
-            search = CompactButton("Search  \u2318K" if sys.platform == "darwin" else "Search  Ctrl+K")
-            search.setToolTip("Find a product, dealership, warehouse or person")
+            shortcut = "\u2318K" if sys.platform == "darwin" else "Ctrl+K"
+            search = CompactButton(f"{tr('header.search')}  {shortcut}")
+            search.setToolTip(tr("header.search_tip"))
             search.clicked.connect(self.open_search)
             page.add_leading_header_action(search)
             if key in ("overview", "purchase_requests"):
                 continue
-            approvals = CompactButton("Pending approvals")
+            approvals = CompactButton(tr("header.pending_approvals"))
             approvals.clicked.connect(lambda _=False: self.navigate("purchase_requests"))
             self._style_approvals_button(approvals, self._pending_count or 0)
             page.add_leading_header_action(approvals)
@@ -253,7 +258,8 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def _style_approvals_button(button: CompactButton, count: int) -> None:
-        button.setText(f"Pending approvals  {count}" if count else "Pending approvals")
+        label = tr("header.pending_approvals")
+        button.setText(f"{label}  {count}" if count else label)
 
     def open_search(self) -> None:
         dialog = GlobalSearchDialog(self)

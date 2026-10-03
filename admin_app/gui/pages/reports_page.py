@@ -54,6 +54,7 @@ from admin_app.gui.components.charts import DonutChart, RevenueChart, Sparkline
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
@@ -66,7 +67,7 @@ _MODES = (("cumulative", "Cumulative"), ("daily", "Daily"))
 
 class ReportsPage(AdminPage):
     def __init__(self, parent: QWidget | None = None, today_provider=date.today):
-        super().__init__("Analytics & Reports", parent)
+        super().__init__(tr("page.reports.title"), parent, subtitle=tr("page.reports.subtitle"))
         self._today_provider = today_provider  # injectable so tests can pin "today"
         self._period_key = "month"
         self._mode = "cumulative"

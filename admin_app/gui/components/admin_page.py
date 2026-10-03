@@ -8,13 +8,13 @@ same header treatment for free.
 
 from __future__ import annotations
 
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 
 
 class AdminPage(QWidget):
-    def __init__(self, title: str, parent: QWidget | None = None):
+    def __init__(self, title: str, parent: QWidget | None = None, subtitle: str = ""):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
 
@@ -26,14 +26,29 @@ class AdminPage(QWidget):
         self._header_layout = QHBoxLayout(header)
         self._header_layout.setContentsMargins(0, 0, 0, 0)
 
+        titles = QVBoxLayout()
+        titles.setSpacing(2)
         self._title_label = QLabel(title)
         self._title_label.setStyleSheet(
-            f"font-family: {FONT_HEADING_CSS}; font-size: 28px; font-weight: 400; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 30px; font-weight: 400; color: {p['text_primary']};"
         )
-        self._header_layout.addWidget(self._title_label)
+        titles.addWidget(self._title_label)
+        # One quiet line saying what the page is for - the first thing a
+        # new user needs and the last thing an experienced one notices.
+        self._subtitle_label = QLabel(subtitle)
+        self._subtitle_label.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
+        self._subtitle_label.setVisible(bool(subtitle))
+        titles.addWidget(self._subtitle_label)
+        self._header_layout.addLayout(titles)
         self._header_layout.addStretch(1)
+        self._header_layout.setSpacing(8)
         self._leading_actions = 0
         outer.addWidget(header)
+
+        rule = QFrame()
+        rule.setFixedHeight(1)
+        rule.setStyleSheet(f"background-color: {p['border']}; border: none;")
+        outer.addWidget(rule)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -50,6 +65,10 @@ class AdminPage(QWidget):
 
     def set_title(self, title: str) -> None:
         self._title_label.setText(title)
+
+    def set_subtitle(self, subtitle: str) -> None:
+        self._subtitle_label.setText(subtitle)
+        self._subtitle_label.setVisible(bool(subtitle))
 
     def add_header_action(self, widget: QWidget) -> None:
         """Add a widget (e.g. a button) to the header row, right of the title."""

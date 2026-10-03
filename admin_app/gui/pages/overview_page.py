@@ -49,6 +49,7 @@ from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
     attendance_repository,
@@ -91,7 +92,7 @@ class OverviewPage(AdminPage):
     open_purchase_requests = Signal()
 
     def __init__(self, parent: QWidget | None = None, today_provider=date.today):
-        super().__init__("Operations Overview", parent)
+        super().__init__(tr("page.overview.title"), parent, subtitle=tr("page.overview.subtitle"))
         self._today_provider = today_provider  # injectable so tests can pin "today"
         self._filter = overview.FILTER_ALL
         self._low_only = False
@@ -101,12 +102,12 @@ class OverviewPage(AdminPage):
         self._warehouses = []
         self._roster = []
 
-        self._approvals_button = CompactButton("Pending approvals")
+        self._approvals_button = CompactButton(tr("header.pending_approvals"))
         self._approvals_button.setToolTip("Purchase orders held for your approval")
         self._approvals_button.clicked.connect(self.open_purchase_requests.emit)
         self.add_header_action(self._approvals_button)
 
-        refresh_button = CompactButton("Refresh")
+        refresh_button = CompactButton(tr("admin.refresh"))
         refresh_button.clicked.connect(self.reload)
         self.add_header_action(refresh_button)
 
@@ -182,7 +183,8 @@ class OverviewPage(AdminPage):
     # --- state --------------------------------------------------------
 
     def set_pending_count(self, count: int) -> None:
-        self._approvals_button.setText(f"Pending approvals  {count}" if count else "Pending approvals")
+        label = tr("header.pending_approvals")
+        self._approvals_button.setText(f"{label}  {count}" if count else label)
 
     def set_location_filter(self, key: str) -> None:
         self._filter = key

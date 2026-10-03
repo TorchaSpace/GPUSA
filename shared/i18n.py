@@ -8,6 +8,8 @@ hunting through every screen for string literals.
 
 from __future__ import annotations
 
+from shared.i18n_tr import TR
+
 _CURRENT_LANGUAGE = "en"
 
 _STRINGS: dict[str, dict[str, str]] = {
@@ -71,12 +73,83 @@ _STRINGS: dict[str, dict[str, str]] = {
         "admin.form_role": "Role",
         "admin.form_location_type": "Location type",
         "admin.form_location_name": "Location",
+        # Admin shell
+        "admin.brand_subtitle": "Admin Dashboard",
+        "nav.section.operations": "Operations",
+        "nav.section.people": "People & records",
+        "nav.overview": "Overview",
+        "nav.inventory": "Inventory",
+        "nav.warehouses": "Warehouses",
+        "nav.dealerships": "Dealerships",
+        "nav.distribution": "Distribution",
+        "nav.purchase_requests": "Purchase requests",
+        "nav.workforce": "Workforce",
+        "nav.reports": "Reports",
+        "nav.treasury": "Treasury & Ledger",
+        "nav.settings": "Settings",
+        "page.overview.title": "Operations Overview",
+        "page.overview.subtitle": "Sales, stock and approvals at a glance.",
+        "page.inventory.title": "Inventory Management",
+        "page.inventory.subtitle": "Every product, its price and how much is left where.",
+        "page.warehouses.title": "Warehouses",
+        "page.warehouses.subtitle": "Capacity, stock and staff for each site.",
+        "page.dealerships.title": "Dealership Network",
+        "page.dealerships.subtitle": "Your dealers, where they are and how they sell.",
+        "page.distribution.title": "Distribution Network",
+        "page.distribution.subtitle": "Shipments on the road and what is due next.",
+        "page.purchase_requests.title": "Purchase Requests",
+        "page.purchase_requests.subtitle": "Review, approve or decline what the depots ask for.",
+        "page.workforce.title": "Workforce Management",
+        "page.workforce.subtitle": "Who works where, and who is on shift today.",
+        "page.reports.title": "Analytics & Reports",
+        "page.reports.subtitle": "Revenue trends and exports for any period.",
+        "page.treasury.title": "Treasury & Ledger",
+        "page.treasury.subtitle": "Money in, money out and what is overdue.",
+        "page.settings.title": "Settings",
+        "page.settings.subtitle": "Store details, alerts, data location and who can sign in.",
+        "header.search": "Search",
+        "header.pending_approvals": "Pending approvals",
+        "header.search_tip": "Find a product, dealership, warehouse or person",
+        "reports.sales_by_product": "Sales by product",
+        "reports.sales_by_product_tip": "Per-product sales for any date range",
+        "search.hint": "Search products, dealerships, warehouses, people",
+        "search.no_matches": "No matches.",
+        "search.title": "Search",
+        # Settings
+        "settings.store.kicker": "Store",
+        "settings.general": "General",
+        "settings.store_name": "Store name",
+        "settings.address": "Address",
+        "settings.address_hint": "One line per row, up to 4 (street, city, phone ...)",
+        "settings.store_note": "Printed at the top of every till receipt and every exported report.",
+        "settings.language": "Language",
+        "settings.language_note": "The language changes the next time Admin opens.",
+        "settings.alerts.kicker": "Alerts",
+        "settings.notifications": "Notifications",
+        "settings.low_stock_alerts": "Show the low-stock alert banner on the depot floor",
+        "settings.pending_badge": "Show the pending-approvals count on Purchase requests and page headers",
+        "settings.notifications_note": "Turning an alert off only hides it; purchase requests and stock levels are unaffected.",
+        "settings.storage.kicker": "Storage",
+        "settings.data_location": "Data location",
+        "settings.change_folder": "Change folder...",
         # Shared
         "common.total": "Total",
         "common.cancel": "Cancel",
         "common.save": "Save",
-    }
+    },
+    "tr": TR,
 }
+
+LANGUAGE_NAMES = {"en": "English", "tr": "T\u00fcrk\u00e7e"}
+
+
+def available_languages() -> list[tuple[str, str]]:
+    """(code, name in that language) for the language picker."""
+    return [(code, LANGUAGE_NAMES.get(code, code)) for code in _STRINGS]
+
+
+def current_language() -> str:
+    return _CURRENT_LANGUAGE
 
 
 def set_language(language_code: str) -> None:

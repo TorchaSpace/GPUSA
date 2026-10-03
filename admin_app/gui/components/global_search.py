@@ -14,8 +14,8 @@ from database import dealership_repository, employee_repository, product_reposit
 from database.exceptions import DATABASE_ERRORS
 from admin_app.theme import CLASSICAL_PALETTE, FONT_BODY_CSS
 from shared import search as search_logic
+from shared.i18n import tr
 
-HINT = "Search products, dealerships, warehouses, people"
 
 
 def load_records() -> tuple[list, list, list, list]:
@@ -37,7 +37,7 @@ class GlobalSearchDialog(QDialog):
     def __init__(self, parent=None, records=None):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
-        self.setWindowTitle("Search")
+        self.setWindowTitle(tr("search.title"))
         self.setModal(True)
         self.resize(560, 420)
         self._records = records if records is not None else load_records()
@@ -55,7 +55,7 @@ class GlobalSearchDialog(QDialog):
         )
         layout = QVBoxLayout(self)
         self._input = QLineEdit()
-        self._input.setPlaceholderText(HINT)
+        self._input.setPlaceholderText(tr("search.hint"))
         self._input.textChanged.connect(self.set_query)
         self._input.returnPressed.connect(self._accept_current)
         layout.addWidget(self._input)
@@ -78,7 +78,7 @@ class GlobalSearchDialog(QDialog):
             self._list.setCurrentRow(0)
             self._note.setText("")
         else:
-            self._note.setText(HINT if not text.strip() else "No matches.")
+            self._note.setText(tr("search.hint") if not text.strip() else tr("search.no_matches"))
 
     def hits(self) -> list[search_logic.SearchHit]:
         return list(self._hits)

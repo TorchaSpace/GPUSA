@@ -19,6 +19,8 @@ KEY_STORE_NAME = "store.name"
 KEY_STORE_ADDRESS = "store.address"  # lines joined with "\n"
 KEY_LOW_STOCK_ALERTS = "alerts.low_stock"
 KEY_PENDING_BADGE = "alerts.pending_approvals"
+KEY_LANGUAGE = "ui.language"
+DEFAULT_LANGUAGE = "en"
 
 
 @dataclass(frozen=True)
@@ -83,3 +85,9 @@ def prefs_to_values(prefs: NotificationPrefs) -> dict[str, str]:
         KEY_LOW_STOCK_ALERTS: "1" if prefs.low_stock_alerts else "0",
         KEY_PENDING_BADGE: "1" if prefs.pending_approvals else "0",
     }
+
+
+def language_from(values: dict[str, str], known: list[str] | tuple[str, ...] = ("en", "tr")) -> str:
+    """The saved interface language, or English when unset or unknown."""
+    code = (values.get(KEY_LANGUAGE) or "").strip().lower()
+    return code if code in known else DEFAULT_LANGUAGE

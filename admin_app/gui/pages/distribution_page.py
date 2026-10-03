@@ -41,6 +41,7 @@ from admin_app.gui.components.route_tracker import GOLD, STATUS_COLORS, WARN, Ro
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import shipment_repository
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
@@ -71,7 +72,7 @@ class _Segment(QPushButton):
 
 class DistributionPage(AdminPage):
     def __init__(self, parent: QWidget | None = None, now_provider=None):
-        super().__init__("Distribution Network", parent)
+        super().__init__(tr("page.distribution.title"), parent, subtitle=tr("page.distribution.subtitle"))
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._shipments: list[Shipment] = []
         self._active: list[Shipment] = []
@@ -79,7 +80,7 @@ class DistributionPage(AdminPage):
         self._selected_id: int | None = None
         self._filter = "All"
 
-        refresh = CompactButton("Refresh")
+        refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
         self.add_header_action(refresh)
 

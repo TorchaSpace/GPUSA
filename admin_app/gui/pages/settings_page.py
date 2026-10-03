@@ -32,6 +32,7 @@ from admin_app.gui.components.store_settings_sections import (
     DataLocationSection, GeneralSection, NotificationsSection,
 )
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import account_repository
 from database.exceptions import DATABASE_ERRORS
@@ -66,11 +67,11 @@ class SettingsPage(AdminPage):
     notifications_changed = Signal()  # MainWindow re-reads the alert switches
 
     def __init__(self, parent: QWidget | None = None):
-        super().__init__("Settings", parent)
+        super().__init__(tr("page.settings.title"), parent, subtitle=tr("page.settings.subtitle"))
         p = CLASSICAL_PALETTE
         self._accounts: list[Account] = []
 
-        refresh = CompactButton("Refresh")
+        refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
         self.add_header_action(refresh)
 
