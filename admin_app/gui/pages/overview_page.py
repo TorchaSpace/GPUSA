@@ -58,7 +58,7 @@ from database import (
     transaction_repository,
     warehouse_repository,
 )
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from shared import analytics, overview
 from shared.formatting import format_amount, local_time_text
 
@@ -212,7 +212,7 @@ class OverviewPage(AdminPage):
             sales = transaction_repository.list_between(period.start_datetime, period.end_exclusive)
             previous = transaction_repository.list_between(period.prev_start_datetime, period.prev_end_exclusive)
             self._roster = attendance_repository.list_roster()
-        except DataAccessError:
+        except DATABASE_ERRORS:
             self._products, self._levels, self._warehouses, self._roster = [], [], [], []
             self._stock_footer.setText("Couldn't load the figures from the database.")
             return

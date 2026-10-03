@@ -34,7 +34,7 @@ from admin_app.gui.components.store_settings_sections import (
 from admin_app.gui.components.styled_table import cell, styled_table
 from admin_app.theme import CLASSICAL_PALETTE
 from database import account_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from shared import auth, current_session
 from shared.formatting import local_datetime_text
 from shared.models import Account
@@ -135,14 +135,16 @@ class SettingsPage(AdminPage):
 
     def showEvent(self, event) -> None:
         super().showEvent(event)
+        # Only when the page is (re)opened: reload() also runs after every
+        # account action and must not wipe a half-typed store name.
+        self._general.reload()
+        self._notifications.reload()
+        self._data_location.reload()
         self.reload()
 
     # --- data -------------------------------------------------------------------
 
     def reload(self) -> None:
-        self._general.reload()
-        self._notifications.reload()
-        self._data_location.reload()
         session = current_session.get()
         self._me_label.setText(
             f"{session.name} · {session.badge_id} · {session.role_label} · signed in at "
@@ -152,7 +154,7 @@ class SettingsPage(AdminPage):
         try:
             self._accounts = account_repository.list_accounts()
             events = account_repository.list_events(200)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             return
         table = self._table
         table.setRowCount(len(self._accounts))
@@ -201,7 +203,7 @@ class SettingsPage(AdminPage):
     def _run(self, fn, done: str | None = None) -> bool:
         try:
             fn()
-        except (DataAccessError, ValueError) as exc:
+        except (DATABASE_ERRORS, ValueError) as exc:
             QMessageBox.warning(self, "Couldn't save", str(exc))
             return False
         self.reload()
@@ -212,7 +214,7 @@ class SettingsPage(AdminPage):
     def add_account(self) -> None:
         try:
             employees = account_repository.employees_without_account()
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, "Couldn't load employees", str(exc))
             return
         popup = AddAccountPopup(employees, self)

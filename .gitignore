@@ -47,3 +47,7 @@ _build_tool_build/
 # macOS / scratch
 .DS_Store
 Claude outputs/
+
+# packaging/build_release.py output
+/release/
+/build_release/

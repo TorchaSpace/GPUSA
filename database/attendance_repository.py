@@ -142,7 +142,7 @@ def list_roster(for_date: str | None = None) -> list[dict]:
         FROM employees e
         LEFT JOIN attendance_records a ON a.id = (
             SELECT a2.id FROM attendance_records a2
-            WHERE a2.employee_id = e.id AND date(a2.check_in_at) = date(?)
+            WHERE a2.employee_id = e.id AND date(a2.check_in_at, 'localtime') = date(?)
             ORDER BY a2.check_in_at DESC LIMIT 1
         )
         ORDER BY e.name

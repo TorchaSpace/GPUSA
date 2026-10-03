@@ -17,7 +17,7 @@ from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.theme import CLASSICAL_PALETTE
 from database import connection, settings_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from shared import paths
 from shared import store_settings as ss
 from shared.constants import DATABASE_FILENAME
@@ -77,7 +77,7 @@ class GeneralSection(Section):
         try:
             profile = ss.validate_profile(self._name_input.text(), self._address_input.toPlainText())
             settings_repository.save_store_profile(profile)
-        except (ValueError, DataAccessError) as exc:
+        except (ValueError, DATABASE_ERRORS) as exc:
             self._error.setText(str(exc))
             return False
         self._error.setText("")
@@ -113,7 +113,7 @@ class NotificationsSection(Section):
         prefs = ss.NotificationPrefs(self._low_stock.isChecked(), self._pending.isChecked())
         try:
             settings_repository.save_notifications(prefs)
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, "Couldn't save", str(exc))
             return False
         self.changed.emit()
@@ -160,7 +160,7 @@ class DataLocationSection(Section):
             else:
                 connection.copy_database_to(target)
             paths.set_db_path(target)
-        except (OSError, DataAccessError) as exc:
+        except (OSError, DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, "Couldn't move the data", str(exc))
             return False
         self.reload()

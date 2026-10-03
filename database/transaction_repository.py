@@ -11,6 +11,7 @@ from database.connection import connection_scope
 from database.exceptions import InsufficientStockError, ProductNotFoundError, TransactionNotFoundError
 from database.stock_repository import change_level, level_in, require_location
 from shared.auth import Actor, actor_label
+from shared.formatting import to_db_timestamp
 from shared.models import UNASSIGNED, LineItem, StockLocation, Transaction
 
 
@@ -146,8 +147,19 @@ def _parse_timestamp(value: str) -> datetime:
     return datetime.fromisoformat(value)
 
 
+def _as_local(naive_utc: datetime) -> datetime:
+    """A naive UTC datetime (what the database holds) -> naive local time."""
+    from datetime import timezone
+
+    return naive_utc.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
+
+
 def list_between(start: datetime, end: datetime) -> list[Transaction]:
     """Return all transactions in [start, end), for the Admin sales report tab.
+
+    `start`/`end` are LOCAL times (a date picker on this machine) and each
+    returned transaction's created_at is local too, so a sale at 01:30 in
+    Istanbul counts on that calendar day, not the previous UTC one.
 
     Two queries per call (transaction headers, then each one's line
     items) rather than a single JOIN - simpler to map back into
@@ -160,7 +172,7 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
             "SELECT id, created_at, dealership_code, cashier FROM transactions "
             "WHERE created_at >= ? AND created_at < ? "
             "ORDER BY created_at",
-            (start.strftime("%Y-%m-%dT%H:%M:%S"), end.strftime("%Y-%m-%dT%H:%M:%S")),
+            (to_db_timestamp(start), to_db_timestamp(end)),
         ).fetchall()
 
         transactions: list[Transaction] = []
@@ -182,7 +194,7 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
             transactions.append(
                 Transaction(
                     id=header["id"],
-                    created_at=_parse_timestamp(header["created_at"]),
+                    created_at=_as_local(_parse_timestamp(header["created_at"])),
                     items=items,
                     dealership_code=header["dealership_code"],
                     cashier=header["cashier"],

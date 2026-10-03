@@ -13,10 +13,10 @@ REGION (Metro / Coastal / Valley) plus "Unassigned" for sales from a till
 with no dealership. If a real channel is ever recorded, only
 revenue_by_region()'s grouping key changes.
 
-Dates: a transaction's created_at is the naive UTC time the database
-wrote, and its calendar day is taken as-is - the same convention the
-existing Sales Reports tab (transaction_repository.list_between) uses, so
-the two never disagree about which day a sale belongs to.
+Dates: transactions arrive from transaction_repository.list_between with
+created_at already converted to the machine's LOCAL time, so a sale's
+calendar day is the day the shop saw it (not the UTC day the database
+stamped).
 """
 
 from __future__ import annotations

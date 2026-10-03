@@ -170,6 +170,7 @@ class MainWindow(QMainWindow):
             self.session = dialog.session
             current_session.set(self.session)
             self._sidebar.set_user(self.session.name, self.session.role_label)
+            self.navigate("overview")  # the next administrator starts at Overview, not where the last one left off
             self.show()
         else:
             QApplication.quit()

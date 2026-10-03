@@ -11,7 +11,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QDialog, QLabel, QLineEdit, QListWidget, QListWidgetItem, QVBoxLayout
 
 from database import dealership_repository, employee_repository, product_repository, warehouse_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from admin_app.theme import CLASSICAL_PALETTE, FONT_BODY_CSS
 from shared import search as search_logic
 
@@ -26,7 +26,7 @@ def load_records() -> tuple[list, list, list, list]:
                    warehouse_repository.list_all, employee_repository.list_all):
         try:
             out.append(loader())
-        except DataAccessError:
+        except DATABASE_ERRORS:
             out.append([])
     return tuple(out)  # type: ignore[return-value]
 

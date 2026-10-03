@@ -74,7 +74,7 @@ def build_receipt(transaction: Transaction, store_name: str | None = None,
     divider = "-" * RECEIPT_WIDTH_CHARS
     name = store_name or STORE_NAME
     address = STORE_ADDRESS_LINES if address_lines is None else address_lines
-    lines: list[str] = [_centered(name)]
+    lines: list[str] = [_centered(part) for part in _wrap(name, RECEIPT_WIDTH_CHARS)]
     lines.extend(_centered(address_line) for address_line in address)
     lines.append(divider)
 

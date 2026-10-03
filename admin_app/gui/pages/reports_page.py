@@ -56,7 +56,7 @@ from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, transaction_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from shared import analytics
 from shared.formatting import format_amount
 
@@ -227,7 +227,7 @@ class ReportsPage(AdminPage):
             transactions = transaction_repository.list_between(period.start_datetime, period.end_exclusive)
             previous = transaction_repository.list_between(period.prev_start_datetime, period.prev_end_exclusive)
             dealerships = dealership_repository.list_all()
-        except DataAccessError as exc:
+        except DATABASE_ERRORS as exc:
             self._view = None
             self._document = None
             self._empty_note.setText(f"Couldn't load the figures: {exc}")
@@ -358,10 +358,14 @@ class ReportsPage(AdminPage):
             return
         path = Path(path_str)
         if path.suffix.lower() != suffix:
-            path = path.with_suffix(suffix)
+            path = path.with_name(path.name + suffix)  # "Report 2026.10.03" -> "Report 2026.10.03.csv"
+            if path.exists() and QMessageBox.question(
+                self, "Replace file?", f"{path.name} already exists. Replace it?"
+            ) != QMessageBox.Yes:
+                return
         try:
             exporter(self._document, path)
-        except OSError as exc:
+        except Exception as exc:  # a failed export must say so, whatever the cause
             QMessageBox.warning(self, "Export failed", str(exc))
             return
         QMessageBox.information(self, "Export complete", f"Saved to {path}")

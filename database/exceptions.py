@@ -242,3 +242,11 @@ class LastAdminError(AuthError):
 
     def __init__(self):
         super().__init__("That would leave no active administrator - add or keep another one first.")
+
+
+# What a page should catch around a database read: this layer's own errors
+# AND raw SQLite ones ("database is locked", "unable to open database
+# file", a full disk), which repositories do not wrap.
+import sqlite3 as _sqlite3
+
+DATABASE_ERRORS = (DataAccessError, _sqlite3.Error)

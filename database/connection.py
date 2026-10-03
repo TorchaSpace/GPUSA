@@ -99,9 +99,13 @@ def copy_database_to(destination: Path) -> None:
     if destination.exists():
         raise FileExistsError(str(destination))
     destination.parent.mkdir(parents=True, exist_ok=True)
-    with connection_scope() as source:
-        target = sqlite3.connect(destination)
-        try:
-            source.backup(target)
-        finally:
-            target.close()
+    try:
+        with connection_scope() as source:
+            target = sqlite3.connect(destination)
+            try:
+                source.backup(target)
+            finally:
+                target.close()
+    except BaseException:
+        destination.unlink(missing_ok=True)  # never leave a stub that looks like a database
+        raise

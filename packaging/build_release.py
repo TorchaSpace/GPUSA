@@ -27,6 +27,7 @@ import platform
 import shutil
 import subprocess
 import sys
+import time
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -139,13 +140,23 @@ def package_macos(built: dict[App, Path]) -> list[Path]:
         run(["ditto", str(bundle), str(target)])
         # Apple Silicon refuses unsigned code outright; an ad-hoc signature
         # ("-") is free and is enough for the right-click > Open route.
-        subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(target)], check=False)
+        signed = subprocess.run(["codesign", "--force", "--deep", "--sign", "-", str(target)])
+        if signed.returncode != 0:
+            print(f"WARNING: ad-hoc signing of {target.name} failed; Apple Silicon may refuse to open it.")
     (stage / "INSTALL.txt").write_text(INSTALL_MACOS, encoding="utf-8")
     (stage / "Applications").symlink_to("/Applications")
 
     dmg = RELEASE_DIR / f"GPUSA-macOS-{label}.dmg"
     dmg.unlink(missing_ok=True)
-    run(["hdiutil", "create", "-volname", "GPUSA", "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(dmg)])
+    for attempt in range(1, 4):  # "Resource busy" is a known transient hdiutil failure on CI runners
+        try:
+            run(["hdiutil", "create", "-volname", "GPUSA", "-srcfolder", str(stage), "-ov", "-format", "UDZO", str(dmg)])
+            break
+        except subprocess.CalledProcessError:
+            if attempt == 3:
+                raise
+            print(f"hdiutil failed (attempt {attempt}); retrying...")
+            time.sleep(5 * attempt)
     zipped = RELEASE_DIR / f"GPUSA-macOS-{label}.zip"
     zipped.unlink(missing_ok=True)
     run(["ditto", "-c", "-k", "--keepParent", str(stage), str(zipped)])
