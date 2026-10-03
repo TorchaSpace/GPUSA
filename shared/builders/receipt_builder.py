@@ -62,7 +62,8 @@ def _line_item_lines(item) -> list[str]:
     return lines
 
 
-def build_receipt(transaction: Transaction) -> ReceiptDocument:
+def build_receipt(transaction: Transaction, store_name: str | None = None,
+                  address_lines: list[str] | tuple[str, ...] | None = None) -> ReceiptDocument:
     """Build a ReceiptDocument from a finalized Transaction: store
     letterhead, timestamp/receipt number, one block per line item (name,
     then "qty x unit price" against the line total), then the total -
@@ -71,8 +72,10 @@ def build_receipt(transaction: Transaction) -> ReceiptDocument:
     fit anything.
     """
     divider = "-" * RECEIPT_WIDTH_CHARS
-    lines: list[str] = [_centered(STORE_NAME)]
-    lines.extend(_centered(address_line) for address_line in STORE_ADDRESS_LINES)
+    name = store_name or STORE_NAME
+    address = STORE_ADDRESS_LINES if address_lines is None else address_lines
+    lines: list[str] = [_centered(name)]
+    lines.extend(_centered(address_line) for address_line in address)
     lines.append(divider)
 
     if transaction.id is not None:

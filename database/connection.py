@@ -89,3 +89,19 @@ def connection_scope(db_path: Path | None = None):
         yield conn
     finally:
         conn.close()
+
+
+def copy_database_to(destination: Path) -> None:
+    """Write a consistent copy of the live database to `destination`
+    (SQLite's online backup, so open apps and the WAL file are no problem).
+    Raises FileExistsError if something is already there."""
+    destination = Path(destination)
+    if destination.exists():
+        raise FileExistsError(str(destination))
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    with connection_scope() as source:
+        target = sqlite3.connect(destination)
+        try:
+            source.backup(target)
+        finally:
+            target.close()

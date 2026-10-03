@@ -7,7 +7,7 @@ a sale, and each layer underneath stays independently testable.
 
 from __future__ import annotations
 
-from database import transaction_repository
+from database import settings_repository, transaction_repository
 from pos_app.export.receipt_printer import print_receipt
 from shared.builders.receipt_builder import build_receipt
 from shared.auth import Actor
@@ -25,6 +25,7 @@ def complete_sale(pending_transaction: Transaction, location: StockLocation = UN
     another concurrent sale).
     """
     finalized = transaction_repository.finalize_transaction(pending_transaction, location, cashier)
-    receipt = build_receipt(finalized)
+    profile = settings_repository.safe_store_profile()
+    receipt = build_receipt(finalized, profile.name, profile.address_lines)
     print_receipt(receipt)
     return finalized

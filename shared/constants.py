@@ -33,7 +33,9 @@ APP_DATA_DIR_NAME = "POSInventorySystem"
 
 # --- Store identity (used on receipts and report letterheads) ----------
 
-STORE_NAME = "TODO: set store name"
+# Fallbacks only: the real name/address are set in Admin > Settings > General
+# (stored in the database, see shared/store_settings.py).
+STORE_NAME = "GPUSA"
 STORE_ADDRESS_LINES: list[str] = []
 
 # --- Typography -----------------------------------------------------------

@@ -11,7 +11,7 @@ import csv
 from pathlib import Path
 
 from shared.builders.report_builder import ReportDocument
-from shared.constants import STORE_NAME
+from admin_app.export.letterhead import store_name
 
 
 def export_to_csv(report: ReportDocument, output_path: Path) -> None:
@@ -20,7 +20,7 @@ def export_to_csv(report: ReportDocument, output_path: Path) -> None:
 
     with output_path.open("w", encoding="utf-8-sig", newline="") as handle:
         writer = csv.writer(handle)
-        writer.writerow([STORE_NAME])
+        writer.writerow([store_name()])
         writer.writerow([report.title])
         writer.writerow([f"Generated {report.generated_at:%Y-%m-%d %H:%M}"])
         for section in report.sections:

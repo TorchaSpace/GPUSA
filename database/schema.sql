@@ -401,3 +401,13 @@ CREATE TABLE IF NOT EXISTS auth_events (
 
 CREATE INDEX IF NOT EXISTS idx_auth_events_created_at
     ON auth_events(created_at);
+
+-- Store-wide settings (Admin > Settings): store name and address for
+-- receipts and reports, alert switches. Plain key/value text; what the
+-- keys mean lives in shared/store_settings.py. Any app reads them, so a
+-- name set in Admin shows on the till's receipts.
+CREATE TABLE IF NOT EXISTS app_settings (
+    key         TEXT PRIMARY KEY,
+    value       TEXT NOT NULL,
+    updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);

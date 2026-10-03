@@ -17,7 +17,7 @@ from reportlab.lib.units import cm
 from reportlab.pdfgen import canvas
 
 from shared.builders.report_builder import ReportDocument
-from shared.constants import STORE_NAME
+from admin_app.export.letterhead import store_name
 
 _MARGIN = 2 * cm
 _LINE_HEIGHT = 14
@@ -40,7 +40,7 @@ def export_to_pdf(report: ReportDocument, output_path: Path) -> None:
     # in excel_report_exporter.py) renders identically, per
     # architecture.md's "Exports fit their content" convention.
     pdf.setFont("Helvetica-Bold", 14)
-    pdf.drawString(_MARGIN, y, STORE_NAME)
+    pdf.drawString(_MARGIN, y, store_name())
     y -= _LINE_HEIGHT * 1.5
 
     pdf.setFont("Helvetica-Bold", 12)

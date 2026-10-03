@@ -1,5 +1,7 @@
-"""Admin > Settings - replacing its placeholder with the access side of
-the auth slice: who can sign in where, and what happened at sign-in.
+"""Admin > Settings: the store's name/address, alert switches and data
+location (admin_app/gui/components/store_settings_sections.py), then the
+access side of the auth slice: who can sign in where, what happened at
+sign-in.
 
 - "Accounts & access": every sign-in account (an employee + role + PIN):
   badge, name, role, where that role signs in, status (Active / Switched
@@ -19,12 +21,16 @@ duplicated here.
 
 from __future__ import annotations
 
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QHeaderView, QInputDialog, QLabel, QMessageBox, QWidget
 
 from admin_app.gui.components.account_form_popup import AddAccountPopup, PinPopup
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
+from admin_app.gui.components.store_settings_sections import (
+    DataLocationSection, GeneralSection, NotificationsSection,
+)
 from admin_app.gui.components.styled_table import cell, styled_table
 from admin_app.theme import CLASSICAL_PALETTE
 from database import account_repository
@@ -57,6 +63,8 @@ def account_status(account: Account) -> tuple[str, str]:
 
 
 class SettingsPage(AdminPage):
+    notifications_changed = Signal()  # MainWindow re-reads the alert switches
+
     def __init__(self, parent: QWidget | None = None):
         super().__init__("Settings", parent)
         p = CLASSICAL_PALETTE
@@ -65,6 +73,15 @@ class SettingsPage(AdminPage):
         refresh = CompactButton("Refresh")
         refresh.clicked.connect(self.reload)
         self.add_header_action(refresh)
+
+        # Store-wide settings
+        self._general = GeneralSection()
+        self.body_layout().addWidget(self._general)
+        self._notifications = NotificationsSection()
+        self._notifications.changed.connect(self.notifications_changed)
+        self.body_layout().addWidget(self._notifications)
+        self._data_location = DataLocationSection()
+        self.body_layout().addWidget(self._data_location)
 
         # My account
         self._me = Section("My account", "Signed in")
@@ -123,6 +140,9 @@ class SettingsPage(AdminPage):
     # --- data -------------------------------------------------------------------
 
     def reload(self) -> None:
+        self._general.reload()
+        self._notifications.reload()
+        self._data_location.reload()
         session = current_session.get()
         self._me_label.setText(
             f"{session.name} · {session.badge_id} · {session.role_label} · signed in at "

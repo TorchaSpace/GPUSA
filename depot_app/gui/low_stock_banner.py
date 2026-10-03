@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
+from database import settings_repository
 from database.stock_repository import critical_at
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.icons import TRIANGLE_ALERT
@@ -98,7 +99,7 @@ class LowStockBanner(QWidget):
             if item.widget():
                 item.widget().deleteLater()
 
-        if not products:
+        if not products or not settings_repository.safe_notifications().low_stock_alerts:
             self._card.hide()
             return
 

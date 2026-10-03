@@ -8,7 +8,7 @@ from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from shared.builders.report_builder import ReportDocument
-from shared.constants import STORE_NAME
+from admin_app.export.letterhead import store_name
 
 
 def export_to_excel(report: ReportDocument, output_path: Path) -> None:
@@ -23,7 +23,7 @@ def export_to_excel(report: ReportDocument, output_path: Path) -> None:
     # Letterhead - the one shared bit every export path (Excel here, PDF
     # in pdf_report_exporter.py) renders identically, per
     # architecture.md's "Exports fit their content" convention.
-    sheet.cell(row=row, column=1, value=STORE_NAME).font = Font(bold=True, size=14)
+    sheet.cell(row=row, column=1, value=store_name()).font = Font(bold=True, size=14)
     row += 1
     sheet.cell(row=row, column=1, value=report.title).font = Font(bold=True, size=12)
     row += 1

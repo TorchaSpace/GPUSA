@@ -26,7 +26,7 @@ import sys
 from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
-from database import account_repository, purchase_order_repository
+from database import account_repository, purchase_order_repository, settings_repository
 from database.exceptions import DataAccessError
 
 import admin_app.gui.icons as icons
@@ -113,7 +113,9 @@ class MainWindow(QMainWindow):
         self._purchase_requests_page.pending_count_changed.connect(self._set_pending_count)
         self._register_page("purchase_requests", self._purchase_requests_page)
         self._register_page("warehouses", WarehousesPage())
-        self._register_page("settings", SettingsPage())
+        self._settings_page = SettingsPage()
+        self._settings_page.notifications_changed.connect(self._refresh_pending_display)
+        self._register_page("settings", self._settings_page)
         self._register_page("workforce", WorkforcePage())
         self._treasury_page = TreasuryPage()
         self._register_page("treasury", self._treasury_page)
@@ -198,10 +200,16 @@ class MainWindow(QMainWindow):
 
     def _set_pending_count(self, count: int) -> None:
         self._pending_count = count
-        self._sidebar.set_badge("purchase_requests", str(count) if count else None)
-        self._overview_page.set_pending_count(count)
+        self._refresh_pending_display()
+
+    def _refresh_pending_display(self) -> None:
+        """Badge and header counts follow the Notifications setting."""
+        count = self._pending_count or 0
+        shown = count if settings_repository.safe_notifications().pending_approvals else 0
+        self._sidebar.set_badge("purchase_requests", str(shown) if shown else None)
+        self._overview_page.set_pending_count(count)  # Overview's own card is data, not an alert
         for button in self._approval_buttons:
-            self._style_approvals_button(button, count)
+            self._style_approvals_button(button, shown)
 
     def _add_legacy_reports_button(self) -> None:
         """The original per-product Sales Reports tab (real transaction
