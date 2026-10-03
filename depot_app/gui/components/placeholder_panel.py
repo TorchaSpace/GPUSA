@@ -22,7 +22,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 
 
 class PlaceholderPanel(BlueprintFrame):
@@ -42,7 +42,7 @@ class PlaceholderPanel(BlueprintFrame):
         heading = QLabel(title.upper())
         heading.setAlignment(Qt.AlignHCenter)
         heading.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 13px; color: {p['text_secondary']};"
         )
         layout.addWidget(heading)

@@ -38,8 +38,10 @@ STORE_ADDRESS_LINES: list[str] = []
 
 # --- Typography -----------------------------------------------------------
 
-FONT_FAMILY = "Segoe UI"
-FONT_FAMILY_MONOSPACE = "Consolas"  # used for the receipt builder
+# A fallback list, not one font: Segoe UI exists only on Windows, and the
+# Mac falls through to Helvetica Neue (see shared/fonts.py).
+FONT_FAMILY = "Segoe UI, Helvetica Neue, Helvetica, Arial, sans-serif"
+FONT_FAMILY_MONOSPACE = "Consolas"  # used for the receipt builder; pos_app/export falls back to the system fixed-width font where it is missing (macOS)
 
 FONT_SIZE_SMALL = 11
 FONT_SIZE_BASE = 13

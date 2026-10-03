@@ -27,7 +27,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from admin_app.gui.components.compact_button import CompactButton
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.formatting import age_text, format_amount
 from shared.models import PurchaseOrder
 
@@ -105,7 +105,7 @@ class ApprovalCard(QFrame):
         right = QVBoxLayout()
         right.setSpacing(0)
         amount = QLabel(format_amount(order.total))
-        amount.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        amount.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         band = QLabel(band_text(order))
         band.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         over = QLabel(deviation_text(order))
@@ -156,7 +156,7 @@ class ApprovalQueue(QWidget):
 
         self._empty_label = QLabel("All requests reviewed.")
         self._empty_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-size: 18px; color: {p['text_secondary']}; "
+            f"font-family: {FONT_HEADING_CSS}; font-size: 18px; color: {p['text_secondary']}; "
             f"padding: 28px 16px; border: none;"
         )
         self._empty_label.setAlignment(Qt.AlignCenter)

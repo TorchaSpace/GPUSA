@@ -12,6 +12,8 @@
 import sys
 from pathlib import Path
 
+IS_WINDOWS = sys.platform == "win32"  # UPX only on Windows; it misbehaves on macOS
+
 REPO_ROOT = Path(SPECPATH).parent  # pos_app/ -> repo root
 sys.path.insert(0, str(REPO_ROOT))  # so the import below resolves regardless of CWD
 
@@ -42,7 +44,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=IS_WINDOWS,
     console=False,  # windowed GUI app - no console window behind it
     icon=None,  # TODO: set to a .ico path once branding assets exist
 )
@@ -52,7 +54,22 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=IS_WINDOWS,
     upx_exclude=[],
     name="BranchPOS",
 )
+
+# macOS only: wrap the onedir output into a double-clickable .app bundle
+# (Windows keeps the plain folder + .exe). Unsigned - see packaging/README.md
+# for the one-time "open it anyway" step on a Mac.
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="GPUSA POS.app",
+        icon=None,  # TODO: set to a .icns path once branding assets exist
+        bundle_identifier="com.gpusa.pos",
+        info_plist={
+            "CFBundleDisplayName": "GPUSA POS",
+            "NSHighResolutionCapable": True,
+        },
+    )

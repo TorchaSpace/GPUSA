@@ -10,6 +10,8 @@
 import sys
 from pathlib import Path
 
+IS_WINDOWS = sys.platform == "win32"  # UPX only on Windows; it misbehaves on macOS
+
 REPO_ROOT = Path(SPECPATH).parent  # depot_app/ -> repo root
 sys.path.insert(0, str(REPO_ROOT))
 
@@ -40,7 +42,7 @@ exe = EXE(
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
-    upx=True,
+    upx=IS_WINDOWS,
     console=False,
     icon=None,  # TODO: set to a .ico path once branding assets exist
 )
@@ -50,7 +52,22 @@ coll = COLLECT(
     a.zipfiles,
     a.datas,
     strip=False,
-    upx=True,
+    upx=IS_WINDOWS,
     upx_exclude=[],
     name="DepotApp",
 )
+
+# macOS only: wrap the onedir output into a double-clickable .app bundle
+# (Windows keeps the plain folder + .exe). Unsigned - see packaging/README.md
+# for the one-time "open it anyway" step on a Mac.
+if sys.platform == "darwin":
+    app = BUNDLE(
+        coll,
+        name="GPUSA Depot.app",
+        icon=None,  # TODO: set to a .icns path once branding assets exist
+        bundle_identifier="com.gpusa.depot",
+        info_plist={
+            "CFBundleDisplayName": "GPUSA Depot",
+            "NSHighResolutionCapable": True,
+        },
+    )

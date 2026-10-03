@@ -37,7 +37,7 @@ from admin_app.gui.components.employee_form_popup import EmployeeFormPopup
 from admin_app.gui.components.employee_table import WorkforceTable, status_color
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import attendance_repository, employee_repository
 from database.exceptions import DataAccessError
 from shared.models import EMPLOYEE_ROLES, Employee
@@ -124,7 +124,7 @@ class WorkforcePage(AdminPage):
 
         self._detail_name = QLabel()
         self._detail_name.setWordWrap(True)
-        self._detail_name.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        self._detail_name.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(self._detail_name)
 
         self._detail_badge = QLabel()

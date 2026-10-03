@@ -9,7 +9,7 @@ from PySide6.QtWidgets import QAbstractItemView, QLabel, QTableWidget, QTableWid
 from PySide6.QtGui import QColor
 
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 
 AMBER = "#f4b400"
 
@@ -67,7 +67,7 @@ class StatCell(BlueprintFrame):
         cap.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         layout.addWidget(cap)
         self.value_label = QLabel("—")
-        self.value_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 28px; "
+        self.value_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; "
                                        f"color: {p['text_primary']};")
         layout.addWidget(self.value_label)
         self.note_label = QLabel()
@@ -78,7 +78,7 @@ class StatCell(BlueprintFrame):
     def set(self, value: str, note: str = "", warn: bool = False) -> None:
         p = INDUSTRY_PALETTE
         self.value_label.setText(value)
-        self.value_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 28px; "
+        self.value_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; "
                                        f"color: {'#b07f00' if warn else p['text_primary']};")
         self.note_label.setText(note)
 

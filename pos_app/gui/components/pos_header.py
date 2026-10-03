@@ -18,7 +18,7 @@ from __future__ import annotations
 from PySide6.QtCore import QTime, Qt, QTimer, Signal
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 
 NAV_ITEMS = [("home", "Home"), ("sale", "New Sale"), ("receive", "Receive"), ("stock", "My Stock")]
 
@@ -62,14 +62,14 @@ class PosHeader(QWidget):
         avatar.setAlignment(Qt.AlignCenter)
         avatar.setStyleSheet(
             f"background-color: {p['accent']}; color: white; border-radius: 20px; "
-            f"font-family: '{FONT_HEADING}'; font-size: 20px;"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 20px;"
         )
         row.addWidget(avatar)
 
         names = QVBoxLayout()
         names.setSpacing(0)
         name_label = QLabel(dealership_name)
-        name_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        name_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         location_label = QLabel(location_line)
         location_label.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         names.addWidget(name_label)
@@ -103,7 +103,7 @@ class PosHeader(QWidget):
                     border: none;
                     border-radius: 24px;
                     padding: 0 22px;
-                    font-family: '{p['font_family']}';
+                    font-family: {p['font_family_css']};
                     font-size: 16px;
                     font-weight: 600;
                     color: {p['text_secondary']};

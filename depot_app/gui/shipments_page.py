@@ -50,7 +50,7 @@ from database import dealership_repository, shipment_repository, stock_repositor
 from database.exceptions import DataAccessError, InsufficientStockError
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import duration_text, eta_text, lateness, live_status
 from shared.formatting import local_datetime_text, parse_db_timestamp
@@ -343,7 +343,7 @@ class ShipmentsPage(QWidget):
         layout.setContentsMargins(18, 14, 18, 16)
         layout.setSpacing(8)
         self._detail_title = QLabel("SELECT A SHIPMENT")
-        self._detail_title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
+        self._detail_title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(self._detail_title)
         self._detail_meta = QLabel()
         self._detail_meta.setWordWrap(True)

@@ -22,7 +22,7 @@ from __future__ import annotations
 
 import logging
 
-from PySide6.QtGui import QFont, QTextDocument
+from PySide6.QtGui import QFont, QFontDatabase, QFontInfo, QTextDocument
 from PySide6.QtPrintSupport import QPrinter
 
 from shared.builders.receipt_builder import ReceiptDocument
@@ -31,10 +31,20 @@ from shared.constants import FONT_FAMILY_MONOSPACE
 logger = logging.getLogger(__name__)
 
 
+def _receipt_font() -> QFont:
+    """Consolas where it exists (Windows); otherwise the system's fixed-width
+    font (Menlo on a Mac), so receipt columns still line up."""
+    font = QFont(FONT_FAMILY_MONOSPACE, 10)
+    if not QFontInfo(font).exactMatch():
+        font = QFontDatabase.systemFont(QFontDatabase.FixedFont)
+        font.setPointSize(10)
+    return font
+
+
 def print_receipt(receipt: ReceiptDocument) -> None:
     try:
         document = QTextDocument()
-        document.setDefaultFont(QFont(FONT_FAMILY_MONOSPACE, 10))
+        document.setDefaultFont(_receipt_font())
         document.setPlainText("\n".join(receipt.lines))
 
         printer = QPrinter(QPrinter.PrinterResolution)

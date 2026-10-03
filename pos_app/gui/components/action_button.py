@@ -40,7 +40,7 @@ class ActionButton(QPushButton):
                 color: {fg};
                 border: none;
                 border-radius: {MIN_HEIGHT_PX // 2}px;
-                font-family: '{p['font_family']}';
+                font-family: {p['font_family_css']};
                 font-size: {FONT_SIZE_PX}px;
                 font-weight: 700;
                 padding: 0 24px;

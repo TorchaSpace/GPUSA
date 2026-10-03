@@ -47,7 +47,7 @@ from PySide6.QtWidgets import (
 
 from database import shipment_repository
 from database.exceptions import DataAccessError
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import eta_text, live_status
 from shared.formatting import parse_db_timestamp
@@ -143,7 +143,7 @@ class ReceivePage(QWidget):
         left = QVBoxLayout()
         left.setSpacing(12)
         heading = QLabel("Incoming")
-        heading.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 34px; color: {p['text_primary']};")
+        heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 34px; color: {p['text_primary']};")
         left.addWidget(heading)
         self._scope_note = QLabel()
         self._scope_note.setWordWrap(True)
@@ -203,7 +203,7 @@ class ReceivePage(QWidget):
         self._from_label = QLabel()
         self._from_label.setStyleSheet(f"font-size: 15px; color: {p['text_secondary']};")
         self._title_label = QLabel()
-        self._title_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 32px; color: {p['text_primary']};")
+        self._title_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 32px; color: {p['text_primary']};")
         titles.addWidget(self._from_label)
         titles.addWidget(self._title_label)
         head.addLayout(titles, stretch=1)

@@ -44,7 +44,7 @@ from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.inventory_table import InventoryTable, status_for
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import product_repository, stock_repository
 from database.exceptions import DataAccessError
 from shared.models import Product
@@ -116,7 +116,7 @@ class InventoryPage(AdminPage):
         kicker = QLabel(label_text.upper())
         kicker.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         value = QLabel("—")
-        value.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 32px; color: {p['text_primary']};")
+        value.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 32px; color: {p['text_primary']};")
         col.addWidget(kicker)
         col.addWidget(value)
         return value, container
@@ -142,7 +142,7 @@ class InventoryPage(AdminPage):
 
         self._detail_name = QLabel()
         self._detail_name.setWordWrap(True)
-        self._detail_name.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        self._detail_name.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(self._detail_name)
 
         self._detail_sku = QLabel()

@@ -66,8 +66,12 @@ def default_shared_data_dir() -> Path:
     """
     if sys.platform == "win32":
         base = Path(os.environ.get("PROGRAMDATA", r"C:\ProgramData"))
+    elif sys.platform == "darwin":
+        # Where a Mac app keeps its data. Per-user: every app on this Mac
+        # run by the same login (POS, Depot and Admin) sees the same file.
+        base = Path.home() / "Library" / "Application Support"
     else:
-        base = Path.home() / ".local" / "share"
+        base = Path(os.environ.get("XDG_DATA_HOME") or (Path.home() / ".local" / "share"))
     return base / APP_DATA_DIR_NAME
 
 
@@ -90,19 +94,32 @@ def get_shared_data_dir() -> Path:
     return data_dir
 
 
+def _app_bundle_dir() -> Path | None:
+    """On macOS, the folder that CONTAINS the running ".app" (so a config.json
+    dropped next to GPUSA-POS.app is found), or None when not inside a bundle.
+    Inside a bundle sys.executable is .../X.app/Contents/MacOS/X, and
+    writing next to that would be inside the signed app itself."""
+    for parent in Path(sys.executable).resolve().parents:
+        if parent.suffix == ".app":
+            return parent.parent
+    return None
+
+
 def _exe_adjacent_config_path() -> Path | None:
-    """The config.json living next to the running .exe, if there is one.
+    """The config.json living next to the running app, if there is one.
 
     Only meaningful when frozen (PyInstaller sets sys.executable to the
-    .exe's own path; in a normal `python` run sys.executable is the
+    app's own path; in a normal `python` run sys.executable is the
     interpreter, and treating ITS directory as a config location would be
     wrong) - see deploy_system.py, which is what actually writes a
     config.json into this location (GPUSA/dist/, alongside every .exe it
-    produces).
+    produces). For a macOS .app that location is the folder holding the
+    .app, not the bundle's inside.
     """
     if not getattr(sys, "frozen", False):
         return None
-    return Path(sys.executable).resolve().parent / _CONFIG_FILENAME
+    bundle_dir = _app_bundle_dir() if sys.platform == "darwin" else None
+    return (bundle_dir or Path(sys.executable).resolve().parent) / _CONFIG_FILENAME
 
 
 def _config_path() -> Path:

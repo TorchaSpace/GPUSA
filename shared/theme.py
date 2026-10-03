@@ -28,6 +28,7 @@ original shared DARK_PALETTE unchanged.
 from __future__ import annotations
 
 from shared.constants import COLOR_ALERT_CRITICAL, COLOR_ALERT_SUCCESS, FONT_FAMILY
+from shared.fonts import css_font_stack
 
 DARK_PALETTE = {
     "background": "#121212",
@@ -73,7 +74,7 @@ def _build_qss(palette: dict[str, str]) -> str:
         QWidget {{
             background-color: {palette['background']};
             color: {palette['text_primary']};
-            font-family: '{font_family}';
+            font-family: {css_font_stack(font_family)};
         }}
         QFrame, QTableView, QTabWidget::pane {{
             background-color: {palette['surface']};

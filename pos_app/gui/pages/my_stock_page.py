@@ -28,7 +28,7 @@ from PySide6.QtWidgets import (
 from database import stock_repository
 from database.exceptions import DataAccessError
 from pos_app.gui.product_status import stock_status
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.models import UNASSIGNED, Product, StockLocation
 
 _STATUS_META = {
@@ -89,7 +89,7 @@ class MyStockPage(QWidget):
         self._subtitle_label.setStyleSheet(f"font-size: 15px; color: {p['text_secondary']};")
         titles.addWidget(self._subtitle_label)
         title = QLabel("My Local Stock")
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 400; font-size: 40px; color: {p['text_primary']};")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 400; font-size: 40px; color: {p['text_primary']};")
         titles.addWidget(title)
         titles_widget = QWidget()
         titles_widget.setLayout(titles)
@@ -205,7 +205,7 @@ class MyStockPage(QWidget):
         avatar = QLabel(product.name[:1].upper())
         avatar.setFixedSize(52, 52)
         avatar.setAlignment(Qt.AlignCenter)
-        avatar.setStyleSheet(f"background-color: {p['surface']}; border-radius: 26px; font-family: '{FONT_HEADING}'; font-size: 22px;")
+        avatar.setStyleSheet(f"background-color: {p['surface']}; border-radius: 26px; font-family: {FONT_HEADING_CSS}; font-size: 22px;")
         layout.addWidget(avatar)
 
         names = QVBoxLayout()
@@ -227,7 +227,7 @@ class MyStockPage(QWidget):
         qty_label = QLabel(str(product.stock_quantity))
         qty_label.setAlignment(Qt.AlignRight)
         qty_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-size: 28px; color: {qty_color or p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 28px; color: {qty_color or p['text_primary']};"
         )
         layout.addWidget(qty_label, stretch=1)
 

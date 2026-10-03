@@ -36,6 +36,8 @@ font is available).
 
 from __future__ import annotations
 
+from shared.fonts import css_font_stack
+
 # Headings use Caprasimo (a rounded display face) in the mockup; no
 # common system font matches its bubbly style closely, so this falls
 # back to a plain, legible sans rather than faking a "rounded" look.
@@ -44,6 +46,11 @@ FONT_HEADING = "Caprasimo, 'Segoe UI', system-ui, sans-serif"
 # Body text uses Figtree (a humanist sans) in the mockup; Segoe UI is the
 # closest commonly-available match on Windows.
 FONT_BODY = "Figtree, 'Segoe UI', system-ui, sans-serif"
+
+# The same stacks written the way a Qt style sheet needs them (each family quoted
+# on its own - see shared/fonts.py). Use these inside setStyleSheet() strings.
+FONT_HEADING_CSS = css_font_stack(FONT_HEADING)
+FONT_BODY_CSS = css_font_stack(FONT_BODY)
 
 ORGANIC_PALETTE = {
     "background": "#f5ead8",
@@ -58,6 +65,7 @@ ORGANIC_PALETTE = {
     "accent": "#c67139",  # --color-accent
     "accent_2": "#7a8a5e",  # --color-accent-2
     "font_family": FONT_BODY,
+    "font_family_css": FONT_BODY_CSS,
     "font_heading": FONT_HEADING,
     "radius_sm": "8px",
     "radius_md": "16px",

@@ -16,7 +16,7 @@ from PySide6.QtCore import QRectF, Qt, Signal
 from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.models import NEAR_CAPACITY_THRESHOLD, Warehouse
 from shared.warehousing import STATUS_NEAR, STATUS_OK, capacity_fraction, capacity_status, percent_text
 
@@ -81,7 +81,7 @@ class WarehouseCapacityCard(QFrame):
 
         top = QHBoxLayout()
         name = QLabel(warehouse.name)
-        name.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        name.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         top.addWidget(name, stretch=1)
         self.status_label = QLabel()
         top.addWidget(self.status_label, alignment=Qt.AlignTop)
@@ -97,7 +97,7 @@ class WarehouseCapacityCard(QFrame):
         cap_caption.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         cap_row.addWidget(cap_caption, stretch=1)
         self.percent_label = QLabel()
-        self.percent_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 18px; color: {p['text_primary']};")
+        self.percent_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 18px; color: {p['text_primary']};")
         cap_row.addWidget(self.percent_label)
         layout.addLayout(cap_row)
         self.bar = _Bar()

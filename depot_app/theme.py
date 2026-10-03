@@ -59,6 +59,8 @@ stands in for Barlow's plain grotesk body text).
 
 from __future__ import annotations
 
+from shared.fonts import css_font_stack
+
 # Headings use Barlow Condensed (uppercase, weight 600) in the mockup;
 # Bahnschrift and Arial Narrow are the closest condensed grotesk faces
 # commonly present on Windows.
@@ -67,6 +69,11 @@ FONT_HEADING = "Barlow Condensed, Bahnschrift, 'Arial Narrow', sans-serif"
 # Body text uses Barlow (a plain grotesk) in the mockup; Segoe UI is the
 # closest commonly-available match on Windows.
 FONT_BODY = "Barlow, 'Segoe UI', system-ui, sans-serif"
+
+# The same stacks written the way a Qt style sheet needs them (each family quoted
+# on its own - see shared/fonts.py). Use these inside setStyleSheet() strings.
+FONT_HEADING_CSS = css_font_stack(FONT_HEADING)
+FONT_BODY_CSS = css_font_stack(FONT_BODY)
 
 INDUSTRY_PALETTE = {
     "background": "#f2f2f3",
@@ -82,6 +89,7 @@ INDUSTRY_PALETTE = {
     "accent_100": "#eef6ff",
     "accent_900": "#1d2d3d",
     "font_family": FONT_BODY,
+    "font_family_css": FONT_BODY_CSS,
     "font_heading": FONT_HEADING,
     "radius_sm": "0px",
     "radius_md": "0px",

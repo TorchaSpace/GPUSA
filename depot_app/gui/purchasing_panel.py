@@ -58,7 +58,7 @@ from database import product_repository, purchase_order_repository
 from database.exceptions import DataAccessError
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import format_amount, local_time_text, parse_amount
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
@@ -253,7 +253,7 @@ class PurchasingPanel(QWidget):
         title_row = QHBoxLayout()
         title = QLabel("AWAITING ADMIN APPROVAL")
         title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 28px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; "
             f"letter-spacing: 1px; color: {p['background']};"
         )
         title_row.addWidget(title)
@@ -375,7 +375,7 @@ class PurchasingPanel(QWidget):
         total_row.addStretch(1)
         self._total_label = QLabel("0.00")
         self._total_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 32px; color: {p['text_primary']}; border: none;"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 32px; color: {p['text_primary']}; border: none;"
         )
         total_row.addWidget(self._total_label)
         left.addLayout(total_row)
@@ -404,7 +404,7 @@ class PurchasingPanel(QWidget):
         self._band_max = QLabel("—")
         for label in (self._band_min, self._band_max):
             label.setStyleSheet(
-                f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 24px; color: {p['text_primary']}; border: none;"
+                f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 24px; color: {p['text_primary']}; border: none;"
             )
         per_unit = QLabel("per unit")
         per_unit.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']}; border: none;")
@@ -448,7 +448,7 @@ class PurchasingPanel(QWidget):
         verdict_text.setSpacing(2)
         self._verdict_title = QLabel()
         self._verdict_title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 20px; color: {p['text_primary']}; border: none;"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']}; border: none;"
         )
         self._verdict_body = QLabel()
         self._verdict_body.setWordWrap(True)

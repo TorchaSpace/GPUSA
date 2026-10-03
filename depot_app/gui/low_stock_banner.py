@@ -20,7 +20,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWi
 from database.stock_repository import critical_at
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.icons import TRIANGLE_ALERT
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.constants import CRITICAL_STOCK_POLL_INTERVAL_MS
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
@@ -55,7 +55,7 @@ class LowStockBanner(QWidget):
         header.addWidget(icon_label)
         self._heading = QLabel()
         self._heading.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; text-transform: uppercase; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; text-transform: uppercase; "
             f"letter-spacing: 1px; font-size: 15px; color: {p['text_primary']};"
         )
         header.addWidget(self._heading)
@@ -116,7 +116,7 @@ class LowStockBanner(QWidget):
         layout.setSpacing(8)
 
         qty = QLabel(str(product.stock_quantity))
-        qty.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
+        qty.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(qty)
 
         texts = QVBoxLayout()

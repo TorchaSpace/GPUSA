@@ -40,7 +40,7 @@ from shared.models import UNASSIGNED, StockLocation
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.services import dispatch_service, receiving_service
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 
 _DIRECTIONS = {
     "receive": {
@@ -96,11 +96,11 @@ class MovementPanel(QWidget):
 
         header = QHBoxLayout()
         glyph = QLabel(self._spec["glyph"])
-        glyph.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; font-weight: 600; color: {p['accent']};")
+        glyph.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; font-weight: 600; color: {p['accent']};")
         header.addWidget(glyph)
         title = QLabel(self._spec["title"].upper())
         title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 16px; color: {p['text_primary']};"
         )
         header.addWidget(title)

@@ -94,7 +94,7 @@ class DealershipTable(QTableView):
                 color: {p['text_primary']};
                 gridline-color: {p['border']};
                 border: none;
-                font-family: '{p['font_family']}';
+                font-family: {p['font_family_css']};
                 font-size: 13px;
                 selection-background-color: transparent;
             }}

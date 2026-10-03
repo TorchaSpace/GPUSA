@@ -17,7 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 
 
 class StatCard(QFrame):
@@ -52,30 +52,22 @@ class StatCard(QFrame):
         kicker.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         top_row.addWidget(kicker)
         top_row.addStretch(1)
-        if corner_note:
-            note = QLabel(corner_note)
-            note.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
-            top_row.addWidget(note)
+        self._corner_label = QLabel(corner_note)
+        self._corner_label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
+        self._corner_label.setVisible(bool(corner_note))
+        top_row.addWidget(self._corner_label)
         outer.addLayout(top_row)
 
         value_row = QHBoxLayout()
         value_row.setSpacing(10)
         self._value_label = QLabel(value)
         self._value_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-size: 40px; font-weight: 400; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 40px; font-weight: 400; color: {p['text_primary']};"
         )
         value_row.addWidget(self._value_label)
-        if trend_text:
-            trend_color = (
-                p["alert_success"]
-                if trend_positive is True
-                else p["alert_critical"]
-                if trend_positive is False
-                else p["text_secondary"]
-            )
-            trend = QLabel(trend_text)
-            trend.setStyleSheet(f"font-size: 13px; color: {trend_color};")
-            value_row.addWidget(trend)
+        self._trend_label = QLabel()
+        value_row.addWidget(self._trend_label)
+        self.set_trend(trend_text, trend_positive)
         value_row.addStretch(1)
         outer.addLayout(value_row)
 
@@ -93,6 +85,30 @@ class StatCard(QFrame):
 
     def set_value(self, value: str) -> None:
         self._value_label.setText(value)
+
+    def set_trend(self, text: str, positive: bool | None = None) -> None:
+        """The small coloured annotation beside the value (green when
+        `positive`, red when False, muted when None); hidden when empty."""
+        p = CLASSICAL_PALETTE
+        color = (
+            p["alert_success"] if positive is True else p["alert_critical"] if positive is False else p["text_secondary"]
+        )
+        self._trend_label.setText(text)
+        self._trend_label.setStyleSheet(f"font-size: 13px; color: {color};")
+        self._trend_label.setVisible(bool(text))
+
+    def set_corner_note(self, text: str) -> None:
+        self._corner_label.setText(text)
+        self._corner_label.setVisible(bool(text))
+
+    def clear_footer(self) -> None:
+        """Drop everything added through footer_layout() (for a card that
+        redraws its breakdown on every reload)."""
+        while self._footer_layout.count():
+            item = self._footer_layout.takeAt(0)
+            if item.widget() is not None:
+                item.widget().deleteLater()
+        self._footer_frame.setVisible(False)
 
     def footer_layout(self) -> QHBoxLayout:
         """Callers add breakdown widgets here; the footer area auto-shows once used."""

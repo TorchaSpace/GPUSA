@@ -25,7 +25,7 @@ from PySide6.QtWidgets import (
 )
 
 from depot_app.gui.components.industry_button import IndustryButton
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.models import LedgerEntry
 
 # The depot mockup's own names for the four document types.
@@ -62,7 +62,7 @@ class LedgerEntryDialog(QDialog):
 
         title = QLabel(f"RECORD DOCUMENT · {site}")
         title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 20px; letter-spacing: 1px;"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; letter-spacing: 1px;"
         )
 
         self.direction_input = QComboBox()

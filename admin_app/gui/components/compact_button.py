@@ -41,7 +41,7 @@ class CompactButton(QPushButton):
                 border-radius: {p['radius_sm']};
                 padding: 2px 10px;
                 font-size: {FONT_SIZE_PX}px;
-                font-family: '{p['font_family']}';
+                font-family: {p['font_family_css']};
             }}
             QPushButton:hover {{
                 border-color: {p['accent']};

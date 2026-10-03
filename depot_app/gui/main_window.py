@@ -37,7 +37,7 @@ from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.components.placeholder_panel import PlaceholderPanel
 from depot_app.gui.low_stock_banner import LowStockBanner
 from depot_app.gui.movement_panel import MovementPanel
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
 from depot_app.gui.auth_flow import console_sign_in_dialog
 from shared import current_session
@@ -119,7 +119,7 @@ class MainWindow(QMainWindow):
 
         wordmark = QLabel("DOCKLINE FLOOR")
         wordmark.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1.5px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1.5px; "
             f"font-size: 20px; color: {p['text_primary']};"
         )
         layout.addWidget(wordmark)
@@ -139,7 +139,7 @@ class MainWindow(QMainWindow):
 
         self._clock_label = QLabel()
         self._clock_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-size: 16px; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 16px; color: {p['text_primary']};"
         )
         layout.addWidget(self._clock_label)
         self._clock_timer = QTimer(self)

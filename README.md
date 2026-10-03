@@ -50,7 +50,39 @@ pytest
 GUI tests use `pytest-qt` and skip cleanly with no display available.
 Tests never touch the real `shared_backend.db` - see `tests/conftest.py`.
 
-## Building a distributable .exe + installer
+## Downloads (Windows and macOS)
+
+Pushing a version tag builds both downloads on GitHub and publishes them
+on the repo's Releases page - nothing to build by hand:
+
+```
+git tag v0.1.0
+git push --tags
+```
+
+| File | For |
+|---|---|
+| `GPUSA-macOS-arm64.dmg` / `.zip` | Macs with Apple Silicon (M1 and newer) |
+| `GPUSA-macOS-x64.dmg` / `.zip` | Intel Macs |
+| `GPUSA-Windows-x64.zip` | Windows 10/11 |
+
+`docs/index.html` is a download page that picks the right one for the
+visitor's computer (turn on GitHub Pages for the `docs/` folder to publish
+it; it needs a public repo, or just link people to the Releases page). The
+actions can also be run by hand from the Actions tab ("Run workflow") -
+the files are then attached to that run instead of a release.
+
+To build one yourself on the machine you're on (PyInstaller can't build for
+the other OS): `pip install -r requirements.txt`, then
+`python packaging/build_release.py` -> `release/`.
+
+The apps aren't code-signed yet, so the first launch needs one
+confirmation on each OS (the steps are in `INSTALL.txt` inside every
+download). Where the shared database lives by default: Windows
+`C:\ProgramData\POSInventorySystem`, macOS
+`~/Library/Application Support/POSInventorySystem`.
+
+## Building a Windows .exe + installer (Windows only)
 
 Each app packages independently. From the repo root (or anywhere - the
 scripts locate the repo root themselves):

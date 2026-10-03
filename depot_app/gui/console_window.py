@@ -64,7 +64,7 @@ from depot_app.gui.auth_flow import portal_unlock_dialog
 from depot_app.gui.components.warehouse_card import WarehouseCard
 from depot_app.gui.shipments_page import ShipmentsPage
 from depot_app.gui.manager_portal_dialog import ManagerPortalDialog
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
@@ -145,7 +145,7 @@ class ConsoleWindow(QMainWindow):
         brand_layout.addWidget(logo)
         wordmark = QLabel("DOCKLINE")
         wordmark.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1.5px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1.5px; "
             f"font-size: 17px; color: {p['text_primary']};"
         )
         brand_layout.addWidget(wordmark)
@@ -169,7 +169,7 @@ class ConsoleWindow(QMainWindow):
                 QPushButton {{
                     text-align: left; padding: 9px 10px; border: none; border-radius: 0;
                     color: {p['text_secondary']}; background: transparent;
-                    font-family: '{p['font_family']}'; font-size: 13px;
+                    font-family: {p['font_family_css']}; font-size: 13px;
                 }}
                 QPushButton:checked {{
                     color: {p['accent_900']}; background-color: {p['accent_100']};
@@ -223,7 +223,7 @@ class ConsoleWindow(QMainWindow):
         title = QLabel("WAREHOUSES")
         self._title_label = title
         title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 30px; color: {p['text_primary']};"
         )
         titles.addWidget(title)
@@ -232,7 +232,7 @@ class ConsoleWindow(QMainWindow):
         header.addWidget(titles_widget, stretch=1)
 
         self._clock_label = QLabel()
-        self._clock_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 15px; color: {p['text_primary']};")
+        self._clock_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 15px; color: {p['text_primary']};")
         header.addWidget(self._clock_label)
         self._clock_timer = QTimer(self)
         self._clock_timer.setInterval(1000)
@@ -348,7 +348,7 @@ class ConsoleWindow(QMainWindow):
             QTabBar::tab {{
                 background: {p['background']}; color: {p['text_secondary']};
                 border: 1px solid {p['border']}; padding: 8px 16px;
-                font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 0.5px; font-size: 12px;
+                font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 0.5px; font-size: 12px;
             }}
             QTabBar::tab:selected {{ color: {p['accent_900']}; background: {p['accent_100']}; }}
             """

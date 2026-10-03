@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.gui_kit.icon_kit import svg_to_icon
 
 SIDEBAR_WIDTH_PX = 232
@@ -118,7 +118,7 @@ class SidebarNav(QWidget):
         layout.setSpacing(2)
 
         title = QLabel(brand_title)
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 22px; color: {p['text_primary']};")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 22px; color: {p['text_primary']};")
         layout.addWidget(title)
 
         subtitle = QLabel(brand_subtitle.upper())
@@ -156,7 +156,7 @@ class SidebarNav(QWidget):
                 border-radius: 0;
                 color: {p['text_secondary']};
                 background: transparent;
-                font-family: '{p['font_family']}';
+                font-family: {p['font_family_css']};
                 font-size: 13px;
             }}
             QPushButton:hover {{
@@ -212,7 +212,7 @@ class SidebarNav(QWidget):
             border: 1px solid {p['accent']};
             border-radius: 15px;
             color: {p['accent']};
-            font-family: '{FONT_HEADING}';
+            font-family: {FONT_HEADING_CSS};
             font-size: 14px;
             """
         )

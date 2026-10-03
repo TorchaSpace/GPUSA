@@ -10,7 +10,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QScrollArea, QVBoxLayout, QWidget
 
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 
 
 class AdminPage(QWidget):
@@ -28,10 +28,11 @@ class AdminPage(QWidget):
 
         self._title_label = QLabel(title)
         self._title_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-size: 28px; font-weight: 400; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 28px; font-weight: 400; color: {p['text_primary']};"
         )
         self._header_layout.addWidget(self._title_label)
         self._header_layout.addStretch(1)
+        self._leading_actions = 0
         outer.addWidget(header)
 
         scroll = QScrollArea()
@@ -53,6 +54,13 @@ class AdminPage(QWidget):
     def add_header_action(self, widget: QWidget) -> None:
         """Add a widget (e.g. a button) to the header row, right of the title."""
         self._header_layout.addWidget(widget)
+
+    def add_leading_header_action(self, widget: QWidget) -> None:
+        """Add a widget to the header row just right of the title's stretch,
+        i.e. LEFT of the page's own actions - used for the controls every
+        page shares (search, pending approvals)."""
+        self._header_layout.insertWidget(2 + self._leading_actions, widget)
+        self._leading_actions += 1
 
     def body_layout(self) -> QVBoxLayout:
         """Subclasses add their content widgets to this layout."""

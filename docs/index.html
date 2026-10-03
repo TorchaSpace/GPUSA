@@ -1,0 +1,104 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>GPUSA downloads</title>
+<style>
+  :root { --bg:#161514; --surface:#1f1d1c; --text:#eae7e7; --muted:#a39d95; --line:#393736; --accent:#e1ad66; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font:16px/1.55 Georgia, "Times New Roman", serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 56px 20px 80px; }
+  h1 { font-weight: 400; font-size: 40px; margin: 0 0 4px; letter-spacing: -0.01em; }
+  .kicker { font-size: 11px; letter-spacing: .14em; text-transform: uppercase; color: var(--muted); }
+  p { color: var(--muted); }
+  .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin: 32px 0 12px; }
+  .card { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 22px; display: flex; flex-direction: column; gap: 10px; }
+  .card.recommended { border-color: var(--accent); }
+  .card h2 { font-weight: 400; font-size: 24px; margin: 0; }
+  .tag { font-size: 11px; letter-spacing: .1em; text-transform: uppercase; color: var(--accent); min-height: 16px; }
+  .btn { display: inline-block; text-align: center; padding: 10px 16px; border: 1px solid var(--accent); border-radius: 4px; color: var(--accent); text-decoration: none; }
+  .btn:hover, .btn:focus-visible { background: rgba(225,173,102,.12); outline: none; }
+  .btn.secondary { border-color: var(--line); color: var(--text); font-size: 14px; padding: 7px 12px; }
+  .small { font-size: 13px; color: var(--muted); }
+  details { border-top: 1px solid var(--line); padding: 14px 0; }
+  summary { cursor: pointer; color: var(--text); }
+  code { background: var(--surface); border: 1px solid var(--line); padding: 1px 6px; border-radius: 3px; font-size: 13px; color: var(--text); }
+  pre { background: var(--surface); border: 1px solid var(--line); border-radius: 4px; padding: 12px; overflow-x: auto; }
+</style>
+</head>
+<body>
+<main>
+  <div class="kicker">POS &amp; inventory system</div>
+  <h1>Download GPUSA</h1>
+  <p>Three apps that work together: <b>Admin</b> (management), <b>POS</b> (the till) and <b>Depot</b> (the warehouse). Download the build for your computer.</p>
+
+  <div class="cards">
+    <section class="card" id="card-mac">
+      <div class="tag" id="tag-mac"></div>
+      <h2>macOS</h2>
+      <a class="btn" id="mac-dmg" href="#">Download for Mac (.dmg)</a>
+      <a class="btn secondary" id="mac-zip" href="#">Or as a .zip</a>
+      <div class="small" id="mac-note">Apple Silicon (M1 and newer). Intel Mac? Use the Intel download below.</div>
+      <a class="small" id="mac-intel" href="#">Intel Mac download (.dmg)</a>
+    </section>
+    <section class="card" id="card-win">
+      <div class="tag" id="tag-win"></div>
+      <h2>Windows</h2>
+      <a class="btn" id="win-zip" href="#">Download for Windows (.zip)</a>
+      <div class="small">Windows 10 or 11, 64-bit. Unzip, then open <code>INSTALL.txt</code>.</div>
+    </section>
+  </div>
+  <p class="small" id="version"></p>
+
+  <details>
+    <summary>First launch on a Mac</summary>
+    <p>The apps aren't signed with an Apple developer certificate yet, so macOS asks for one confirmation. Drag the apps into Applications, then <b>right-click an app &rarr; Open &rarr; Open</b>. Or run this once in Terminal:</p>
+    <pre>xattr -dr com.apple.quarantine "/Applications/GPUSA Admin.app"
+xattr -dr com.apple.quarantine "/Applications/GPUSA POS.app"
+xattr -dr com.apple.quarantine "/Applications/GPUSA Depot.app"</pre>
+  </details>
+  <details>
+    <summary>First launch on Windows</summary>
+    <p>If Windows says "Windows protected your PC", click <b>More info &rarr; Run anyway</b> (the apps aren't code-signed yet).</p>
+  </details>
+  <details>
+    <summary>Where do I start?</summary>
+    <p>Open <b>Admin</b> first. On a new system it asks you to create the first administrator. After that, open POS at a till and Depot in the warehouse. All three on one computer share one database automatically.</p>
+  </details>
+</main>
+<script>
+(function () {
+  var REPO = "TorchaSpace/GPUSA";
+  var releasesPage = "https://github.com/" + REPO + "/releases/latest";
+  var ids = { "mac-dmg": "GPUSA-macOS-arm64.dmg", "mac-zip": "GPUSA-macOS-arm64.zip",
+              "mac-intel": "GPUSA-macOS-x64.dmg", "win-zip": "GPUSA-Windows-x64.zip" };
+  function link(id, url) { document.getElementById(id).href = url; }
+  // Stable "latest" links work even if the API below is unreachable.
+  Object.keys(ids).forEach(function (id) { link(id, releasesPage.replace("/latest", "") + "/latest/download/" + ids[id]); });
+
+  var ua = navigator.userAgent || "";
+  var isMac = /Mac/i.test(ua) && !/iPhone|iPad/i.test(ua), isWin = /Windows/i.test(ua);
+  var pick = isMac ? "mac" : isWin ? "win" : null;
+  if (pick) {
+    document.getElementById("tag-" + pick).textContent = "Recommended for this computer";
+    document.getElementById("card-" + pick).classList.add("recommended");
+  }
+
+  // Show the version, and hide a download that this release doesn't have.
+  fetch("https://api.github.com/repos/" + REPO + "/releases/latest").then(function (r) {
+    if (!r.ok) throw new Error(r.status); return r.json();
+  }).then(function (rel) {
+    var have = {}; (rel.assets || []).forEach(function (a) { have[a.name] = a.browser_download_url; });
+    Object.keys(ids).forEach(function (id) {
+      var el = document.getElementById(id);
+      if (have[ids[id]]) el.href = have[ids[id]]; else el.style.display = "none";
+    });
+    document.getElementById("version").textContent = "Latest version: " + rel.tag_name;
+  }).catch(function () {
+    document.getElementById("version").innerHTML = 'All versions: <a style="color:#e1ad66" href="' + releasesPage + '">' + releasesPage + '</a>';
+  });
+})();
+</script>
+</body>
+</html>

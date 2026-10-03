@@ -45,6 +45,8 @@ are serif text faces) but not pixel-identical to the mockup.
 
 from __future__ import annotations
 
+from shared.fonts import css_font_stack
+
 # Headings use Cormorant Garamond in the mockup; Georgia is the closest
 # serif commonly present on Windows as a fallback.
 FONT_HEADING = "Cormorant Garamond, Georgia, 'Times New Roman', serif"
@@ -52,6 +54,12 @@ FONT_HEADING = "Cormorant Garamond, Georgia, 'Times New Roman', serif"
 # Body text uses Lora in the mockup; Constantia/Cambria are the closest
 # serif text faces commonly present on Windows.
 FONT_BODY = "Lora, Constantia, Cambria, Georgia, serif"
+
+# The same stacks written the way a Qt style sheet needs them (each family
+# quoted on its own - see shared/fonts.py for why a single quoted list
+# silently ignores every fallback). Use these in setStyleSheet() strings.
+FONT_HEADING_CSS = css_font_stack(FONT_HEADING)
+FONT_BODY_CSS = css_font_stack(FONT_BODY)
 
 CLASSICAL_PALETTE = {
     "background": "#161514",
@@ -66,6 +74,7 @@ CLASSICAL_PALETTE = {
     "accent": "#e1ad66",
     "font_family": FONT_BODY,
     "font_heading": FONT_HEADING,
+    "font_family_css": FONT_BODY_CSS,
     "radius_sm": "2px",
     "radius_md": "4px",
     "radius_lg": "7px",

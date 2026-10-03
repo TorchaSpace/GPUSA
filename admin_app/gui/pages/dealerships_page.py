@@ -26,7 +26,7 @@ from admin_app.gui.components.dealership_form_popup import DealershipFormPopup
 from admin_app.gui.components.dealership_table import DealershipTable, status_for
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, stock_repository
 from database.exceptions import DataAccessError
 from shared.models import DEALERSHIP_REGIONS, Dealership, StockLocation
@@ -112,7 +112,7 @@ class DealershipsPage(AdminPage):
 
         self._detail_name = QLabel()
         self._detail_name.setWordWrap(True)
-        self._detail_name.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 20px; color: {p['text_primary']};")
+        self._detail_name.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(self._detail_name)
 
         self._detail_code = QLabel()

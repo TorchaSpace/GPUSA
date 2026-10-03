@@ -50,7 +50,7 @@ from database.exceptions import DataAccessError, InsufficientStockError
 from pos_app.gui.components.action_button import ActionButton
 from pos_app.gui.product_status import stock_status
 from pos_app.services.checkout_service import complete_sale
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.models import UNASSIGNED, LineItem, Product, StockLocation, Transaction
 from shared import current_session
 
@@ -104,7 +104,7 @@ class NewSalePage(QWidget):
         self._search_input = QLineEdit()
         self._search_input.setPlaceholderText("Search products or scan barcode")
         self._search_input.setStyleSheet(
-            f"border: none; background: transparent; font-family: '{p['font_family']}'; font-size: 19px; color: {p['text_primary']};"
+            f"border: none; background: transparent; font-family: {p['font_family_css']}; font-size: 19px; color: {p['text_primary']};"
         )
         self._search_input.textChanged.connect(self._render_grid)
         search_layout.addWidget(self._search_input)
@@ -175,7 +175,7 @@ class NewSalePage(QWidget):
         initial.setAlignment(Qt.AlignCenter)
         initial.setStyleSheet(
             "background-color: #fff2eb; border-radius: 28px; "
-            f"font-family: '{FONT_HEADING}'; font-size: 24px;"
+            f"font-family: {FONT_HEADING_CSS}; font-size: 24px;"
         )
         top_row.addWidget(initial)
         top_row.addStretch(1)
@@ -216,7 +216,7 @@ class NewSalePage(QWidget):
         header = QHBoxLayout()
         header.setContentsMargins(24, 22, 24, 12)
         title = QLabel("Current sale")
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 28px; color: {p['text_primary']};")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 28px; color: {p['text_primary']};")
         header.addWidget(title)
         header.addStretch(1)
         clear_button = QPushButton("Clear")
@@ -253,7 +253,7 @@ class NewSalePage(QWidget):
         total_caption = QLabel("Total")
         total_caption.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {p['text_primary']};")
         self._total_label = QLabel("$0.00")
-        self._total_label.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 40px; color: {p['text_primary']};")
+        self._total_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: {p['text_primary']};")
         total_row.addWidget(total_caption)
         total_row.addStretch(1)
         total_row.addWidget(self._total_label)

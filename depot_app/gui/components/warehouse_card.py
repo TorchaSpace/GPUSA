@@ -18,7 +18,7 @@ from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.models import Warehouse
 from shared.warehousing import STATUS_NEAR, capacity_fraction, capacity_status, percent_text
 
@@ -72,7 +72,7 @@ class WarehouseCard(BlueprintFrame):
         layout.addLayout(top)
 
         name = QLabel(warehouse.name)
-        name.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
+        name.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(name)
 
         usage_row = QHBoxLayout()

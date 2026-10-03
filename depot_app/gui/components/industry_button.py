@@ -14,7 +14,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 
 MIN_HEIGHT_PX = 44
 
@@ -54,7 +54,7 @@ class IndustryButton(QPushButton):
                 border: {border};
                 border-radius: 0;
                 padding: 0 20px;
-                font-family: '{FONT_HEADING}';
+                font-family: {FONT_HEADING_CSS};
                 font-weight: 600;
                 font-size: 13px;
                 letter-spacing: 1px;

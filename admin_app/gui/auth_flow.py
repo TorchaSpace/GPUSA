@@ -9,7 +9,7 @@ import socket
 
 from PySide6.QtWidgets import QDialog, QFormLayout, QLabel, QLineEdit, QPushButton, QHBoxLayout, QVBoxLayout
 
-from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING
+from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
 from database.exceptions import DataAccessError
 from shared import auth
@@ -51,7 +51,7 @@ class FirstAdminDialog(QDialog):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(28, 24, 28, 24)
         heading = QLabel("Welcome to GPUSA")
-        heading.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 26px; color: {p['text_primary']};")
+        heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 26px; color: {p['text_primary']};")
         layout.addWidget(heading)
         intro = QLabel(
             "Nobody can sign in yet. Create the first administrator - you'll use this badge and PIN to open "

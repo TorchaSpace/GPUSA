@@ -10,7 +10,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 
 
 class PlaceholderPage(QWidget):
@@ -25,7 +25,7 @@ class PlaceholderPage(QWidget):
 
         heading = QLabel(title)
         heading.setAlignment(Qt.AlignHCenter)
-        heading.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 34px; color: {p['text_primary']};")
+        heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 34px; color: {p['text_primary']};")
         layout.addWidget(heading)
 
         subheading = QLabel("Not built yet")

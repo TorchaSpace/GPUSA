@@ -27,7 +27,7 @@ def styled_table(headers: list[str]) -> QTableWidget:
         QTableWidget {{
             background-color: {p['background']}; alternate-background-color: {p['surface']};
             color: {p['text_primary']}; gridline-color: {p['border']}; border: none;
-            font-family: '{p['font_family']}'; font-size: 13px;
+            font-family: {p['font_family_css']}; font-size: 13px;
             selection-background-color: rgba(225, 173, 102, 30); selection-color: {p['text_primary']};
         }}
         QHeaderView::section {{

@@ -48,7 +48,7 @@ from database import ledger_repository
 from database.exceptions import DataAccessError
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.ledger_entry_dialog import DEPOT_TYPE_LABELS, LedgerEntryDialog
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import format_amount
 from shared.models import LedgerEntry
 from shared.treasury import display_status, is_overdue
@@ -87,7 +87,7 @@ class _TypeCell(QPushButton):
         self.caption.setStyleSheet(f"font-size: 12px; letter-spacing: 1px; color: {p['text_secondary']}; background: transparent;")
         self.total = QLabel()
         self.total.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 28px; color: {p['text_primary']}; background: transparent;"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; color: {p['text_primary']}; background: transparent;"
         )
         self.sub = QLabel()
         self.sub.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']}; background: transparent;")
@@ -187,7 +187,7 @@ class TreasuryPanel(QWidget):
         footer_caption.setStyleSheet(f"font-size: 13px; letter-spacing: 1px; color: {p['text_secondary']};")
         self._net_label = QLabel()
         self._net_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; font-size: 32px; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 32px; color: {p['text_primary']};"
         )
         footer.addWidget(footer_caption)
         footer.addStretch(1)

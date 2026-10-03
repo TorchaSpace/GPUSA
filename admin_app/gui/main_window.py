@@ -8,25 +8,22 @@ extra "purchase_requests" entry for the mockup's own dead-end nav link
 (href="#" in every page - it doesn't point at a real page even in the
 mockup) which we treat as a page instead of leaving unclickable.
 
-Per the "visual shell first, backend incrementally" scope decision: only
-Overview, Inventory, Dealerships, Distribution, Purchase requests,
-Warehouses, Workforce, Treasury & Ledger are wired to a real repository (see
-their pages/*.py), and Settings (sign-in accounts) - Reports is still a
-themed PlaceholderPage.
+Every page is a real, repository-backed page now (see pages/*.py); the
+themed PlaceholderPage is no longer used by any nav entry.
 
 The "Purchase requests" sidebar badge is the real number of orders
 awaiting approval (it used to be the mockup's hardcoded "4"), kept live
 by a PollingTimer on purchase_order_repository.count_pending() - a depot
 submitting an out-of-range order shows up here within a few seconds.
-Reports is the one placeholder with a working escape hatch: the app's
-original Sales Reports tab (real transaction data, PDF/Excel export)
-already exists and works, so its placeholder offers a button that opens
-it in a popup rather than hiding a working feature behind an unbuilt
-page.
+Reports also keeps a "Sales by product" button that opens the app's
+original per-product Sales Reports tab in a popup.
 """
 
 from __future__ import annotations
 
+import sys
+
+from PySide6.QtGui import QKeySequence, QShortcut
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository, purchase_order_repository
@@ -35,12 +32,13 @@ from database.exceptions import DataAccessError
 import admin_app.gui.icons as icons
 from admin_app.gui.auth_flow import admin_sign_in_dialog
 from admin_app.gui.components.compact_button import CompactButton
+from admin_app.gui.components.global_search import GlobalSearchDialog
 from admin_app.gui.components.sidebar_nav import NavItem, NavSection, SidebarNav
 from admin_app.gui.pages.dealerships_page import DealershipsPage
 from admin_app.gui.pages.distribution_page import DistributionPage
 from admin_app.gui.pages.inventory_page import InventoryPage
 from admin_app.gui.pages.overview_page import OverviewPage
-from admin_app.gui.pages.placeholder_page import PlaceholderPage
+from admin_app.gui.pages.reports_page import ReportsPage
 from admin_app.gui.pages.settings_page import SettingsPage
 from admin_app.gui.pages.warehouses_page import WarehousesPage
 from admin_app.gui.pages.purchase_requests_page import PurchaseRequestsPage
@@ -76,19 +74,6 @@ NAV_SECTIONS = [
     ),
 ]
 
-# (title, note) for every page that's still a themed placeholder - see
-# module docstring. Filled in with real pages one at a time as each
-# domain gets a repository/schema of its own. Only reports is left -
-# every other page is real now (see imports above).
-_PLACEHOLDER_COPY: dict[str, tuple[str, str]] = {
-    "reports": (
-        "Reports",
-        "This page is still a placeholder, but Sales Reports itself already works with real "
-        "transaction data - use the button above to open it.",
-    ),
-}
-
-
 class MainWindow(QMainWindow):
     def __init__(self, session: Session | None = None):
         super().__init__()
@@ -114,6 +99,8 @@ class MainWindow(QMainWindow):
         self._sidebar.sign_out_requested.connect(self.sign_out)
         layout.addWidget(self._sidebar)
 
+        self._pending_count: int | None = None
+        self._approval_buttons: list[CompactButton] = []
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
         self._overview_page = OverviewPage()
@@ -130,9 +117,10 @@ class MainWindow(QMainWindow):
         self._register_page("workforce", WorkforcePage())
         self._treasury_page = TreasuryPage()
         self._register_page("treasury", self._treasury_page)
-        for key, (title, note) in _PLACEHOLDER_COPY.items():
-            self._register_page(key, PlaceholderPage(title, note))
+        self._reports_page = ReportsPage()
+        self._register_page("reports", self._reports_page)
         self._add_legacy_reports_button()
+        self._install_shared_header_controls()
 
         layout.addWidget(self._stack, stretch=1)
         self.setCentralWidget(central)
@@ -140,7 +128,9 @@ class MainWindow(QMainWindow):
         self._sidebar.page_selected.connect(self._show_page)
         self._show_page("overview")
 
-        self._pending_count: int | None = None
+        # Ctrl+K on Windows/Linux, Cmd+K on macOS (Qt maps "Ctrl" to Cmd there).
+        self._search_shortcut = QShortcut(QKeySequence("Ctrl+K"), self)
+        self._search_shortcut.activated.connect(self.open_search)
         self._pending_poller = PollingTimer(
             self._poll_pending_count, interval_ms=PURCHASE_REQUEST_POLL_INTERVAL_MS, parent=self
         )
@@ -159,6 +149,8 @@ class MainWindow(QMainWindow):
                 self._purchase_requests_page.reload()  # always fresh when opened
             elif key == "treasury":
                 self._treasury_page.reload()  # "overdue" depends on today; depot may have recorded entries
+            elif key == "reports":
+                self._reports_page.reload()  # sales keep arriving from the tills
 
     def sign_out(self) -> None:
         """Sign out, hide everything, and ask for a sign-in again; Quit
@@ -208,17 +200,18 @@ class MainWindow(QMainWindow):
         self._pending_count = count
         self._sidebar.set_badge("purchase_requests", str(count) if count else None)
         self._overview_page.set_pending_count(count)
+        for button in self._approval_buttons:
+            self._style_approvals_button(button, count)
 
     def _add_legacy_reports_button(self) -> None:
-        """Reports is still a placeholder (see module docstring), but the
-        original Sales Reports tab - real transaction data, PDF/Excel
-        export - already works, so don't hide it behind an unbuilt page.
-        """
-        reports_page = self._pages["reports"]
-        button = CompactButton("Open Sales Reports")
+        """The original per-product Sales Reports tab (real transaction
+        data, PDF/Excel export) still works and answers a different
+        question - what sold, by product, over any date range - so the
+        Reports page keeps a button that opens it."""
+        button = CompactButton("Sales by product")
+        button.setToolTip("Per-product sales for any date range")
         button.clicked.connect(self._open_legacy_reports)
-        if hasattr(reports_page, "add_header_action"):
-            reports_page.add_header_action(button)
+        self._reports_page.add_header_action(button)
 
     def _open_legacy_reports(self) -> None:
         dialog = QDialog(self)
@@ -226,4 +219,34 @@ class MainWindow(QMainWindow):
         dialog.resize(900, 600)
         dialog_layout = QVBoxLayout(dialog)
         dialog_layout.addWidget(SalesReportsTab())
+        dialog.exec()
+
+    # --- header controls shared by every page ------------------------------
+
+    def _install_shared_header_controls(self) -> None:
+        """A "Search" button on every page and, except on Overview (which has
+        its own) and Purchase requests (where you already are), a "Pending
+        approvals" button that jumps to the queue."""
+        for key, page in self._pages.items():
+            if not hasattr(page, "add_leading_header_action"):
+                continue
+            search = CompactButton("Search  \u2318K" if sys.platform == "darwin" else "Search  Ctrl+K")
+            search.setToolTip("Find a product, dealership, warehouse or person")
+            search.clicked.connect(self.open_search)
+            page.add_leading_header_action(search)
+            if key in ("overview", "purchase_requests"):
+                continue
+            approvals = CompactButton("Pending approvals")
+            approvals.clicked.connect(lambda _=False: self.navigate("purchase_requests"))
+            self._style_approvals_button(approvals, self._pending_count or 0)
+            page.add_leading_header_action(approvals)
+            self._approval_buttons.append(approvals)
+
+    @staticmethod
+    def _style_approvals_button(button: CompactButton, count: int) -> None:
+        button.setText(f"Pending approvals  {count}" if count else "Pending approvals")
+
+    def open_search(self) -> None:
+        dialog = GlobalSearchDialog(self)
+        dialog.page_chosen.connect(self.navigate)
         dialog.exec()

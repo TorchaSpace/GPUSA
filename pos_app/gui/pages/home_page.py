@@ -24,7 +24,7 @@ from PySide6.QtWidgets import QGridLayout, QLabel, QPushButton, QVBoxLayout, QWi
 from database import shipment_repository, stock_repository
 from database.exceptions import DataAccessError
 from pos_app.gui.product_status import stock_status
-from pos_app.theme import FONT_HEADING, ORGANIC_PALETTE
+from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.models import UNASSIGNED, StockLocation
 
 
@@ -71,7 +71,7 @@ class HomePage(QWidget):
         greeting_block.addWidget(self._date_label)
         self._greeting_label = QLabel()
         self._greeting_label.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 400; font-size: 48px; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 400; font-size: 48px; color: {p['text_primary']};"
         )
         greeting_block.addWidget(self._greeting_label)
         outer.addLayout(greeting_block)
@@ -123,7 +123,7 @@ class HomePage(QWidget):
         layout.addStretch(1)
 
         title = QLabel("New Sale")
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 52px; color: white;")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 52px; color: white;")
         layout.addWidget(title)
         subtitle = QLabel("Scan or tap products, take payment")
         subtitle.setStyleSheet("font-size: 18px; color: #fff2eb;")
@@ -158,7 +158,7 @@ class HomePage(QWidget):
         layout.addStretch(1)
 
         title = QLabel("Receive Inventory")
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 40px; color: white;")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: white;")
         layout.addWidget(title)
         subtitle = QLabel("Check in warehouse shipments")
         subtitle.setStyleSheet("font-size: 16px; color: #f0fae1;")
@@ -201,7 +201,7 @@ class HomePage(QWidget):
         layout.addStretch(1)
 
         title = QLabel("My Local Stock")
-        title.setStyleSheet(f"font-family: '{FONT_HEADING}'; font-size: 40px; color: {p['text_primary']};")
+        title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: {p['text_primary']};")
         layout.addWidget(title)
         subtitle = QLabel("See what's on the shelf and what's missing")
         subtitle.setStyleSheet(f"font-size: 16px; color: {p['text_secondary']};")

@@ -34,7 +34,7 @@ import depot_app.gui.icons as icons
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.purchasing_panel import PurchasingPanel
 from depot_app.gui.treasury_panel import TreasuryPanel
-from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
+from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared import current_session
 from shared.auth import PORTAL_AUTO_LOCK_SECONDS
 from shared.gui_kit.icon_kit import svg_to_icon
@@ -66,7 +66,7 @@ class ManagerPortalDialog(QDialog):
             QTabBar::tab {{
                 background: {p['background']}; color: {p['text_secondary']};
                 border: 1px solid {p['border']}; padding: 8px 16px;
-                font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 0.5px; font-size: 12px;
+                font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 0.5px; font-size: 12px;
             }}
             QTabBar::tab:selected {{ color: {p['accent_900']}; background: {p['accent_100']}; }}
             """
@@ -157,7 +157,7 @@ class ManagerPortalDialog(QDialog):
         titles.addWidget(kicker)
         title = QLabel("MANAGER PORTAL")
         title.setStyleSheet(
-            f"font-family: '{FONT_HEADING}'; font-weight: 600; letter-spacing: 1px; "
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 24px; color: {p['text_primary']};"
         )
         titles.addWidget(title)
