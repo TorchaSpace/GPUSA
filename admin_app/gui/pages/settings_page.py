@@ -48,7 +48,8 @@ _WHERE = {
 _EVENT_TEXT = {
     "sign_in": "Signed in", "sign_out": "Signed out", "failed": "Failed sign-in", "locked": "Locked out",
     "refused": "Refused", "pin_confirmed": "Portal unlocked", "pin_changed": "PIN changed",
-    "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked", "pin_reset": "PIN reset (recovery)",
+    "account_created": "Account created", "account_changed": "Account changed", "unlocked": "Unlocked", "pin_reset": "PIN reset (recovery)", "recovery_code_created": "Recovery code made",
+    "recovery_failed": "Wrong recovery code",
 }
 
 
@@ -92,6 +93,9 @@ class SettingsPage(AdminPage):
         change_pin = CompactButton("Change my PIN")
         change_pin.clicked.connect(self.change_my_pin)
         self._me.add_header_control(change_pin)
+        recovery_button = CompactButton(tr("settings.recovery_code"))
+        recovery_button.clicked.connect(self.make_recovery_code)
+        self._me.add_header_control(recovery_button)
         self.body_layout().addWidget(self._me)
 
         # Accounts
@@ -267,6 +271,19 @@ class SettingsPage(AdminPage):
                                 f"Remove {account.name}'s sign-in account? They stay in Workforce.") != QMessageBox.Yes:
             return
         self._run(lambda: account_repository.delete(account.badge_id, by=current_session.actor()))
+
+    def make_recovery_code(self) -> None:
+        session = current_session.get()
+        if session is None or session.role != "admin":
+            return
+        if account_repository.has_recovery_code() and QMessageBox.question(
+            self, tr("settings.recovery_code"), tr("settings.recovery_code_confirm")
+        ) != QMessageBox.Yes:
+            return
+        from admin_app.gui.auth_flow import show_new_recovery_code
+
+        show_new_recovery_code(session, self)
+        self.reload()
 
     def change_my_pin(self) -> None:
         session = current_session.get()

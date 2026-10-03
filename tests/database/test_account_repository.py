@@ -194,3 +194,31 @@ def test_reset_admin_access_refuses_non_admins_and_short_pins(people):
         accounts.reset_admin_access("B-2", "739184")
     with pytest.raises(ValueError):
         accounts.reset_admin_access("B-1", "1234")  # admins need MIN_ADMIN_PIN_LENGTH digits
+
+
+def test_recovery_code_resets_the_pin_and_is_rate_limited(people):
+    assert not accounts.has_recovery_code()
+    code = accounts.create_recovery_code(people)
+    assert accounts.has_recovery_code()
+    for _ in range(5):
+        with pytest.raises(AuthError):
+            accounts.reset_with_recovery_code("AAAA-BBBB-CCCC-DDDD", "B-1", "739184")
+    with pytest.raises(AuthError) as locked:  # now locked - even the right code is refused
+        accounts.reset_with_recovery_code(code, "B-1", "739184")
+    assert "locked" in str(locked.value)
+
+
+def test_recovery_code_works_when_typed_loosely(people):
+    code = accounts.create_recovery_code(people)
+    accounts.reset_with_recovery_code(code.lower().replace("-", " "), "B-1", "739184")
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+    events = [e["event"] for e in accounts.list_events()]
+    assert "pin_reset" in events and "recovery_code_created" in events
+
+
+def test_a_new_recovery_code_cancels_the_old_one(people):
+    old = accounts.create_recovery_code(people)
+    new = accounts.create_recovery_code(people)
+    assert old != new
+    with pytest.raises(AuthError):
+        accounts.reset_with_recovery_code(old, "B-1", "739184")

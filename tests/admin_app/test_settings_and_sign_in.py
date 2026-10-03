@@ -130,3 +130,33 @@ def test_forgot_pin_needs_the_proof_file_then_resets(qapp, tmp_path):
     assert dialog.save() and dialog.reset_badge == "B-1"
     assert not flag.exists()  # one use only
     assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+
+
+def test_forgot_pin_with_the_recovery_code(qapp, tmp_path):
+    from database import account_repository as accounts
+    from shared import auth
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    session = accounts.create_first_admin("B-1", "Erol", "482913")
+    code = accounts.create_recovery_code(session)
+    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
+    assert dialog.mode == "code" and dialog.admin_input.count() == 1
+    dialog.code_input.setText("AAAA-BBBB-CCCC-DDDD")
+    dialog.pin_input.setText("739184")
+    dialog.pin_again_input.setText("739184")
+    assert not dialog.save() and "not right" in dialog.message.text()
+    dialog.code_input.setText(code)
+    assert dialog.save() and dialog.reset_badge == "B-1"
+    assert accounts.authenticate("B-1", "739184", auth.AREA_ADMIN, "t").badge_id == "B-1"
+
+
+def test_forgot_pin_can_switch_to_the_file_way_when_a_code_exists(qapp, tmp_path):
+    from database import account_repository as accounts
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    accounts.create_recovery_code(accounts.create_first_admin("B-1", "Erol", "482913"))
+    dialog = ResetAdminAccessDialog(flag_path=tmp_path / "RESET_ADMIN_ACCESS.txt")
+    dialog.switch_mode()
+    assert dialog.mode == "file"
+    dialog.switch_mode()
+    assert dialog.mode == "code"

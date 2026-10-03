@@ -33,7 +33,7 @@ from database.exceptions import (
     NotAllowedError,
     SignInFailedError,
 )
-from shared import auth
+from shared import auth, recovery_code
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
 from shared.models import Account
@@ -356,6 +356,97 @@ def reset_admin_access(badge_id: str, new_pin: str, terminal: str = "Admin") -> 
         _log(conn, "pin_reset", badge_id, auth.AREA_ADMIN, terminal, "Reset with the recovery file")
 
     _write(run)
+
+
+# --- recovery code ---------------------------------------------------------------
+# One code per installation, kept (hashed) in app_settings. Whoever holds it
+# can set a new administrator PIN from the sign-in screen, so it is shown
+# once, replaced on request, and guessing it is rate-limited.
+
+_RC_HASH, _RC_FAILED, _RC_LOCKED = "recovery.code_hash", "recovery.failed", "recovery.locked_until"
+
+
+def has_recovery_code() -> bool:
+    with connection_scope() as conn:
+        row = conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (_RC_HASH,)).fetchone()
+    return row is not None
+
+
+def create_recovery_code(by: Session) -> str:
+    """Make (or replace) the recovery code and return it - the only time it
+    can be read. Administrators only; the old code stops working."""
+    if by.role != "admin":
+        raise AuthError("Only an administrator can create the recovery code.")
+    actor = by.actor
+    code = recovery_code.generate()
+    code_hash = auth.hash_pin(recovery_code.normalize(code))
+
+    def run(conn):
+        for key, value in ((_RC_HASH, code_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
+            conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
+                         "SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                         (key, value))
+        _log(conn, "recovery_code_created", actor.badge_id, auth.AREA_ADMIN, None, "New recovery code")
+
+    _write(run)
+    return code
+
+
+def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: str = "Admin") -> None:
+    """Set a new PIN for administrator `badge_id` using the recovery code.
+    Wrong codes are counted; after MAX_FAILED_ATTEMPTS recovery locks for
+    LOCK_MINUTES. Raises AuthError with a message fit to show."""
+    _check_pin(new_pin, "admin")
+    normalized = recovery_code.normalize(code)
+    new_hash = auth.hash_pin(new_pin)
+
+    def settings(conn):
+        return {r["key"]: r["value"] for r in conn.execute(
+            "SELECT key, value FROM app_settings WHERE key IN (?, ?, ?)", (_RC_HASH, _RC_FAILED, _RC_LOCKED))}
+
+    def put(conn, key, value):
+        conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
+                     "SET value = excluded.value, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')", (key, value))
+
+    def run(conn):
+        now = _now()
+        values = settings(conn)
+        stored = values.get(_RC_HASH)
+        if not stored:
+            return "none", None
+        locked = values.get(_RC_LOCKED) or ""
+        if locked and parse_db_timestamp(locked) > now:
+            return "locked", locked
+        # Always do the (slow) hash work, so a wrong code and a right one cost the same.
+        ok = len(normalized) == recovery_code.CODE_LENGTH and auth.verify_pin(normalized, stored)
+        if not ok:
+            failed = int(values.get(_RC_FAILED) or 0) + 1
+            expiry = recovery_code.lock_expiry(failed, now)
+            put(conn, _RC_FAILED, "0" if expiry else str(failed))
+            put(conn, _RC_LOCKED, to_db_timestamp(expiry) if expiry else "")
+            _log(conn, "recovery_failed", badge_id, auth.AREA_ADMIN, terminal,
+                 "Locked for %d minutes" % recovery_code.LOCK_MINUTES if expiry else None)
+            return "wrong", None
+        row = _account_row(conn, badge_id)
+        if row["role"] != "admin" or not row["is_active"]:
+            return "not_admin", None
+        conn.execute("UPDATE accounts SET pin_hash = ?, failed_attempts = 0, locked_until = NULL, "
+                     "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?", (new_hash, row["id"]))
+        put(conn, _RC_FAILED, "0")
+        put(conn, _RC_LOCKED, "")
+        _log(conn, "pin_reset", badge_id, auth.AREA_ADMIN, terminal, "Reset with the recovery code")
+        return "ok", None
+
+    status, extra = _write(run)  # failed guesses must be COMMITTED, so the error is raised after
+    if status == "ok":
+        return
+    if status == "none":
+        raise AuthError("This installation has no recovery code yet.")
+    if status == "locked":
+        raise AuthError(f"Too many wrong codes - recovery is locked until {local_datetime_text(extra)}.")
+    if status == "not_admin":
+        raise AuthError("That account is not an active administrator.")
+    raise AuthError("That recovery code is not right.")
 
 
 def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:
