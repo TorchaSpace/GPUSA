@@ -42,6 +42,7 @@ from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.motion import fade_in, toast
 from depot_app.gui.auth_flow import console_sign_in_dialog
+from shared.gui_kit.language_switch import LanguageSwitch
 from shared import current_session
 from shared.auth import Session
 from shared.i18n import tr
@@ -106,7 +107,9 @@ class MainWindow(QMainWindow):
         scroller.setWidgetResizable(True)
         scroller.setFrameShape(QScrollArea.NoFrame)
         scroller.setStyleSheet("QScrollArea { background: transparent; border: none; }")
-        central.setMinimumSize(1100, 760)
+        # Width only: a fixed minimum HEIGHT overrides the layout's own minimum, which squeezed the
+        # big input boxes into each other. Without it the scroller scrolls when the content needs more.
+        central.setMinimumWidth(1100)
         scroller.setWidget(central)
         self.setCentralWidget(scroller)
         fade_in(scroller, 260)
@@ -143,6 +146,8 @@ class MainWindow(QMainWindow):
 
         layout.addStretch(1)
 
+        layout.addWidget(LanguageSwitch(p))
+
         shift = self._shift_label = QLabel()
         shift.setStyleSheet(f"font-size: 12px; letter-spacing: 1.2px; color: {p['text_secondary']};")
         layout.addWidget(shift)
@@ -160,7 +165,7 @@ class MainWindow(QMainWindow):
 
         admin_login = IndustryButton(tr("depot.floor.admin_login"), variant="primary", height=48, font_px=17)
         admin_login.setIcon(svg_to_icon(icons.LOCK, "#ffffff", size=14))
-        admin_login.clicked.connect(self._open_console)
+        admin_login.clicked.connect(lambda _checked=False: self._open_console())  # clicked sends a bool - never let it pose as the session
         layout.addWidget(admin_login)
 
         return header

@@ -180,3 +180,33 @@ def test_console_locks_when_idle_or_when_the_account_is_switched_off(floor, qapp
     floor._open_console(MANAGER)
     monkeypatch.setattr(cw.account_repository, "is_session_valid", lambda s: False)
     assert "Admin" in console._check_session()
+
+
+def test_clicking_the_floor_login_button_does_not_pass_a_bool_as_the_session(floor, monkeypatch):
+    """QPushButton.clicked sends `checked` (False). It once landed in _open_console's
+    `session` parameter, which skipped the sign-in and opened a console that read
+    "Not signed in" with dead buttons."""
+    from PySide6.QtWidgets import QPushButton
+
+    from depot_app.gui import main_window as mw
+
+    window = floor
+    seen = []
+    monkeypatch.setattr(mw.MainWindow, "_open_console", lambda self, session=None: seen.append(session))
+    button = next(b for b in window.findChildren(QPushButton) if "İDARİ" in b.text().upper() or "ADMIN" in b.text().upper())
+    button.click()
+    assert seen == [None]
+
+
+def test_language_switch_saves_then_restarts_only_on_a_change(qapp):
+    from shared import i18n
+    from shared.gui_kit.language_switch import LanguageSwitch
+    from depot_app.theme import INDUSTRY_PALETTE
+
+    i18n.set_language("en")
+    saved, restarted = [], []
+    switch = LanguageSwitch(INDUSTRY_PALETTE, restart=lambda: restarted.append(1), save=saved.append)
+    switch.choose("en")  # already English: nothing happens
+    assert saved == [] and restarted == []
+    switch.choose("tr")
+    assert saved == ["tr"] and restarted == [1]

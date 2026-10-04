@@ -60,6 +60,7 @@ from database import account_repository, stock_repository, warehouse_repository
 from database.exceptions import DataAccessError
 from depot_app.gui.attendance_panel import AttendancePanel
 from depot_app.gui.components.console_nav_button import ConsoleNavButton
+from shared.gui_kit.language_switch import LanguageSwitch
 from shared.gui_kit.motion import fade_in
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.dashboard_page import DashboardPage
@@ -269,6 +270,8 @@ class ConsoleWindow(QMainWindow):
         titles_widget.setLayout(titles)
         header.addWidget(titles_widget, stretch=1)
 
+        header.addWidget(LanguageSwitch(p))
+
         self._clock_label = QLabel()
         self._clock_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 15px; color: {p['text_primary']};")
         header.addWidget(self._clock_label)
@@ -297,7 +300,7 @@ class ConsoleWindow(QMainWindow):
 
         admin_login = IndustryButton(tr("depot.console.admin_login"), variant="primary")
         admin_login.setIcon(svg_to_icon(icons.LOCK, "#ffffff", size=14))
-        admin_login.clicked.connect(self._open_manager_portal)
+        admin_login.clicked.connect(lambda _checked=False: self._open_manager_portal())
         header.addWidget(admin_login)
         self._update_who()
 
@@ -396,6 +399,8 @@ class ConsoleWindow(QMainWindow):
         layout.addWidget(self._unassigned_note)
 
         tabs = QTabWidget()
+        tabs.tabBar().setElideMode(Qt.ElideNone)  # a tab title is never cut to "Movement ..."
+        tabs.tabBar().setExpanding(False)
         tabs.setStyleSheet(
             f"""
             QTabWidget::pane {{ border: 1px solid {p['border']}; background-color: {p['surface']}; }}
