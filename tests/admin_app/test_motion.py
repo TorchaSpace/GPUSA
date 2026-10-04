@@ -47,3 +47,18 @@ def test_stat_card_value_is_final_immediately(qapp):
 def test_blend_endpoints():
     assert motion.blend("#000000", "#ffffff", 0.0) == "#000000"
     assert motion.blend("#000000", "#ffffff", 1.0) == "#ffffff"
+
+
+def test_hover_filter_survives_events_after_its_state_is_cleared(qapp):
+    """Qt can deliver events to a filter while its widget is torn down; that
+    must never raise (it broke a test run with 'no attribute _widget')."""
+    from PySide6.QtCore import QEvent
+    from PySide6.QtWidgets import QWidget
+
+    widget = QWidget()
+    tween = motion.HoverTween(widget, lambda level: None)
+    del tween._widget  # what a half-destroyed Python wrapper looks like
+    del tween._apply
+    assert tween.eventFilter(widget, QEvent(QEvent.Enter)) is False
+    assert tween.eventFilter(widget, QEvent(QEvent.Leave)) is False
+    widget.close()

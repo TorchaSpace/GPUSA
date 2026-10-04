@@ -187,10 +187,15 @@ class HoverTween(QObject):
         widget.installEventFilter(self)
 
     def _step(self, value) -> None:
+        apply = getattr(self, "_apply", None)
+        if apply is None:
+            return
         self._level = float(value)
-        self._apply(self._level)
+        apply(self._level)
 
     def _go(self, target: float) -> None:
+        if getattr(self, "_apply", None) is None:
+            return
         if not animations_enabled():
             self._level = target
             self._apply(target)
@@ -201,7 +206,10 @@ class HoverTween(QObject):
         self._animation.start()
 
     def eventFilter(self, obj, event) -> bool:
-        if obj is self._widget:
+        # While the widget is being torn down Qt can still deliver events to
+        # this filter after PySide has already cleared our Python attributes.
+        widget = getattr(self, "_widget", None)
+        if widget is not None and obj is widget:
             if event.type() == QEvent.Enter:
                 self._go(1.0)
             elif event.type() == QEvent.Leave:
