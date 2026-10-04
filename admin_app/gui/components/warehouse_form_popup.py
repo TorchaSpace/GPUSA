@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from PySide6.QtWidgets import QCheckBox, QDialogButtonBox, QFormLayout, QLabel, QLineEdit, QSpinBox
 
+from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
 from shared.i18n import tr
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.models import Warehouse
@@ -25,7 +26,7 @@ class WarehouseFormPopup(RefreshablePopup):
         self._capacity_input.setPlaceholderText(tr("admin.warehouses.form_capacity_ph"))
         self._docks_input = QSpinBox()
         self._docks_input.setRange(0, 999)
-        self._active_input = QCheckBox()
+        self._active_input = AnimatedCheckBox()
         self._active_input.setChecked(True)
         self._error = QLabel()
         self._error.setWordWrap(True)

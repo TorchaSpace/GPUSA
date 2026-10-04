@@ -43,6 +43,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
@@ -150,7 +151,7 @@ class OverviewPage(AdminPage):
             self._stock_section.add_header_control(button)
         self._filter_buttons[overview.FILTER_ALL].setChecked(True)
 
-        self._low_only_checkbox = QCheckBox(tr("admin.overview.below_reorder"))
+        self._low_only_checkbox = AnimatedCheckBox(tr("admin.overview.below_reorder"))
         self._low_only_checkbox.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
         self._low_only_checkbox.toggled.connect(self.set_low_only)
         self._stock_section.add_header_control(self._low_only_checkbox)

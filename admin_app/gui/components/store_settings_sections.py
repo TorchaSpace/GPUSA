@@ -13,6 +13,8 @@ from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFileDialog, QFormLayout, QLabel, QLineEdit, QMessageBox, QPlainTextEdit, QWidget,
 )
 
+from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
+from admin_app.gui.motion import toast
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.theme import CLASSICAL_PALETTE
@@ -106,7 +108,8 @@ class GeneralSection(Section):
             self._error.setText(str(exc))
             return False
         self._error.setText("")
-        self._status.setText(tr("settings.saved"))  # visible proof the click did something
+        self._status.setText(tr("settings.saved"))
+        toast(self, tr("settings.saved"))  # visible proof the click did something
         self._name_input.setText(profile.name)
         self._baseline = self._current()
         self.saved.emit()
@@ -136,8 +139,8 @@ class NotificationsSection(Section):
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(tr("settings.alerts.kicker"), tr("settings.notifications"), parent)
-        self._low_stock = QCheckBox(tr("settings.low_stock_alerts"))
-        self._pending = QCheckBox(tr("settings.pending_badge"))
+        self._low_stock = AnimatedCheckBox(tr("settings.low_stock_alerts"))
+        self._pending = AnimatedCheckBox(tr("settings.pending_badge"))
         for box in (self._low_stock, self._pending):
             box.setStyleSheet(f"color: {CLASSICAL_PALETTE['text_primary']}; font-size: 13px; padding: 4px 0;")
         form = _form_host(self)

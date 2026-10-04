@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import dealership_repository
+from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.i18n import region_label, tr
 from shared.models import DEALERSHIP_REGIONS, Dealership
@@ -47,7 +48,7 @@ class DealershipFormPopup(RefreshablePopup):
 
         self._manager_input = QLineEdit()
 
-        self._active_input = QCheckBox()
+        self._active_input = AnimatedCheckBox()
         self._active_input.setChecked(True)
 
         form = QFormLayout()

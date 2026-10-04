@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import employee_repository
+from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.i18n import enum_label, tr
 from shared.models import EMPLOYEE_LOCATION_TYPES, EMPLOYEE_ROLES, Employee
@@ -61,7 +62,7 @@ class EmployeeFormPopup(RefreshablePopup):
         self._location_name_input.lineEdit().setPlaceholderText(tr("admin.workforce.location_hint"))
         self._location_type_input.currentIndexChanged.connect(self._fill_locations)
 
-        self._active_input = QCheckBox()
+        self._active_input = AnimatedCheckBox()
         self._active_input.setChecked(True)
 
         form = QFormLayout()

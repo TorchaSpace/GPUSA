@@ -62,3 +62,44 @@ def test_hover_filter_survives_events_after_its_state_is_cleared(qapp):
     assert tween.eventFilter(widget, QEvent(QEvent.Enter)) is False
     assert tween.eventFilter(widget, QEvent(QEvent.Leave)) is False
     widget.close()
+
+
+def test_level_jumps_when_motion_is_off(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    from admin_app.gui.motion import Level
+
+    seen = []
+    widget = QWidget()
+    level = Level(widget, seen.append)
+    level.go(1.0)
+    assert level.value == 1.0 and seen == [1.0]
+
+
+def test_animated_widgets_keep_their_state(qapp):
+    from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
+    from admin_app.gui.components.segment_button import SegmentButton
+
+    box = AnimatedCheckBox("x")
+    box.setChecked(True)
+    assert box.isChecked() and box._checked.value == 1.0
+    box.setChecked(False)
+    assert not box.isChecked() and box._checked.value == 0.0
+    tab = SegmentButton("A & B")
+    tab.setChecked(True)
+    assert tab.isChecked() and tab._on.value == 1.0
+    box.grab()
+    tab.grab()
+
+
+def test_toast_adds_and_replaces_a_label(qapp):
+    from PySide6.QtWidgets import QWidget
+
+    from admin_app.gui.motion import toast
+
+    window = QWidget()
+    window.resize(400, 300)
+    toast(window, "Saved")
+    first = window._motion_toast
+    toast(window, "Again")
+    assert window._motion_toast is not first

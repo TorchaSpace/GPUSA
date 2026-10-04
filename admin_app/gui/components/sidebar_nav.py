@@ -15,12 +15,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEvent, QRectF, Qt, Signal
+from PySide6.QtGui import QColor, QPainter
 from PySide6.QtWidgets import QButtonGroup, QFrame, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from shared.i18n import tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from shared.gui_kit.icon_kit import svg_to_icon
+from admin_app.gui.motion import Level, blend
 
 SIDEBAR_WIDTH_PX = 232
 
@@ -37,6 +39,57 @@ class NavItem:
 class NavSection:
     title: str
     items: list[NavItem] = field(default_factory=list)
+
+
+class _NavButton(QPushButton):
+    """A nav row: hover tint, then an accent bar that grows when it becomes
+    the current page (drawn here so it can animate; a stylesheet can't)."""
+
+    def __init__(self, text: str):
+        super().__init__(text)
+        self.setCheckable(True)
+        self.setFlat(True)
+        self.setStyleSheet("QPushButton { background: transparent; border: none; }")
+        self.setMinimumHeight(33)
+        self._on = Level(self, lambda _v: self.update(), 220, 0.0)
+        self._hover = Level(self, lambda _v: self.update(), 140)
+        self.toggled.connect(lambda on: self._on.go(1.0 if on else 0.0))
+
+    def event(self, event) -> bool:
+        if event.type() in (QEvent.Enter, QEvent.HoverEnter):
+            self._hover.go(1.0)
+        elif event.type() in (QEvent.Leave, QEvent.HoverLeave):
+            self._hover.go(0.0)
+        return super().event(event)
+
+    def paintEvent(self, _event) -> None:
+        p = CLASSICAL_PALETTE
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+        on, hover = self._on.value, self._hover.value
+        tint = QColor(234, 231, 231, round(13 * hover * (1 - on)))
+        if on > 0:
+            tint = QColor(225, 173, 102, round(18 * on))
+        painter.fillRect(self.rect(), tint)
+        if on > 0.01:
+            height = self.height() * on
+            painter.fillRect(QRectF(0, (self.height() - height) / 2, 2, height), QColor(p["accent"]))
+        colour = QColor(blend(blend(p["text_secondary"], p["text_primary"], hover), p["accent"], on))
+        shift = 2 * on + 1 * hover * (1 - on)  # the label leans in a little
+        icon_size = self.iconSize().width()
+        icon_rect = QRectF(10 + shift, (self.height() - icon_size) / 2, icon_size, icon_size)
+        icon = self.icon()
+        if not icon.isNull():
+            icon.paint(painter, icon_rect.toRect())
+        text_left = 10 + icon_size + 8 + shift
+        painter.setPen(colour)
+        painter.setFont(self.font())
+        text = self.text().replace("&&", "&")
+        painter.drawText(
+            QRectF(text_left, 0, self.width() - text_left - 6, self.height()),
+            Qt.AlignLeft | Qt.AlignVCenter,
+            self.fontMetrics().elidedText(text, Qt.ElideRight, int(self.width() - text_left - 6)),
+        )
 
 
 class SidebarNav(QWidget):
@@ -139,39 +192,14 @@ class SidebarNav(QWidget):
         p = CLASSICAL_PALETTE
         # "&&": a lone "&" in a QPushButton label is a mnemonic marker, so
         # "Treasury & Ledger" used to render as "Treasury  Ledger".
-        button = QPushButton(self._button_text(item.label, item.badge))
+        button = _NavButton(self._button_text(item.label, item.badge))
         button.setProperty("nav_label", item.label)
-        button.setCheckable(True)
         button.setCursor(Qt.PointingHandCursor)
         button.setIcon(svg_to_icon(item.icon_path, p["text_secondary"], size=16))
         button.setIconSize(button.iconSize())
         button.setLayoutDirection(Qt.LeftToRight)
         button.setFlat(True)
         button.clicked.connect(lambda checked, k=item.key: self._on_clicked(k))
-        button.setStyleSheet(
-            f"""
-            QPushButton {{
-                text-align: left;
-                padding: 8px 10px;
-                border: none;
-                border-radius: 0;
-                color: {p['text_secondary']};
-                background: transparent;
-                font-family: {p['font_family_css']};
-                font-size: 13px;
-            }}
-            QPushButton:hover {{
-                background-color: rgba(234, 231, 231, 13);
-                color: {p['text_primary']};
-            }}
-            QPushButton:checked {{
-                color: {p['accent']};
-                background-color: rgba(225, 173, 102, 18);
-                border-left: 2px solid {p['accent']};
-                padding-left: 8px;
-            }}
-            """
-        )
         return button
 
     @staticmethod

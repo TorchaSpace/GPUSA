@@ -20,7 +20,9 @@ from __future__ import annotations
 import os
 import re
 
-from PySide6.QtCore import QEasingCurve, QEvent, QObject, QPropertyAnimation, QVariantAnimation, Qt
+from PySide6.QtCore import (
+    QEasingCurve, QEvent, QObject, QParallelAnimationGroup, QPoint, QPropertyAnimation, QTimer, QVariantAnimation, Qt,
+)
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QApplication, QDialog, QGraphicsOpacityEffect, QLabel, QMessageBox, QWidget
 
@@ -217,6 +219,95 @@ class HoverTween(QObject):
         return False
 
 
+class Level(QObject):
+    """A value that glides between 0 and 1 (checked, hovered, selected...)
+    and tells `on_change(level)` at every step so the owner repaints."""
+
+    def __init__(self, owner: QWidget, on_change, duration: int = HOVER_MS, initial: float = 0.0):
+        super().__init__(owner)
+        self.value = float(initial)
+        self._on_change = on_change
+        self._animation = QVariantAnimation(self)
+        self._animation.setDuration(duration)
+        self._animation.setEasingCurve(QEasingCurve.OutCubic)
+        self._animation.valueChanged.connect(self._step)
+
+    def _step(self, value) -> None:
+        self.value = float(value)
+        self._on_change(self.value)
+
+    def go(self, target: float, animate: bool = True) -> None:
+        self._animation.stop()
+        if not animate or not animations_enabled():
+            self.value = float(target)
+            self._on_change(self.value)
+            return
+        self._animation.setStartValue(self.value)
+        self._animation.setEndValue(float(target))
+        self._animation.start()
+
+
+# --- toast ---------------------------------------------------------------------------
+
+
+def toast(parent: QWidget, text: str, ms: int = 2400) -> None:
+    """A small confirmation that slides up from the bottom of `parent`'s
+    window, waits, and fades away. Never blocks or takes focus."""
+    if parent is None or not text:
+        return
+    window = parent.window()
+    previous = getattr(window, "_motion_toast", None)
+    if previous is not None:
+        previous.deleteLater()
+    label = QLabel(text, window)
+    label.setObjectName("motionToast")
+    label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+    label.setStyleSheet(
+        "#motionToast { background-color: #26231f; color: #eae7e7; border: 1px solid #e1ad66;"
+        " border-radius: 6px; padding: 9px 16px; font-size: 13px; }"
+    )
+    label.adjustSize()
+    x = max(8, (window.width() - label.width()) // 2)
+    rest_y = window.height() - label.height() - 28
+    label.move(x, rest_y)
+    label.show()
+    label.raise_()
+    window._motion_toast = label
+    if not animations_enabled():
+        QTimer.singleShot(ms, label.deleteLater)
+        return
+    effect = QGraphicsOpacityEffect(label)
+    label.setGraphicsEffect(effect)
+    slide = QPropertyAnimation(label, b"pos", label)
+    slide.setDuration(260)
+    slide.setStartValue(QPoint(x, rest_y + 16))
+    slide.setEndValue(QPoint(x, rest_y))
+    slide.setEasingCurve(QEasingCurve.OutCubic)
+    fade = QPropertyAnimation(effect, b"opacity", label)
+    fade.setDuration(260)
+    fade.setStartValue(0.0)
+    fade.setEndValue(1.0)
+    group = QParallelAnimationGroup(label)
+    group.addAnimation(slide)
+    group.addAnimation(fade)
+    group.start()
+    out = QPropertyAnimation(effect, b"opacity", label)
+    out.setDuration(320)
+    out.setStartValue(1.0)
+    out.setEndValue(0.0)
+    out.finished.connect(label.deleteLater)
+    label._motion_keep = (group, out)
+    QTimer.singleShot(ms, lambda: out.start() if _alive(label) else None)
+
+
+def _alive(obj) -> bool:
+    try:
+        obj.objectName()
+        return True
+    except RuntimeError:
+        return False
+
+
 # --- dialogs ----------------------------------------------------------------------
 
 
@@ -236,8 +327,17 @@ class _DialogFader(QObject):
                 animation.setEasingCurve(QEasingCurve.OutCubic)
                 animation.finished.connect(lambda: obj.setWindowOpacity(1.0))
                 if animations_enabled():
-                    obj._motion_open = animation
-                    animation.start()
+                    group = QParallelAnimationGroup(obj)
+                    group.addAnimation(animation)
+                    end = obj.pos()
+                    slide = QPropertyAnimation(obj, b"pos", obj)
+                    slide.setDuration(FADE_MS + 60)
+                    slide.setStartValue(QPoint(end.x(), end.y() + 12))
+                    slide.setEndValue(end)
+                    slide.setEasingCurve(QEasingCurve.OutCubic)
+                    group.addAnimation(slide)
+                    obj._motion_open = group
+                    group.start()
                 else:
                     obj.setWindowOpacity(1.0)
         return False
