@@ -234,3 +234,157 @@ def test_card_escapes_user_text_in_rich_labels(qapp):
     for label in card.findChildren(QLabel):
         if "Name" in label.text() or "Sup" in label.text():
             assert label.textFormat() == Qt.PlainText
+
+
+# --- the history after approval: received / partial / cancelled, and cancelling --------------
+
+from database import stock_repository, warehouse_repository  # noqa: E402
+from shared.models import StockLocation, Warehouse  # noqa: E402
+from tests.po_support import DEPOT, seed_people  # noqa: E402
+
+WH1 = StockLocation.warehouse("WH-01")
+
+
+@pytest.fixture
+def lifecycle():
+    """One order in each state, the people with real accounts (Ada is the signed-in admin)."""
+    warehouse_repository.create(Warehouse(code="WH-01", name="Test", capacity_units=1000))
+    product_repository.create(Product("PLT-4410", "Pallet wrap 500mm", 900, 0, 10))
+    po_repo.set_price_range(PriceRange("PLT-4410", 520, 680))
+    seed_people()
+    orders = {}
+    orders["held"] = po_repo.submit("PLT-4410", "Kuzey", 10, 742.5, "WH-01", raised_by=DEPOT)
+    orders["waiting"] = po_repo.submit("PLT-4410", "Kuzey", 100, 600, "WH-01", raised_by=DEPOT)
+    orders["partial"] = po_repo.submit("PLT-4410", "Kuzey", 100, 610, "WH-01", raised_by=DEPOT)
+    po_repo.receive_against_order(orders["partial"].id, 40, DEPOT, WH1)
+    orders["received"] = po_repo.submit("PLT-4410", "Kuzey", 5, 620, "WH-01", raised_by=DEPOT)
+    po_repo.receive_against_order(orders["received"].id, 5, DEPOT, WH1)
+    orders["cancelled"] = po_repo.submit("PLT-4410", "Kuzey", 7, 630, "WH-01", raised_by=DEPOT)
+    po_repo.cancel_order(orders["cancelled"].id, ADMIN)
+    orders["rejected"] = po_repo.submit("PLT-4410", "Kuzey", 3, 999, "WH-01", raised_by=DEPOT)
+    po_repo.reject(orders["rejected"].id, "no", decided_by=ADMIN)
+    return orders
+
+
+def _row(page, order):
+    table = page._orders_table
+    return next(r for r in range(table.rowCount()) if table.item(r, 0).text() == order.number)
+
+
+def _status(page, order):
+    return page._orders_table.item(_row(page, order), 9).text()
+
+
+def test_history_shows_every_status_with_what_has_arrived(lifecycle, page):
+    page.reload()
+    assert _status(page, lifecycle["held"]) == "Awaiting approval"
+    assert _status(page, lifecycle["waiting"]) == "Sent"
+    assert _status(page, lifecycle["partial"]) == "Partially received · 40 of 100"
+    assert _status(page, lifecycle["received"]) == "Received · 5 of 5"
+    assert _status(page, lifecycle["cancelled"]) == "Cancelled"
+    assert _status(page, lifecycle["rejected"]) == "Rejected"
+    tip = page._orders_table.item(_row(page, lifecycle["partial"]), 9).toolTip()
+    assert "Received" in tip and "Deniz Depo · D-1" in tip
+    tip = page._orders_table.item(_row(page, lifecycle["cancelled"]), 9).toolTip()
+    assert "Cancelled" in tip and "Ada Admin · A-1" in tip
+
+
+def test_status_filter_covers_the_new_states(lifecycle, page):
+    page.reload()
+    labels = [page._filter_input.itemText(i) for i in range(page._filter_input.count())]
+    assert labels == ["All", "Awaiting approval", "Sent", "Partially received", "Received", "Rejected", "Cancelled"]
+    for label, key in (("Partially received", "partial"), ("Received", "received"), ("Cancelled", "cancelled")):
+        page._filter_input.setCurrentIndex(labels.index(label))
+        assert page._orders_table.rowCount() == 1
+        assert page._orders_table.item(0, 0).text() == lifecycle[key].number
+    page._filter_input.setCurrentIndex(0)
+    assert page._orders_table.rowCount() == 6
+
+
+def test_delivered_card_counts_received_and_partial_orders(lifecycle, page):
+    page.reload()
+    assert page._delivered_card._value_label.text() == "2"
+    assert page._delivered_full_item.layout().itemAt(1).widget().text() == "1"
+    assert page._delivered_partial_item.layout().itemAt(1).widget().text() == "1"
+    assert page._sent_card._value_label.text() == "1"  # only the one still waiting for goods
+
+
+def test_cancel_is_offered_only_on_approved_orders_not_fully_received(lifecycle, page):
+    page.reload()
+    assert page.cancel_button(lifecycle["waiting"].id) is not None
+    assert page.cancel_button(lifecycle["partial"].id) is not None
+    for key in ("held", "received", "cancelled", "rejected"):
+        assert page.cancel_button(lifecycle[key].id) is None
+
+
+def test_cancelling_an_approved_order_asks_then_cancels(lifecycle, page, qapp, monkeypatch):
+    page.reload()
+    asked = []
+    monkeypatch.setattr(page, "_confirm_cancel", lambda order: asked.append(order.number) or False)
+    page.cancel_button(lifecycle["waiting"].id).click()
+    pump(qapp)
+    assert asked == [lifecycle["waiting"].number] and po_repo.get(lifecycle["waiting"].id).status == "sent"
+
+    monkeypatch.setattr(page, "_confirm_cancel", lambda order: True)
+    page.cancel_button(lifecycle["waiting"].id).click()
+    pump(qapp)
+
+    done = po_repo.get(lifecycle["waiting"].id)
+    assert (done.status, done.cancelled_by) == ("cancelled", "Ada Admin · A-1")
+    assert _status(page, lifecycle["waiting"]) == "Cancelled"
+    assert page.cancel_button(lifecycle["waiting"].id) is None
+    assert "cancelled" in page._queue.last_action() and lifecycle["waiting"].number in page._queue.last_action()
+
+
+def test_cancelling_a_part_delivered_order_keeps_what_arrived(lifecycle, page, qapp, monkeypatch):
+    page.reload()
+    seen = {}
+    from PySide6.QtWidgets import QMessageBox
+
+    def fake_question(parent, title, text, *args, **kwargs):
+        seen["text"] = text
+        return QMessageBox.Yes
+
+    monkeypatch.setattr(QMessageBox, "question", staticmethod(fake_question))
+    page.cancel_button(lifecycle["partial"].id).click()
+    pump(qapp)
+
+    assert "40 of 100" in seen["text"] and "stay in stock" in seen["text"] and "60" in seen["text"]
+    assert po_repo.get(lifecycle["partial"].id).status == "cancelled"
+    assert stock_repository.quantity_at(WH1, "PLT-4410") == 45  # 40 + 5 delivered earlier, all kept
+    assert _status(page, lifecycle["partial"]) == "Cancelled"
+
+
+def test_a_cancel_that_lost_a_race_is_reported_not_raised(lifecycle, page, qapp, monkeypatch):
+    page.reload()
+    monkeypatch.setattr(page, "_confirm_cancel", lambda order: True)
+    po_repo.receive_against_order(lifecycle["waiting"].id, 100, DEPOT, WH1)  # the depot got there first
+    page.cancel_button(lifecycle["waiting"].id).click()
+    pump(qapp)
+
+    assert "Couldn't cancel" in page._queue.last_action() and "received" in page._queue.last_action()
+    assert po_repo.get(lifecycle["waiting"].id).status == "received"
+    assert _status(page, lifecycle["waiting"]) == "Received · 100 of 100"  # and the table caught up
+
+
+def test_cancel_without_a_signed_in_admin_changes_nothing(lifecycle, page, qapp, monkeypatch):
+    page.reload()
+    monkeypatch.setattr(page, "_confirm_cancel", lambda order: True)
+    monkeypatch.setattr(current_session, "actor", lambda: None)
+    page.cancel_button(lifecycle["waiting"].id).click()
+    pump(qapp)
+    assert "Couldn't cancel" in page._queue.last_action()
+    assert po_repo.get(lifecycle["waiting"].id).status == "sent"
+
+
+def test_status_labels_in_turkish(lifecycle, page):
+    from shared import i18n
+
+    i18n.set_language("tr")
+    try:
+        page.reload()
+        assert _status(page, lifecycle["partial"]) == "Kısmen teslim alındı · 40 / 100"
+        assert _status(page, lifecycle["cancelled"]) == "İptal edildi"
+        assert page.cancel_button(lifecycle["waiting"].id).text() == "Siparişi iptal et"
+    finally:
+        i18n.set_language("en")

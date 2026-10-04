@@ -22,7 +22,11 @@ CREATE TABLE IF NOT EXISTS products (
     -- 0 = deactivated (migration v3): kept for history and shown dimmed in
     -- Admin, but not sellable / receivable / shippable. A product with stock
     -- or history can't be deleted, only deactivated.
-    is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1))
+    is_active           INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    -- Weighted-average unit cost (migration v4); 0 = not known yet. Moved by
+    -- purchase-order receipts (database/purchase_order_repository.py) or
+    -- typed in Admin's product form.
+    cost_price          REAL NOT NULL DEFAULT 0 CHECK (cost_price >= 0)
 );
 -- Barcodes are stored trimmed + upper-case by product_repository; the
 -- case-insensitive UNIQUE index on them is created by database/migrations.py
@@ -50,7 +54,13 @@ CREATE TABLE IF NOT EXISTS transaction_items (
     product_barcode     TEXT NOT NULL REFERENCES products(barcode),
     product_name_at_sale TEXT NOT NULL,
     unit_price_at_sale  REAL NOT NULL CHECK (unit_price_at_sale >= 0),
-    quantity            INTEGER NOT NULL CHECK (quantity > 0)
+    quantity            INTEGER NOT NULL CHECK (quantity > 0),
+    -- The product's cost per unit when it was sold (migration v4), so profit
+    -- is never rewritten by a later cost change. cost_known = 0 where no cost
+    -- was on record (every sale from before costing existed): those lines
+    -- are left out of profit and margin.
+    unit_cost_at_sale   REAL NOT NULL DEFAULT 0 CHECK (unit_cost_at_sale >= 0),
+    cost_known          INTEGER NOT NULL DEFAULT 0 CHECK (cost_known IN (0, 1))
 );
 
 CREATE INDEX IF NOT EXISTS idx_transaction_items_transaction_id
@@ -190,6 +200,10 @@ CREATE TABLE IF NOT EXISTS purchase_price_ranges (
 --                (decided_at NULL) or approved by an admin (decided_at set)
 --   'pending'  - held, awaiting an admin decision (`hold_reason` says why)
 --   'rejected' - an admin declined it; never sent
+--   'partially_received' / 'received' - goods have arrived against a sent
+--                order (received_qty of quantity; migration v4)
+--   'cancelled' - withdrawn before it was fully received; units already
+--                received stay in stock
 -- `product_name_at_order` and `range_min`/`range_max` are snapshots taken
 -- at submission (same idea as transaction_items.unit_price_at_sale), so
 -- the admin sees exactly what the order was judged against even if the
@@ -205,14 +219,22 @@ CREATE TABLE IF NOT EXISTS purchase_orders (
     site                  TEXT NOT NULL,
     range_min             REAL,
     range_max             REAL,
-    status                TEXT NOT NULL CHECK (status IN ('pending', 'sent', 'rejected')),
+    status                TEXT NOT NULL CHECK (status IN
+                          ('pending', 'sent', 'rejected', 'received', 'partially_received', 'cancelled')),
     hold_reason           TEXT CHECK (hold_reason IN ('above_range', 'below_range', 'no_range')),
     created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     decided_at            TEXT,
     decision_note         TEXT,
     -- Who raised / decided it ("name · badge" snapshots; migration v2).
     raised_by             TEXT,
-    decided_by            TEXT
+    decided_by            TEXT,
+    -- Receiving / cancelling (migration v4): units delivered so far, when
+    -- and by whom the latest delivery was booked, and who cancelled it.
+    received_qty          INTEGER NOT NULL DEFAULT 0 CHECK (received_qty >= 0 AND received_qty <= quantity),
+    received_at           TEXT,
+    received_by           TEXT,
+    cancelled_at          TEXT,
+    cancelled_by          TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_purchase_orders_status
@@ -252,6 +274,11 @@ CREATE TABLE IF NOT EXISTS ledger_entries (
     settled_at    TEXT,
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- Who, as "name · badge" text snapshots (migration v5); NULL on rows
+    -- from before auditing. The full story is in ledger_audit below.
+    created_by    TEXT,
+    settled_by    TEXT,
+    updated_by    TEXT,
     CHECK (due_date >= issue_date),
     CHECK (status != 'endorsed' OR (direction = 'in' AND doc_type IN ('check', 'note'))),
     UNIQUE (direction, doc_type, doc_no)
@@ -261,6 +288,33 @@ CREATE INDEX IF NOT EXISTS idx_ledger_entries_due_date
     ON ledger_entries(due_date);
 CREATE INDEX IF NOT EXISTS idx_ledger_entries_site
     ON ledger_entries(site);
+
+-- Append-only trail of every change to a ledger entry (migration v5): one
+-- row per create / edit / clear / endorse / reopen / delete, written in the
+-- SAME transaction as the change. entry_id is deliberately a plain integer
+-- and NOT a foreign key: deleting an entry (allowed only while pending)
+-- must leave its history behind. before_json / after_json are JSON
+-- snapshots of the entry's fields (NULL before a create, NULL after a
+-- delete). Triggers refuse UPDATE and DELETE, so history can't be rewritten.
+CREATE TABLE IF NOT EXISTS ledger_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id    INTEGER NOT NULL,
+    at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    actor_badge TEXT NOT NULL,
+    actor_name  TEXT NOT NULL,
+    action      TEXT NOT NULL CHECK (action IN ('created', 'edited', 'cleared', 'endorsed', 'reopened', 'deleted')),
+    before_json TEXT,
+    after_json  TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_ledger_audit_entry
+    ON ledger_audit(entry_id, id);
+
+CREATE TRIGGER IF NOT EXISTS trg_ledger_audit_no_update BEFORE UPDATE ON ledger_audit
+BEGIN SELECT RAISE(ABORT, 'ledger_audit is append-only'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_ledger_audit_no_delete BEFORE DELETE ON ledger_audit
+BEGIN SELECT RAISE(ABORT, 'ledger_audit is append-only'); END;
 
 -- Shipment / Distribution domain: goods going from a warehouse to a
 -- dealership. depot_app Console's Shipments page creates and dispatches

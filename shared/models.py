@@ -28,6 +28,13 @@ class Product:
     # whether that location has (or had) a stock level row for the product.
     # A location is never alerted about a product it has never stocked.
     stocked_here: bool = True
+    # Weighted-average unit cost (products.cost_price, migration v4); 0 = not
+    # known yet. Kept up to date by purchase-order receipts, or typed in Admin.
+    cost_price: float = 0.0
+
+    @property
+    def cost_known(self) -> bool:
+        return self.cost_price > 0
 
     @property
     def is_below_critical_stock(self) -> bool:
@@ -51,6 +58,11 @@ class LineItem:
     product_name_at_sale: str
     unit_price_at_sale: float
     quantity: int
+    # What one unit cost us when it was sold (transaction_items.unit_cost_at_sale,
+    # migration v4). `cost_known` False = no cost was on record then (every
+    # sale made before costing existed): such a line is left out of profit.
+    unit_cost_at_sale: float = 0.0
+    cost_known: bool = False
 
     @property
     def line_total(self) -> float:
@@ -150,7 +162,9 @@ class AttendanceRecord:
 #
 # Matches database/schema.sql's purchase_orders CHECK constraints exactly.
 # See database/purchase_order_repository.py for the workflow.
-PURCHASE_ORDER_STATUSES = ("pending", "sent", "rejected")
+PURCHASE_ORDER_STATUSES = ("pending", "sent", "rejected", "received", "partially_received", "cancelled")
+# Statuses an order can still take goods in (an approved / sent order, or one already part-delivered).
+RECEIVABLE_STATUSES = ("sent", "partially_received")
 HOLD_REASONS = ("above_range", "below_range", "no_range")
 
 
@@ -194,7 +208,8 @@ class PurchaseOrder:
 
     `status` is "sent" (placed with the supplier - automatically, or
     after admin approval when `decided_at` is set), "pending" (held for
-    admin approval, see `hold_reason`) or "rejected". `product_name` and
+    admin approval, see `hold_reason`), "rejected", then once goods
+    arrive "partially_received" / "received", or "cancelled". `product_name` and
     `range_min`/`range_max` are snapshots from submission time.
     Timestamps are the database's UTC ISO strings.
     """
@@ -215,6 +230,12 @@ class PurchaseOrder:
     decision_note: str | None = None
     raised_by: str | None = None  # "name · badge" of who raised it (None: before sign-in existed)
     decided_by: str | None = None  # "name · badge" of the admin who approved/rejected it
+    # Receiving (migration v4): units delivered so far, and who/when.
+    received_qty: int = 0
+    received_at: str | None = None  # the latest delivery
+    received_by: str | None = None
+    cancelled_at: str | None = None
+    cancelled_by: str | None = None
 
     @property
     def number(self) -> str:
@@ -232,7 +253,29 @@ class PurchaseOrder:
 
     @property
     def was_approved(self) -> bool:
-        return self.status == "sent" and self.decided_at is not None
+        """Held, then approved by an admin (it may since have been delivered)."""
+        return self.status in ("sent", "partially_received", "received") and self.decided_at is not None
+
+    @property
+    def raised_by_badge(self) -> str:
+        """The badge in the "name · badge" snapshot of who raised the order,
+        upper-case ("" when nobody was signed in or it predates sign-in)."""
+        _, dot, badge = (self.raised_by or "").rpartition("·")
+        return badge.strip().upper() if dot else ""
+
+    @property
+    def remaining_qty(self) -> int:
+        """Units still due: 0 once received in full, and for a cancelled /
+        rejected / still-pending order (nothing more can be taken in)."""
+        return max(0, self.quantity - self.received_qty) if self.status in RECEIVABLE_STATUSES else 0
+
+    @property
+    def can_receive(self) -> bool:
+        return self.status in RECEIVABLE_STATUSES and self.remaining_qty > 0
+
+    @property
+    def can_be_cancelled_by_admin(self) -> bool:
+        return self.status in ("pending", "sent", "partially_received")
 
 
 # --- Treasury & Ledger ---------------------------------------------------
@@ -278,6 +321,11 @@ class LedgerEntry:
     id: int | None = None
     settled_at: str | None = None
     created_at: str | None = None
+    # Who did it ("name · badge" text snapshots; None on rows from before
+    # the audit trail existed). The full history is ledger_audit.
+    created_by: str | None = None
+    settled_by: str | None = None
+    updated_by: str | None = None
 
     @property
     def is_open(self) -> bool:
@@ -294,6 +342,30 @@ class LedgerEntry:
         english = LEDGER_DOC_TYPE_LABELS.get(self.doc_type, self.doc_type)
         label = enum_label("doc_type", self.doc_type)
         return english if label == self.doc_type else label
+
+
+LEDGER_AUDIT_ACTIONS = ("created", "edited", "cleared", "endorsed", "reopened", "deleted")
+
+
+@dataclass
+class LedgerAuditRecord:
+    """One row of the ledger's append-only audit trail: who did what to
+    entry `entry_id`, when (`at`, a UTC db timestamp), and the entry's
+    fields (a dict) before and after - `before` is None for a creation,
+    `after` None for a deletion."""
+
+    id: int
+    entry_id: int
+    at: str
+    actor_badge: str
+    actor_name: str
+    action: str
+    before: dict | None = None
+    after: dict | None = None
+
+    @property
+    def actor_label(self) -> str:
+        return f"{self.actor_name} · {self.actor_badge}"
 
 
 # --- Shipments / Distribution --------------------------------------------

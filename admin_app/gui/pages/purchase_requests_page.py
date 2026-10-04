@@ -43,7 +43,11 @@ from shared.formatting import format_amount, local_datetime_text
 from shared.models import PriceRange, Product, PurchaseOrder
 from shared import current_session
 
-_STATUS_FILTERS = (("All", None), ("Awaiting approval", "pending"), ("Sent", "sent"), ("Rejected", "rejected"))
+_STATUS_FILTERS = (
+    ("All", None), ("Awaiting approval", "pending"), ("Sent", "sent"), ("Partially received", "partially_received"),
+    ("Received", "received"), ("Rejected", "rejected"), ("Cancelled", "cancelled"),
+)
+_ACTIONS_COLUMN = 10  # the orders table's last column: Cancel on orders still waiting for goods
 
 
 def order_status_label(order: PurchaseOrder) -> str:
@@ -51,6 +55,13 @@ def order_status_label(order: PurchaseOrder) -> str:
         return enum_label("po_status", "Awaiting approval")
     if order.status == "rejected":
         return enum_label("po_status", "Rejected")
+    if order.status == "cancelled":
+        return enum_label("po_status", "Cancelled")
+    if order.status in ("received", "partially_received"):
+        label = enum_label("po_status", "Received" if order.status == "received" else "Partially received")
+        return tr("admin.purchase.status_progress").format(
+            label=label, received=order.received_qty, quantity=order.quantity
+        )
     return enum_label("po_status", "Approved · sent" if order.was_approved else "Sent")
 
 
@@ -58,8 +69,8 @@ def _status_color(order: PurchaseOrder) -> str:
     p = CLASSICAL_PALETTE
     if order.status == "pending":
         return p["accent"]
-    if order.status == "rejected":
-        return p["alert_critical"]
+    if order.status in ("rejected", "cancelled"):
+        return p["alert_critical"] if order.status == "rejected" else p["text_secondary"]
     return p["alert_success"]
 
 
@@ -84,6 +95,7 @@ class PurchaseRequestsPage(AdminPage):
         # then, and after a failed one - so the next check always reloads).
         self._pending_ids: list[int] | None = None
         self._load_error: str | None = None
+        self._cancel_buttons: dict[int, CompactButton] = {}
 
         self.body_layout().addWidget(self._build_kpi_row())
 
@@ -127,10 +139,15 @@ class PurchaseRequestsPage(AdminPage):
         self._sent_approved_item = stat_breakdown_item(tr("admin.purchase.i_approved"), "0")
         self._sent_card.footer_layout().addWidget(self._sent_direct_item)
         self._sent_card.footer_layout().addWidget(self._sent_approved_item)
+        self._delivered_card = StatCard(tr("admin.purchase.kpi_delivered"), "—")
+        self._delivered_full_item = stat_breakdown_item(tr("admin.purchase.i_full"), "0")
+        self._delivered_partial_item = stat_breakdown_item(tr("admin.purchase.i_partial"), "0")
+        self._delivered_card.footer_layout().addWidget(self._delivered_full_item)
+        self._delivered_card.footer_layout().addWidget(self._delivered_partial_item)
         self._rejected_card = StatCard(tr("admin.purchase.kpi_rejected"), "—")
         self._ranges_item = stat_breakdown_item(tr("admin.purchase.i_ranges"), "0")
         self._rejected_card.footer_layout().addWidget(self._ranges_item)
-        for card in (self._pending_card, self._sent_card, self._rejected_card):
+        for card in (self._pending_card, self._sent_card, self._delivered_card, self._rejected_card):
             layout.addWidget(card, stretch=1)
         return row
 
@@ -179,11 +196,11 @@ class PurchaseRequestsPage(AdminPage):
         section.add_header_control(self._filter_input)
         self._orders_table = styled_table(
             [tr(f"admin.purchase.ocol_{key}") for key in (
-                "po", "created", "site", "item", "supplier", "qty", "unit", "total", "band", "status")]
+                "po", "created", "site", "item", "supplier", "qty", "unit", "total", "band", "status", "actions")]
         )
         header = self._orders_table.horizontalHeader()
         header.setStretchLastSection(False)
-        for column in (0, 1, 5, 6, 7, 8, 9):
+        for column in (0, 1, 5, 6, 7, 8, 9, _ACTIONS_COLUMN):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
         for column in (2, 4):  # site, supplier: long free text - fixed width, elided
             header.setSectionResizeMode(column, QHeaderView.Interactive)
@@ -214,6 +231,8 @@ class PurchaseRequestsPage(AdminPage):
         pending = [o for o in self._orders if o.status == "pending"]
         sent = [o for o in self._orders if o.status == "sent"]
         rejected = [o for o in self._orders if o.status == "rejected"]
+        received = [o for o in self._orders if o.status == "received"]
+        partial = [o for o in self._orders if o.status == "partially_received"]
         self._pending_ids = sorted(o.id for o in pending)
 
         self._queue.set_orders(pending)
@@ -227,6 +246,9 @@ class PurchaseRequestsPage(AdminPage):
         self._sent_card.set_value(str(len(sent)))
         self._sent_direct_item.layout().itemAt(1).widget().setText(str(sum(1 for o in sent if not o.was_approved)))
         self._sent_approved_item.layout().itemAt(1).widget().setText(str(sum(1 for o in sent if o.was_approved)))
+        self._delivered_card.set_value(str(len(received) + len(partial)))
+        self._delivered_full_item.layout().itemAt(1).widget().setText(str(len(received)))
+        self._delivered_partial_item.layout().itemAt(1).widget().setText(str(len(partial)))
         self._rejected_card.set_value(str(len(rejected)))
         self._ranges_item.layout().itemAt(1).widget().setText(
             tr("admin.purchase.ranges_of").format(n=len(self._ranges), total=len(self._products))
@@ -242,11 +264,13 @@ class PurchaseRequestsPage(AdminPage):
         self._load_error = tr("admin.purchase.load_failed").format(error=exc)
         self._queue.set_error(self._load_error)
         self._held_total_label.setText("")
-        for card in (self._pending_card, self._sent_card, self._rejected_card):
+        for card in (self._pending_card, self._sent_card, self._delivered_card, self._rejected_card):
             card.set_value("—")
         self._pending_value_item.layout().itemAt(1).widget().setText("—")
         self._sent_direct_item.layout().itemAt(1).widget().setText("—")
         self._sent_approved_item.layout().itemAt(1).widget().setText("—")
+        self._delivered_full_item.layout().itemAt(1).widget().setText("—")
+        self._delivered_partial_item.layout().itemAt(1).widget().setText("—")
         self._ranges_item.layout().itemAt(1).widget().setText("—")
         self._render_ranges()
         self._render_orders()
@@ -286,6 +310,8 @@ class PurchaseRequestsPage(AdminPage):
     def _render_orders(self) -> None:
         status = _STATUS_FILTERS[max(self._filter_input.currentIndex(), 0)][1]
         rows = [o for o in self._orders if status is None or o.status == status]
+        self._orders_table.setRowCount(0)  # drops the old rows' Cancel buttons with them
+        self._cancel_buttons = {}
         self._orders_table.setRowCount(len(rows))
         for row, order in enumerate(rows):
             band = (
@@ -315,10 +341,30 @@ class PurchaseRequestsPage(AdminPage):
                                + (tr("admin.purchase.tt_by").format(who=order.decided_by) if order.decided_by else ""))
             if order.decision_note:
                 tooltip.append(order.decision_note)
+            if order.received_at:
+                tooltip.append(tr("admin.purchase.tt_received").format(
+                    when=local_datetime_text(order.received_at), who=order.received_by or "—"))
+            if order.cancelled_at:
+                tooltip.append(tr("admin.purchase.tt_cancelled").format(
+                    when=local_datetime_text(order.cancelled_at), who=order.cancelled_by or "—"))
             if tooltip:
                 values[9].setToolTip("\n".join(tooltip))
             for column, item in enumerate(values):
                 self._orders_table.setItem(row, column, item)
+            # Everything past "pending" is read-only here except one thing an
+            # administrator may still do: call off an approved order that
+            # hasn't been delivered in full.
+            if order.status in ("sent", "partially_received"):
+                button = CompactButton(tr("admin.purchase.cancel_order"))
+                button.setObjectName(f"cancel-{order.id}")
+                button.clicked.connect(lambda _checked=False, order_id=order.id: self._cancel(order_id))
+                self._cancel_buttons[order.id] = button
+                self._orders_table.setCellWidget(row, _ACTIONS_COLUMN, button)
+
+    def cancel_button(self, order_id: int) -> CompactButton | None:
+        """The Cancel button on an order's row in the history table (None
+        when its row isn't shown or the order can't be cancelled here)."""
+        return self._cancel_buttons.get(order_id)
 
     # --- approvals ---------------------------------------------------------
 
@@ -371,6 +417,38 @@ class PurchaseRequestsPage(AdminPage):
             message = tr("admin.purchase.msg_decided").format(error=exc)
         except (ValueError, *DATABASE_ERRORS) as exc:
             message = tr("admin.purchase.msg_save_failed").format(error=exc)
+        self.reload()
+        self._queue.set_last_action(message)
+
+    # --- cancelling an approved order ----------------------------------------
+
+    def _confirm_cancel(self, order: PurchaseOrder) -> bool:
+        """Cancelling is final (no more goods can be received against the
+        order), so ask first and say what happens to what already arrived.
+        Separate method so tests can answer it without a modal dialog."""
+        if order.received_qty:
+            text = tr("admin.purchase.cancel_q_partial").format(
+                number=order.number, supplier=order.supplier, qty=order.quantity,
+                received=order.received_qty, remaining=order.quantity - order.received_qty,
+            )
+        else:
+            text = tr("admin.purchase.cancel_q").format(
+                number=order.number, supplier=order.supplier, qty=order.quantity, unit=format_amount(order.unit_price),
+            )
+        answer = QMessageBox.question(
+            self, tr("admin.purchase.cancel_title"), text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
+        )
+        return answer == QMessageBox.Yes
+
+    def _cancel(self, order_id: int) -> None:
+        order = next((o for o in self._orders if o.id == order_id), None)
+        if order is None or not self._confirm_cancel(order):
+            return
+        try:
+            done = purchase_order_repository.cancel_order(order_id, current_session.actor())
+            message = tr("admin.purchase.msg_cancelled").format(number=done.number, total=format_amount(done.total))
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            message = tr("admin.purchase.msg_cancel_failed").format(error=exc)
         self.reload()
         self._queue.set_last_action(message)
 

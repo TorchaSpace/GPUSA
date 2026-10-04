@@ -16,13 +16,25 @@ requests" panel + Settings > "Safe Purchase Price Range" (admin side):
    administrator approves the price", as the mockup puts it).
 4. An administrator approves (-> "sent") or rejects (-> "rejected") each
    held order (approve()/reject()).
+5. When the goods arrive, the depot books them against the order
+   (receive_against_order()): in ONE transaction the order's received
+   quantity moves ("sent" / "partially_received" -> "partially_received" /
+   "received"), the units go into the warehouse's stock with a movement row
+   (stock_repository.receive_in), and the product's weighted-average cost
+   is updated (shared.costing). Over-receiving, receiving against an order
+   in any other state, or into a full / inactive warehouse is refused and
+   nothing is written.
+6. cancel_order() withdraws an order that isn't fully received: an
+   administrator may cancel a pending, sent or partially received one (units
+   already received stay in stock; nothing more can be received); a depot
+   manager only their own pending ones.
 
-Deliberately not in this v1 (see architecture.md): receiving goods
-against an order (receiving still goes through inventory_repository's
-receive_stock()), per-role approval limits / manager tolerance /
-escalation timers from the Settings mockup (there's no auth or roles
-system to hang them on), and a suppliers table (supplier is free text,
-as in the mockup's own form).
+Both writes take BEGIN IMMEDIATE and use conditional UPDATEs checked by
+rowcount, so two machines acting on one order can't both win.
+
+Deliberately not in this v1 (see architecture.md): per-role approval limits
+/ manager tolerance / escalation timers from the Settings mockup, and a
+suppliers table (supplier is free text, as in the mockup's own form).
 """
 
 from __future__ import annotations
@@ -33,16 +45,21 @@ import sqlite3
 from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
+from database import account_repository, stock_repository
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
     PurchaseOrderAlreadyDecidedError,
+    PurchaseOrderCancelNotAllowedError,
     PurchaseOrderNotFoundError,
+    PurchaseOrderOverReceiveError,
+    PurchaseOrderStateError,
 )
 from database.ledger_repository import normalise_site
-from shared.auth import Actor, actor_label
+from shared.auth import Actor, actor_label, normalize_badge_id
+from shared.costing import weighted_average_cost
 from shared.formatting import round_money
-from shared.models import PriceRange, PurchaseOrder, hold_reason_for
+from shared.models import RECEIVABLE_STATUSES, PriceRange, PurchaseOrder, StockLocation, hold_reason_for
 
 # Largest quantity on one order - a typo guard (an extra zero), not a business rule.
 MAX_QUANTITY = 1_000_000
@@ -164,6 +181,11 @@ def _row_to_order(row: sqlite3.Row) -> PurchaseOrder:
         decision_note=row["decision_note"],
         raised_by=row["raised_by"],
         decided_by=row["decided_by"],
+        received_qty=row["received_qty"],
+        received_at=row["received_at"],
+        received_by=row["received_by"],
+        cancelled_at=row["cancelled_at"],
+        cancelled_by=row["cancelled_by"],
     )
 
 
@@ -343,3 +365,150 @@ def reject(order_id: int, note: str | None = None, decided_by: Actor | None = No
     (ValueError without it). Raises PurchaseOrderAlreadyDecidedError if
     it isn't pending anymore."""
     return _decide(order_id, "rejected", note, decided_by)
+
+
+# --- Receiving and cancelling ---------------------------------------------
+
+_NOW = "strftime('%Y-%m-%dT%H:%M:%fZ', 'now')"
+
+
+def _acting_label(actor: Actor | None, key: str) -> str:
+    label = actor_label(actor) if actor is not None else None
+    if not label or not label.strip(" ·"):
+        raise UserError(key)
+    return label
+
+
+def _in_transaction(fn):
+    """Run fn(conn) inside one BEGIN IMMEDIATE transaction (rolled back on
+    any error) and return its result."""
+    with connection_scope() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = fn(conn)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+    return result
+
+
+def _order_row(conn: sqlite3.Connection, order_id: int) -> sqlite3.Row:
+    row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
+    if row is None:
+        raise PurchaseOrderNotFoundError(order_id)
+    return row
+
+
+@_wrap_sqlite
+def receive_against_order(order_id: int, quantity: int, actor: Actor | None,
+                          warehouse_location: StockLocation) -> PurchaseOrder:
+    """Book a delivery of `quantity` units against an order, into
+    `warehouse_location`. Returns the updated order.
+
+    All or nothing, in one transaction: the order's received quantity and
+    status (partially_received, or received once it reaches the ordered
+    quantity), the warehouse's stock level and the company total, the
+    'receive' stock movement (referencing the PO number) and the product's
+    new weighted-average cost. If anything fails - warehouse inactive or
+    full, product deactivated - none of it is kept.
+
+    Raises ValueError (UserError) for a missing actor, a quantity that
+    isn't a whole number above 0, or a location that isn't a warehouse;
+    PurchaseOrderNotFoundError; PurchaseOrderStateError unless the order is
+    'sent' (approved) or 'partially_received';
+    PurchaseOrderOverReceiveError if `quantity` is more than is still due;
+    LocationInactiveError / CapacityExceededError / UnknownLocationError
+    from the warehouse."""
+    received_by = _acting_label(actor, "err.po_receive_needs_actor")
+    if isinstance(quantity, bool) or not isinstance(quantity, int):
+        raise UserError("err.qty_whole")
+    if quantity <= 0:
+        raise UserError("err.qty_positive")
+    if not isinstance(warehouse_location, StockLocation) or warehouse_location.kind != "warehouse":
+        raise UserError("err.po_receive_warehouse")
+
+    def run(conn):
+        row = _order_row(conn, order_id)
+        order = _row_to_order(row)
+        if row["status"] not in RECEIVABLE_STATUSES:
+            raise PurchaseOrderStateError(order.number, row["status"], "received")
+        remaining = int(row["quantity"]) - int(row["received_qty"])
+        if quantity > remaining:
+            raise PurchaseOrderOverReceiveError(order.number, quantity, remaining)
+
+        product = conn.execute(
+            "SELECT stock_quantity, cost_price FROM products WHERE barcode = ?", (row["product_barcode"],)
+        ).fetchone()
+        if product is None:
+            raise ProductNotFoundError(row["product_barcode"])
+        on_hand_before, old_cost = int(product["stock_quantity"]), float(product["cost_price"])
+
+        # The conditional UPDATE is the real guard (status and quantity
+        # re-checked by the same statement that changes them); the reads
+        # above only give clear messages.
+        cursor = conn.execute(
+            "UPDATE purchase_orders SET received_qty = received_qty + ?, "
+            "status = CASE WHEN received_qty + ? >= quantity THEN 'received' ELSE 'partially_received' END, "
+            f"received_at = {_NOW}, received_by = ? "
+            "WHERE id = ? AND status IN ('sent', 'partially_received') AND received_qty + ? <= quantity",
+            (quantity, quantity, received_by, order_id, quantity),
+        )
+        if cursor.rowcount == 0:
+            raise PurchaseOrderStateError(order.number, row["status"], "received")
+
+        stock_repository.receive_in(
+            conn, warehouse_location, row["product_barcode"], quantity,
+            note=f"Received against {order.number} ({row['supplier']})", actor=actor, reference=order.number,
+        )
+        conn.execute(
+            f"UPDATE products SET cost_price = ?, updated_at = {_NOW} WHERE barcode = ?",
+            (weighted_average_cost(on_hand_before, old_cost, quantity, float(row["unit_price"])),
+             row["product_barcode"]),
+        )
+        return _row_to_order(_order_row(conn, order_id))
+
+    return _in_transaction(run)
+
+
+@_wrap_sqlite
+def cancel_order(order_id: int, actor: Actor | None) -> PurchaseOrder:
+    """Cancel an order that isn't fully received. Returns the updated order.
+
+    Who may: an administrator - a pending, sent (approved) or partially
+    received order (the units already received stay in stock; nothing more
+    can be received); a depot manager - only their OWN pending orders. The
+    role is read from the actor's account in the database, not trusted from
+    the caller.
+
+    Raises ValueError (UserError) without an actor; PurchaseOrderNotFoundError;
+    PurchaseOrderStateError if the order is received, rejected or already
+    cancelled (also when another machine got there first);
+    PurchaseOrderCancelNotAllowedError when this person may not cancel it."""
+    cancelled_by = _acting_label(actor, "err.po_cancel_needs_actor")
+
+    def run(conn):
+        row = _order_row(conn, order_id)
+        order = _row_to_order(row)
+        status = row["status"]
+        role = account_repository.live_role(conn, actor.badge_id)
+        if role not in ("admin", "depot_manager"):
+            raise PurchaseOrderCancelNotAllowedError(order.number, status, "role")
+        if status not in ("pending", "sent", "partially_received"):
+            raise PurchaseOrderStateError(order.number, status, "cancelled")
+        if role == "depot_manager":
+            if status != "pending":
+                raise PurchaseOrderCancelNotAllowedError(order.number, status, "admin_only")
+            if order.raised_by_badge != normalize_badge_id(actor.badge_id):
+                raise PurchaseOrderCancelNotAllowedError(order.number, status, "not_yours")
+        cursor = conn.execute(
+            f"UPDATE purchase_orders SET status = 'cancelled', cancelled_at = {_NOW}, cancelled_by = ? "
+            "WHERE id = ? AND status = ?",
+            (cancelled_by, order_id, status),
+        )
+        if cursor.rowcount == 0:
+            raise PurchaseOrderStateError(order.number, _order_row(conn, order_id)["status"], "cancelled")
+        return _row_to_order(_order_row(conn, order_id))
+
+    return _in_transaction(run)

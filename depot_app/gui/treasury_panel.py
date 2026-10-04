@@ -50,7 +50,9 @@ from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.ledger_entry_dialog import LedgerEntryDialog, depot_type_label
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared import current_session
 from shared.formatting import format_amount
+from shared.i18n import UserError, tr
 from shared.models import LedgerEntry
 from shared.treasury import display_status, is_overdue, summarize
 
@@ -340,6 +342,9 @@ class TreasuryPanel(QWidget):
         return dialog.exec() == QDialog.Accepted
 
     def _record(self) -> None:
+        if current_session.actor() is None:  # every ledger change is recorded under a name
+            self._message.setText(tr("err.ledger_actor_required"))
+            return
         try:
             names = ledger_repository.known_counterparties()
         except (ValueError, *DATABASE_ERRORS):
@@ -347,7 +352,10 @@ class TreasuryPanel(QWidget):
         dialog = LedgerEntryDialog(self._site, names, self.today(), self)
         while self._run_dialog(dialog):
             try:
-                saved = ledger_repository.create(dialog.result_entry())
+                actor = current_session.actor()
+                if actor is None:  # signed out while the dialog was open
+                    raise UserError("err.ledger_actor_required")
+                saved = ledger_repository.create(dialog.result_entry(), actor)
             except (ValueError, *DATABASE_ERRORS) as exc:
                 dialog.show_error(f"Couldn't save: {exc}")
                 continue

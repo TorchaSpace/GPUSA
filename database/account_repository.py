@@ -89,6 +89,16 @@ def _fetch(conn, badge_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
+def live_role(conn, badge_id: str) -> str | None:
+    """The role the badge's account holds RIGHT NOW (read from the open
+    connection, so it is part of the caller's transaction), or None when
+    there is no account, it is switched off, or its employee is inactive."""
+    row = _fetch(conn, badge_id)
+    if row is None or not row["is_active"] or not row["employee_active"]:
+        return None
+    return row["role"]
+
+
 def _fetch_by_id(conn, account_id: int) -> sqlite3.Row | None:
     return conn.execute(_SELECT + " WHERE a.id = ?", (account_id,)).fetchone()
 
@@ -141,6 +151,20 @@ def is_session_valid(session: Session | None) -> bool:
         and row["role"] == session.role
         and auth.can_open(row["role"], session.area)
     )
+
+
+def require_actor_allowed(conn: sqlite3.Connection, actor: Actor | None, area: str) -> None:
+    """SessionInvalidError unless `actor` - identified by badge, which is all
+    an Actor carries - still has an account that is switched on, belongs to
+    an active employee, and has a role that may open `area` TODAY. Reads on
+    the caller's connection, so a repository can check it inside the very
+    transaction it is about to write in (POS: finalising a sale). No actor
+    (setup scripts, tests) skips the check, as everywhere else."""
+    if actor is None:
+        return
+    row = _fetch(conn, actor.badge_id)
+    if row is None or not row["is_active"] or not row["employee_active"] or not auth.can_open(row["role"], area):
+        raise SessionInvalidError()
 
 
 def require_valid_session(session: Session | None) -> None:

@@ -177,6 +177,62 @@ class PurchaseOrderAlreadyDecidedError(DataAccessError):
         self.status = status
 
 
+class PurchaseOrderStateError(DataAccessError):
+    """Raised by purchase_order_repository.receive_against_order() /
+    cancel_order() when the order's CURRENT status doesn't allow that -
+    e.g. receiving against a pending, rejected, cancelled or fully
+    received order, or cancelling one that is already received. `status`
+    is its current status, `action` what was attempted ('received' /
+    'cancelled')."""
+
+    def __init__(self, order_number: str, status: str, action: str):
+        super().__init__(f"{order_number} can't be {action} - it is {status.replace('_', ' ')!r}")
+        self._localize(
+            "err.po_state", number=order_number, action=_word("po_action", action),
+            status=_r(enum_label("status_plain", status)),
+        )
+        self.order_number = order_number
+        self.status = status
+        self.action = action
+
+
+class PurchaseOrderOverReceiveError(DataAccessError):
+    """Refused: receiving more units than an order still has due."""
+
+    def __init__(self, order_number: str, requested: int, remaining: int):
+        super().__init__(
+            f"{order_number}: {requested:,} units can't be received - only {remaining:,} units still due on this order."
+        )
+        self._localize(
+            "err.po_over_receive", number=order_number, requested=format_int(requested),
+            remaining=format_int(remaining),
+        )
+        self.order_number = order_number
+        self.requested = requested
+        self.remaining = remaining
+
+
+class PurchaseOrderCancelNotAllowedError(DataAccessError):
+    """Refused: the signed-in person may not cancel this order. `reason` is
+    'role' (no depot-manager or administrator account), 'admin_only' (a
+    depot manager can only cancel an order still awaiting approval) or
+    'not_yours' (a depot manager's own pending orders only)."""
+
+    _KEYS = {
+        "role": ("err.po_cancel_role", "Your account can't cancel purchase orders."),
+        "admin_only": ("err.po_cancel_admin_only", "Only an administrator can cancel {number} - it is already {status}."),
+        "not_yours": ("err.po_cancel_not_yours", "{number} was raised by someone else - only they or an administrator can cancel it."),
+    }
+
+    def __init__(self, order_number: str, status: str, reason: str):
+        key, english_text = self._KEYS[reason]
+        super().__init__(english_text.format(number=order_number, status=status.replace("_", " ")))
+        self._localize(key, number=order_number, status=enum_label("status_plain", status))
+        self.order_number = order_number
+        self.status = status
+        self.reason = reason
+
+
 class LedgerEntryNotFoundError(DataAccessError):
     """Raised when a lookup by ledger entry id matches no entry."""
 
@@ -489,3 +545,21 @@ class ProductInactiveError(ProductNotFoundError):
         DataAccessError.__init__(self, f"Product {barcode!r} is deactivated and can't be used")
         self._localize("err.product_inactive", barcode=_r(barcode))
         self.barcode = barcode
+
+
+class PriceChangedError(DataAccessError):
+    """Raised by transaction_repository.finalize_transaction() when a cart
+    line's price is no longer the product's current price (an admin changed
+    it between adding the line and charging). Nothing was written.
+
+    `changes` lists every line that moved as (barcode, old_price, new_price)
+    tuples - old is what the cart held, new what the database holds now."""
+
+    def __init__(self, changes):
+        self.changes = [(str(b), float(old), float(new)) for b, old, new in changes]
+        lines = "; ".join(f"{b!r}: {old:,.2f} -> {new:,.2f}" for b, old, new in self.changes)
+        super().__init__(f"Price changed since the item was added to the cart ({lines}). Nothing was charged.")
+        self._localize("err.price_changed", lines="; ".join(
+            f"{b}: {old:,.2f} → {new:,.2f}" for b, old, new in self.changes))
+        first = self.changes[0] if self.changes else ("", 0.0, 0.0)
+        self.barcode, self.old_price, self.new_price = first

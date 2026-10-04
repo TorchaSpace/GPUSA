@@ -21,11 +21,13 @@ from PySide6.QtCore import QAbstractTableModel, QModelIndex, Qt
 from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
+from shared.costing import unit_margin_percent
+from shared.formatting import format_amount, format_number
 from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.models import Product
 
-_COLUMN_KEYS = ("sku", "product", "total", "reorder", "status")
+_COLUMN_KEYS = ("sku", "product", "total", "reorder", "status", "cost", "margin")
 
 
 def _columns() -> tuple[str, ...]:
@@ -41,6 +43,23 @@ def status_for(product: Product) -> tuple[str, str]:
     if product.is_below_critical_stock:
         return enum_label("stock_status", "Low stock"), p["alert_warning"]
     return enum_label("stock_status", "In stock"), p["alert_success"]
+
+
+def cost_text(product: Product) -> str:
+    """The unit cost, or "—" while it isn't known (0 = not set)."""
+    return format_amount(product.cost_price) if product.cost_price > 0 else "—"
+
+
+def margin_text(product: Product) -> str:
+    """The unit margin at the current price ("40.0%", negative when the cost is
+    above the price), or "—" while the cost is unknown."""
+    margin = unit_margin_percent(product.price, product.cost_price)
+    return "—" if margin is None else f"{format_number(margin, 1)}%"
+
+
+def margin_color(product: Product) -> str | None:
+    margin = unit_margin_percent(product.price, product.cost_price)
+    return CLASSICAL_PALETTE["alert_critical"] if margin is not None and margin < 0 else None
 
 
 class InventoryTableModel(QAbstractTableModel):
@@ -84,9 +103,15 @@ class InventoryTableModel(QAbstractTableModel):
                 return str(product.critical_stock_level)
             if column == 4:
                 return status_for(product)[0]
+            if column == 5:
+                return cost_text(product)
+            if column == 6:
+                return margin_text(product)
         elif role == Qt.ForegroundRole and column == 4:
             return QColor(status_for(product)[1])
-        elif role == Qt.TextAlignmentRole and column in (2, 3):
+        elif role == Qt.ForegroundRole and column == 6 and margin_color(product):
+            return QColor(margin_color(product))
+        elif role == Qt.TextAlignmentRole and column in (2, 3, 5, 6):
             return Qt.AlignRight | Qt.AlignVCenter
         return None
 

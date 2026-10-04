@@ -22,20 +22,26 @@ stamped).
 from __future__ import annotations
 
 import calendar
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime, timedelta
 
 from shared.builders.report_builder import (
+    PRODUCT_SECTION_TITLE,
     NumericText,
+    ProfitSummary,
     ReportDocument,
     ReportSection,
     amount_text,
     build_sales_report,
     cents_to_amount,
     count_text,
+    margin_cell,
+    profit_cell,
+    profit_summary,
+    profit_totals_rows,
     transaction_cents,
 )
-from shared.formatting import day_month_text, localize_number, long_date_text
+from shared.formatting import day_month_text, format_number, localize_number, long_date_text
 from shared.i18n import tr
 from shared.models import Dealership, Transaction
 
@@ -188,6 +194,18 @@ def revenue_between(transactions: list[Transaction], start: date, end: date) -> 
     ))
 
 
+def profit_between(transactions: list[Transaction], start: date, end: date) -> ProfitSummary:
+    """Revenue / known-cost profit of the sales whose local calendar day is
+    in [start, end] - the profit twin of revenue_between."""
+    return profit_summary(t for t in transactions if t.created_at is not None and start <= t.created_at.date() <= end)
+
+
+def margin_display(margin: float | None) -> str:
+    """"39.0%" for the screen (a decimal comma in Turkish), "—" when there is
+    no margin to show."""
+    return "—" if margin is None else f"{format_number(margin, 1)}%"
+
+
 def period_comparison(
     period: Period, transactions: list[Transaction], previous: list[Transaction]
 ) -> tuple[float, float, float | None]:
@@ -282,6 +300,7 @@ class DealershipRevenue:
     revenue: float
     week: list[float]  # last 7 days of revenue, oldest first
     trend: float | None  # percent change, last 3 days vs the 4 before
+    profit: ProfitSummary = field(default_factory=ProfitSummary)  # gross profit over the same sales
 
 
 def _week_trend(week: list[float]) -> float | None:
@@ -321,7 +340,8 @@ def top_dealerships(
             continue
         week = daily_totals(week_by_code.get(dealership.code, []), today - timedelta(days=6), today)
         ranked.append(
-            DealershipRevenue(dealership.code, dealership.name, dealership.region, revenue, week, _week_trend(week))
+            DealershipRevenue(dealership.code, dealership.name, dealership.region, revenue, week, _week_trend(week),
+                              profit_summary(sales))
         )
     ranked.sort(key=lambda d: (-d.revenue, d.name))
     return ranked[:limit]
@@ -353,6 +373,7 @@ def build_period_report(
     revenue = cents_to_amount(sum(transaction_cents(t) for t in transactions))
 
     totals_rows: list[tuple[str, ...]] = [("Sales", count_text(len(transactions))), ("Revenue", amount_text(revenue))]
+    totals_rows += profit_totals_rows(profit_summary(transactions))
     if previous is not None:
         _, prior, change = period_comparison(period, transactions, previous)
         totals_rows += [
@@ -372,21 +393,24 @@ def build_period_report(
     daily_rows = [(f"{period.start + timedelta(days=i):%Y-%m-%d}", amount_text(value)) for i, value in enumerate(series)]
 
     region_rows = [(region, amount_text(value)) for region, value in revenue_by_region(transactions, dealerships).items()]
-    top_rows = [
-        (count_text(rank), d.name, d.region, amount_text(d.revenue), change_cell(d.trend))
-        for rank, d in enumerate(
-            top_dealerships(transactions, dealerships, period.end, limit=10, week_transactions=week_transactions),
-            start=1,
-        )
-    ]
+    ranking = top_dealerships(transactions, dealerships, period.end, limit=10, week_transactions=week_transactions)
+    with_profit = any(d.profit.has_profit for d in ranking)
+    top_rows = []
+    for rank, d in enumerate(ranking, start=1):
+        row = (count_text(rank), d.name, d.region, amount_text(d.revenue), change_cell(d.trend))
+        if with_profit:
+            row += (profit_cell(d.profit), margin_cell(d.profit.margin))
+        top_rows.append(row)
+    top_title = "Top dealerships (rank, name, region, revenue, 7-day trend" + (
+        ", gross profit, margin %)" if with_profit else ")")
 
     sections = [
         ReportSection("Totals", totals_rows),
         ReportSection("Revenue per day", daily_rows),
         ReportSection("Revenue by region", region_rows),
-        ReportSection("Top dealerships (rank, name, region, revenue, 7-day trend)", top_rows),
+        ReportSection(top_title, top_rows),
     ]
-    sections.extend(section for section in base.sections if section.title == "Per-Product Breakdown")
+    sections.extend(section for section in base.sections if section.title.startswith(PRODUCT_SECTION_TITLE))
     base.sections = sections
     return base
 
@@ -444,6 +468,7 @@ class ReportView:
     regions: list[tuple[str, float, float]]  # (region, revenue, share of total in %)
     top: list[DealershipRevenue]
     sale_count: int
+    profit: ProfitSummary = field(default_factory=ProfitSummary)  # gross profit over the whole window
 
     def day_label(self, index: int) -> str:
         return long_date_text(self.period.start + timedelta(days=index))
@@ -507,5 +532,5 @@ def build_report_view(
         change=change, projected_total=projected_total,
         current=current, previous=prior_series, projection=projection, total_points=total_points,
         x_labels=labels, regions=regions, top=top_dealerships(transactions, dealerships, period.end, week_transactions=week_transactions),
-        sale_count=len(transactions),
+        sale_count=len(transactions), profit=profit_between(transactions, period.start, period.end),
     )

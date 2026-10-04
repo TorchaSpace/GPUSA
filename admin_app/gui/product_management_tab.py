@@ -65,6 +65,8 @@ class ProductManagementTab(VisualTab):
         try:
             if self._popup.is_editing():
                 product_repository.update(product)
+                if self._popup.cost_changed():
+                    product_repository.set_cost(product.barcode, product.cost_price)
             else:
                 product_repository.create(product)
         except (DataAccessError, ValueError, *DATABASE_ERRORS) as exc:

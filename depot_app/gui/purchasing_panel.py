@@ -14,6 +14,14 @@ Recreated from the mockup, field for field:
   a "PO-xxxxx sent" confirmation, each with "New order".
 - "Purchase orders · <site>" table with each order's status.
 
+Beyond the mockup (the order's life after approval): approved orders show
+a "Receive delivery" action - a quantity dialog, booked into THIS depot's
+warehouse in one transaction with the stock (purchase_order_repository.
+receive_against_order) - and the status reads "Received · 40 of 100" /
+"Partially received · 10 of 40". A held order can be cancelled by the
+administrator or by the manager who raised it. Approved orders still
+waiting for goods stay listed however old they are.
+
 Real, not a placeholder: everything goes through
 database.purchase_order_repository - the send-vs-hold decision is made
 there, authoritatively, with the same shared.models.hold_reason_for()
@@ -49,6 +57,7 @@ from PySide6.QtWidgets import (
     QHeaderView,
     QLabel,
     QLineEdit,
+    QMessageBox,
     QTableWidget,
     QTableWidgetItem,
     QVBoxLayout,
@@ -60,11 +69,13 @@ from database import product_repository, purchase_order_repository
 from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
+from depot_app.gui.components.receive_delivery_dialog import ReceiveDeliveryDialog
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
-from shared.formatting import format_amount, local_datetime_text, local_time_text, parse_amount, round_money
+from shared.formatting import format_amount, format_int, local_datetime_text, local_time_text, parse_amount, round_money
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
-from shared.models import PriceRange, Product, PurchaseOrder, hold_reason_for
+from shared.i18n import tr
+from shared.models import PriceRange, Product, PurchaseOrder, StockLocation, hold_reason_for
 from shared import current_session
 
 MAX_QUANTITY = purchase_order_repository.MAX_QUANTITY  # same cap the repository enforces
@@ -72,11 +83,13 @@ _MAX_QUANTITY_DIGITS = len(str(MAX_QUANTITY))
 STATUS_POLL_INTERVAL_MS = 5000
 _TABLE_LIMIT = 20
 
-_STATUS_TEXT = {
-    "pending": "Awaiting Admin Approval",
-    "sent": "Sent",
-    "rejected": "Rejected",
-}
+_ACTIONS_COLUMN = 9
+_ROW_HEIGHT = 52  # room for the action buttons
+
+
+def warehouse_code_of(site: str) -> str:
+    """"WH-01" out of the "WH-01 · İstanbul Merkez" label orders are stamped with."""
+    return (site or "").split("·")[0].strip().upper()
 
 
 def _order_total(price: float, quantity: int) -> float:
@@ -112,9 +125,11 @@ def decision_tooltip(order: PurchaseOrder) -> str:
 
 
 def status_text(order: PurchaseOrder) -> str:
-    if order.was_approved:
-        return "Approved · Sent"
-    return _STATUS_TEXT.get(order.status, order.status)
+    if order.status in ("received", "partially_received"):
+        return tr(f"depot.po.status.{order.status}").format(received=order.received_qty, quantity=order.quantity)
+    if order.status == "sent" and order.was_approved:
+        return tr("depot.po.status.approved")
+    return tr(f"depot.po.status.{order.status}")
 
 
 # --- Small painted pieces ------------------------------------------------
@@ -233,9 +248,13 @@ def _input_style(font_px: int) -> str:
 class PurchasingPanel(QWidget):
     """Raise purchase orders for `site` and watch their status."""
 
-    def __init__(self, site: str, parent: QWidget | None = None):
+    def __init__(self, site: str, parent: QWidget | None = None, warehouse_code: str | None = None):
         super().__init__(parent)
         self._site = site
+        # The warehouse deliveries are booked into: this depot's own.
+        self._warehouse_code = (warehouse_code or warehouse_code_of(site)).upper()
+        self._orders: list[PurchaseOrder] = []
+        self._action_buttons: dict[tuple[str, int], IndustryButton] = {}
         self._products: list[Product] = []
         self._ranges: dict[str, PriceRange] = {}
         self._last_order: PurchaseOrder | None = None
@@ -528,10 +547,17 @@ class PurchasingPanel(QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
         layout.addWidget(_kicker(f"Purchase orders · {self._site}"))
-        self._table = QTableWidget(0, 9)
+        self._action_label = QLabel()
+        self._action_label.setTextFormat(Qt.PlainText)
+        self._action_label.setWordWrap(True)
+        self._action_label.hide()
+        layout.addWidget(self._action_label)
+        self._table = QTableWidget(0, 10)
         self._table.setHorizontalHeaderLabels(
-            ["PO", "Time", "Item", "Supplier", "Qty", "Unit", "Total", "Status", "Admin note"]
+            ["PO", "Time", "Item", "Supplier", "Qty", "Unit", "Total", "Status", "Admin note",
+             tr("depot.po.col_actions")]
         )
+        self._table.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionMode(QTableWidget.NoSelection)
@@ -539,6 +565,7 @@ class PurchasingPanel(QWidget):
         self._table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
         self._table.horizontalHeader().setSectionResizeMode(7, QHeaderView.ResizeToContents)
         self._table.horizontalHeader().setSectionResizeMode(8, QHeaderView.Stretch)
+        self._table.horizontalHeader().setSectionResizeMode(_ACTIONS_COLUMN, QHeaderView.ResizeToContents)
         self._table.setMinimumHeight(220)
         self._table.setStyleSheet(
             f"""
@@ -764,6 +791,19 @@ class PurchasingPanel(QWidget):
                 f"not sent to {html.escape(order.supplier.rstrip('.'))}.{note}",
                 positive=False,
             )
+        elif order.status == "cancelled":
+            self._set_notice(
+                tr("depot.po.banner_cancelled").format(number=html.escape(order.number),
+                                                       supplier=html.escape(order.supplier.rstrip("."))),
+                positive=False,
+            )
+        elif order.status in ("received", "partially_received"):
+            self._set_notice(
+                tr("depot.po.banner_received").format(
+                    number=html.escape(order.number), received=order.received_qty, quantity=order.quantity,
+                    supplier=html.escape(order.supplier)),
+                positive=True,
+            )
         else:
             approved = " (approved by an administrator)" if order.was_approved else ""
             self._set_notice(
@@ -781,9 +821,18 @@ class PurchasingPanel(QWidget):
         # sqlite3 "database is locked" (not a DataAccessError) must just
         # mean "try again next tick", not an exception out of the poller.
         try:
-            return purchase_order_repository.list_orders(site=self._site, limit=_TABLE_LIMIT)
+            recent = purchase_order_repository.list_orders(site=self._site, limit=_TABLE_LIMIT)
+            # An approved order still waiting for its goods must stay on
+            # screen however many newer orders there are.
+            waiting = [
+                o for status in ("sent", "partially_received")
+                for o in purchase_order_repository.list_orders(status=status, site=self._site)
+            ]
         except Exception:
             return None
+        shown = {o.id for o in recent}
+        merged = recent + [o for o in waiting if o.id not in shown]
+        return sorted(merged, key=lambda o: o.id, reverse=True)
 
     def _refresh_orders_now(self) -> None:
         self._on_orders_fetched(self._fetch_orders())
@@ -791,6 +840,7 @@ class PurchasingPanel(QWidget):
     def _on_orders_fetched(self, orders: list[PurchaseOrder] | None) -> None:
         if orders is None:
             return
+        self._orders = orders
         self._fill_table(orders)
         if self._last_order is not None:
             latest = next((o for o in orders if o.id == self._last_order.id), None)
@@ -800,6 +850,8 @@ class PurchasingPanel(QWidget):
 
     def _fill_table(self, orders: list[PurchaseOrder]) -> None:
         p = INDUSTRY_PALETTE
+        self._table.setRowCount(0)  # drops the old rows' buttons with them
+        self._action_buttons = {}
         self._table.setRowCount(len(orders))
         for row, order in enumerate(orders):
             values = [
@@ -826,10 +878,122 @@ class PurchasingPanel(QWidget):
                     if order.status == "pending":
                         item.setBackground(QColor(p["text_primary"]))
                         item.setForeground(QColor(p["background"]))
-                    elif order.status == "sent":
+                    elif order.status in ("sent", "partially_received", "received"):
                         item.setForeground(QColor(p["accent"]))
                     else:
                         item.setForeground(QColor(p["text_secondary"]))
                 if column in (7, 8) and tooltip:
                     item.setToolTip(tooltip)
                 self._table.setItem(row, column, item)
+            self._table.setCellWidget(row, _ACTIONS_COLUMN, self._build_actions(order))
+
+    # --- receiving and cancelling ----------------------------------------
+
+    def _build_actions(self, order: PurchaseOrder) -> QWidget | None:
+        """The row's buttons: "Receive delivery" while goods are still due on
+        an approved order, "Cancel" on a held order this person may cancel."""
+        buttons: list[tuple[str, IndustryButton]] = []
+        if order.can_receive:
+            button = IndustryButton(tr("depot.po.receive_action"), variant="accent")
+            button.clicked.connect(lambda _checked=False, order_id=order.id: self._receive(order_id))
+            buttons.append(("receive", button))
+        if self._can_cancel(order):
+            button = IndustryButton(tr("depot.po.cancel_action"), variant="ghost")
+            button.clicked.connect(lambda _checked=False, order_id=order.id: self._cancel(order_id))
+            buttons.append(("cancel", button))
+        if not buttons:
+            return None
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(4, 4, 4, 4)
+        row.setSpacing(6)
+        for kind, button in buttons:
+            button.setMinimumHeight(36)
+            row.addWidget(button)
+            self._action_buttons[(kind, order.id)] = button
+        return holder
+
+    def action_button(self, kind: str, order_id: int) -> IndustryButton | None:
+        """The "receive" / "cancel" button on an order's row, or None."""
+        return self._action_buttons.get((kind, order_id))
+
+    @staticmethod
+    def _can_cancel(order: PurchaseOrder) -> bool:
+        """A held order: any administrator, or the depot manager who raised
+        it (the repository enforces the same rule from the database)."""
+        session = current_session.get()
+        if session is None or order.status != "pending":
+            return False
+        if session.role == "admin":
+            return True
+        return session.role == "depot_manager" and order.raised_by_badge == session.badge_id.strip().upper()
+
+    def _set_action_message(self, text: str, ok: bool) -> None:
+        p = INDUSTRY_PALETTE
+        if ok:
+            self._action_label.setStyleSheet(
+                f"font-size: 13px; color: {p['accent_900']}; background-color: {p['accent_100']}; "
+                f"border: 1.5px solid {p['accent']}; padding: 8px 12px;")
+        else:
+            self._action_label.setStyleSheet(
+                f"font-size: 13px; color: {p['text_primary']}; background-color: #fff6d6; "
+                f"border: 1px solid #f4b400; padding: 8px 12px;")
+        self._action_label.setText(text)
+        self._action_label.show()
+
+    def _order_by_id(self, order_id: int) -> PurchaseOrder | None:
+        return next((o for o in self._orders if o.id == order_id), None)
+
+    def _ask_receive_quantity(self, order: PurchaseOrder) -> int | None:
+        """The units that arrived, or None if the dialog was cancelled.
+        Separate method so tests can answer it without a modal dialog."""
+        dialog = ReceiveDeliveryDialog(order, self._warehouse_code, self)
+        return dialog.quantity() if dialog.exec() else None
+
+    def _confirm_cancel(self, order: PurchaseOrder) -> bool:
+        """Separate method so tests can answer it without a modal dialog."""
+        answer = QMessageBox.question(
+            self, tr("depot.po.cancel_title"),
+            tr("depot.po.cancel_q").format(number=order.number, supplier=order.supplier,
+                                           quantity=format_int(order.quantity)),
+            QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
+        )
+        return answer == QMessageBox.Yes
+
+    def _receive(self, order_id: int) -> None:
+        order = self._order_by_id(order_id)
+        if order is None:
+            return
+        quantity = self._ask_receive_quantity(order)
+        if not quantity:
+            return
+        try:
+            done = purchase_order_repository.receive_against_order(
+                order_id, quantity, current_session.actor(), StockLocation.warehouse(self._warehouse_code)
+            )
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._set_action_message(tr("depot.po.receive_failed").format(number=order.number, error=exc), ok=False)
+            self._refresh_orders_now()
+            return
+        key = "depot.po.received_all" if done.status == "received" else "depot.po.received_part"
+        self._set_action_message(
+            tr(key).format(number=done.number, quantity=format_int(quantity), warehouse=self._warehouse_code,
+                           received=format_int(done.received_qty), ordered=format_int(done.quantity)),
+            ok=True,
+        )
+        self._refresh_orders_now()
+
+    def _cancel(self, order_id: int) -> None:
+        order = self._order_by_id(order_id)
+        if order is None or not self._confirm_cancel(order):
+            return
+        try:
+            done = purchase_order_repository.cancel_order(order_id, current_session.actor())
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._set_action_message(tr("depot.po.cancel_failed").format(number=order.number, error=exc), ok=False)
+            self._refresh_orders_now()
+            return
+        self._set_action_message(tr("depot.po.cancelled").format(number=done.number), ok=True)
+        if self._last_order is not None and self._last_order.id == done.id:
+            self._show_form()  # the "awaiting approval" banner is about an order that no longer is
+        self._refresh_orders_now()

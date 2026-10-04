@@ -31,6 +31,7 @@ from database.exceptions import (
     ProductNotFoundError,
 )
 from database.stock_repository import level_in, log_movement
+from shared.costing import clean_cost
 from shared.models import UNASSIGNED, Product, StockLocation
 from shared.warehousing import clean_price, normalise_barcode, whole_number
 
@@ -43,6 +44,7 @@ def _row_to_product(row: sqlite3.Row) -> Product:
         stock_quantity=row["stock_quantity"],
         critical_stock_level=row["critical_stock_level"],
         is_active=bool(row["is_active"]),
+        cost_price=row["cost_price"],
     )
 
 
@@ -61,7 +63,7 @@ def _validated(product: Product) -> Product:
     if stock < 0:
         raise UserError("err.stock_negative")
     return Product(barcode=barcode, name=name, price=price, stock_quantity=stock, critical_stock_level=critical,
-                   is_active=bool(product.is_active))
+                   is_active=bool(product.is_active), cost_price=clean_cost(product.cost_price))
 
 
 def _find(conn: sqlite3.Connection, barcode: str) -> sqlite3.Row | None:
@@ -140,9 +142,10 @@ def create(product: Product) -> None:
             try:
                 conn.execute(
                     "INSERT INTO products "
-                    "(barcode, name, price, stock_quantity, critical_stock_level, is_active) "
-                    "VALUES (?, ?, ?, ?, ?, ?)",
-                    (p.barcode, p.name, p.price, p.stock_quantity, p.critical_stock_level, int(p.is_active)),
+                    "(barcode, name, price, stock_quantity, critical_stock_level, is_active, cost_price) "
+                    "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    (p.barcode, p.name, p.price, p.stock_quantity, p.critical_stock_level, int(p.is_active),
+                     p.cost_price),
                 )
             except sqlite3.IntegrityError as exc:
                 if _find(conn, p.barcode) is not None:  # lost a race with another writer
@@ -172,7 +175,9 @@ def update(product: Product) -> None:
     database/stock_repository.py (receipts, dispatches, counts,
     transfers), a sale (transaction_repository) or a shipment
     (shipment_repository), each with an audit row - never a silent edit.
-    Active/inactive is changed with set_active(), not here.
+    Active/inactive is changed with set_active(), not here. The cost is not
+    touched either (it moves with purchase-order receipts, so a form open
+    for a minute must not write back a stale one): use set_cost().
     """
     p = _validated(product)
     with connection_scope() as conn:
@@ -185,6 +190,50 @@ def update(product: Product) -> None:
             "WHERE barcode = ?",
             (p.name, p.price, p.critical_stock_level, row["barcode"]),
         )
+
+
+def set_cost(barcode: str, cost: float) -> float:
+    """Set a product's unit cost by hand (Admin's product form). `cost` is a
+    number >= 0 (0 = unknown), at most MAX_AMOUNT, rounded half-up to cents;
+    raises ValueError (UserError) otherwise and ProductNotFoundError for an
+    unknown barcode. Returns the stored cost. Sales already made keep the
+    cost they were snapshotted with."""
+    cost = clean_cost(cost)
+    with connection_scope() as conn:
+        row = _find(conn, barcode)
+        if row is None:
+            raise ProductNotFoundError(barcode)
+        conn.execute(
+            "UPDATE products SET cost_price = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
+            "WHERE barcode = ?",
+            (cost, row["barcode"]),
+        )
+    return cost
+
+
+def costs_for(barcodes, conn: sqlite3.Connection | None = None) -> dict[str, tuple[float, bool]]:
+    """What each product costs per unit right now, for the sale snapshot:
+    {barcode as given: (cost_price, cost_known)}, cost_known being
+    cost_price > 0. A barcode that matches no product maps to (0.0, False).
+    Barcodes match in any letter case.
+
+    Pass the open `conn` when calling from inside another repository's
+    transaction (transaction_repository.finalize_transaction) so the cost
+    read is part of the same snapshot; with no `conn` it opens its own."""
+    wanted = list(dict.fromkeys(barcodes))
+
+    def read(connection: sqlite3.Connection) -> dict[str, tuple[float, bool]]:
+        found: dict[str, tuple[float, bool]] = {}
+        for barcode in wanted:
+            row = _find(connection, barcode)
+            cost = float(row["cost_price"]) if row is not None else 0.0
+            found[barcode] = (cost, cost > 0)
+        return found
+
+    if conn is not None:
+        return read(conn)
+    with connection_scope() as own:
+        return read(own)
 
 
 def set_active(barcode: str, active: bool) -> None:

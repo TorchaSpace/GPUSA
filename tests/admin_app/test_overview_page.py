@@ -118,3 +118,44 @@ def test_page_opens_on_an_empty_database(qapp):
     assert widget._warehouse_card._value_label.text() == "—"
     assert widget._stock_table.rowCount() == 0
     widget.close()
+
+
+# --- gross profit on the revenue card ----------------------------------------
+
+
+def _footer_texts(page) -> list[str]:
+    from PySide6.QtWidgets import QLabel
+
+    return [label.text() for label in page._revenue_card.findChildren(QLabel)]
+
+
+def _set_snapshot(cost: float, known: bool) -> None:
+    with connection_scope() as conn:
+        conn.execute("UPDATE transaction_items SET unit_cost_at_sale = ?, cost_known = ?", (cost, 1 if known else 0))
+        conn.commit()
+
+
+def test_revenue_card_shows_gross_profit_and_margin_when_costs_are_known(qapp, seeded):
+    from admin_app.gui.pages.overview_page import OverviewPage
+
+    _set_snapshot(0.5, True)  # September: sold 1 at 40 -> price 1.0 is the product's, cost 0.5
+    page = OverviewPage(today_provider=lambda: TODAY)
+    page.show()
+    pump(qapp)
+    texts = _footer_texts(page)
+    assert "Gross profit" in texts and "Margin" in texts
+    assert not any("of revenue" in t for t in texts)
+    page.close()
+
+
+def test_revenue_card_says_how_much_revenue_has_no_cost(qapp, seeded):
+    from admin_app.gui.pages.overview_page import OverviewPage
+
+    _set_snapshot(0.0, False)
+    page = OverviewPage(today_provider=lambda: TODAY)
+    page.show()
+    pump(qapp)
+    texts = _footer_texts(page)
+    assert "Gross profit" not in texts
+    assert "Cost unknown" in texts and "100% of revenue" in texts
+    page.close()

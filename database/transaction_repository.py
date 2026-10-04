@@ -5,12 +5,22 @@ to live.
 """
 
 from __future__ import annotations
+import dataclasses
+import sqlite3
 from datetime import datetime
 
+from database import account_repository, product_repository
 from database.connection import connection_scope
-from database.exceptions import InsufficientStockError, ProductNotFoundError, TransactionNotFoundError
+from database.exceptions import (
+    DealershipInactiveError,
+    InsufficientStockError,
+    PriceChangedError,
+    ProductInactiveError,
+    ProductNotFoundError,
+    TransactionNotFoundError,
+)
 from database.stock_repository import change_level, level_in, require_location
-from shared.auth import Actor, actor_label
+from shared.auth import AREA_POS, Actor, actor_label
 from shared.formatting import to_db_timestamp
 from shared.models import UNASSIGNED, LineItem, StockLocation, Transaction
 
@@ -27,10 +37,23 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
 
     Runs as a single DB transaction: insert the transaction + its line
     items, and decrement each product's stock at `location`, all or
-    nothing. Raises InsufficientStockError (without writing anything) if
-    any line item needs more than `location` holds, and ProductNotFoundError
-    if a line item references a barcode that no longer exists (e.g. an
-    admin deleted it mid-sale) - either way nothing is written.
+    nothing. THIS is where a sale is authoritative - the POS page's own
+    pre-check is only a courtesy, because a price, a product, an account or
+    a dealership can change between that check and the charge. Inside the
+    one BEGIN IMMEDIATE transaction it re-reads everything and refuses,
+    writing nothing, with:
+    - DealershipInactiveError  if `location` is a dealership switched off in Admin;
+    - SessionInvalidError      if `cashier` no longer has an active account
+                               that may use POS (switched off, employee
+                               deactivated, role changed);
+    - ProductNotFoundError / ProductInactiveError  for a barcode that is
+                               gone / deactivated;
+    - PriceChangedError        if any line's unit_price_at_sale differs (in
+                               cents) from the product's price right now -
+                               it lists every such line (barcode, old, new);
+    - InsufficientStockError   if any line needs more than `location` holds.
+    The cost snapshot (transaction_items.unit_cost_at_sale / cost_known) is
+    taken from the same read: cost_known only when cost_price > 0.
 
     BEGIN IMMEDIATE takes the write lock up front rather than on first
     write, since WAL mode still serializes writers and we want a clean
@@ -50,13 +73,32 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
         conn.execute("BEGIN IMMEDIATE")
         try:
             require_location(conn, location)
+            if location.kind == "dealership":
+                shop = conn.execute("SELECT name, is_active FROM dealerships WHERE code = ?", (location.code,)).fetchone()
+                if shop is not None and not shop["is_active"]:
+                    raise DealershipInactiveError(shop["name"])
+            account_repository.require_actor_allowed(conn, cashier, AREA_POS)
+
             # Validate every product BEFORE writing anything - a sale is
             # all-or-nothing, never "some items deducted, then it failed".
-            # Summed per product, so the same barcode on two lines can't
-            # sneak past the check.
-            for barcode, quantity in wanted.items():
-                if conn.execute("SELECT 1 FROM products WHERE barcode = ?", (barcode,)).fetchone() is None:
+            # Stock is summed per product, so the same barcode on two lines
+            # can't sneak past the check.
+            products: dict[str, sqlite3.Row] = {}
+            for barcode in wanted:
+                row = conn.execute("SELECT * FROM products WHERE barcode = ?", (barcode,)).fetchone()
+                if row is None:
                     raise ProductNotFoundError(barcode)
+                if not row["is_active"]:
+                    raise ProductInactiveError(barcode)
+                products[barcode] = row
+            moved = [
+                (item.product_barcode, item.unit_price_at_sale, products[item.product_barcode]["price"])
+                for item in transaction.items
+                if _cents(item.unit_price_at_sale) != _cents(products[item.product_barcode]["price"])
+            ]
+            if moved:
+                raise PriceChangedError(moved)
+            for barcode, quantity in wanted.items():
                 available = level_in(conn, location, barcode)
                 if quantity > available:
                     raise InsufficientStockError(barcode, quantity, available, location.label)
@@ -67,17 +109,26 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
             )
             transaction_id = cursor.lastrowid
 
+            costs = product_repository.costs_for(list(wanted), conn)
+            sold: list[LineItem] = []
             for item in transaction.items:
+                # The cost this unit carried at this moment (read inside this
+                # transaction); cost_known only when a cost is on record (> 0).
+                cost, known = costs[item.product_barcode]
+                item = dataclasses.replace(item, unit_cost_at_sale=cost, cost_known=known)
+                sold.append(item)
                 conn.execute(
                     "INSERT INTO transaction_items "
-                    "(transaction_id, product_barcode, product_name_at_sale, unit_price_at_sale, quantity) "
-                    "VALUES (?, ?, ?, ?, ?)",
+                    "(transaction_id, product_barcode, product_name_at_sale, unit_price_at_sale, quantity, "
+                    "unit_cost_at_sale, cost_known) VALUES (?, ?, ?, ?, ?, ?, ?)",
                     (
                         transaction_id,
                         item.product_barcode,
                         item.product_name_at_sale,
                         item.unit_price_at_sale,
                         item.quantity,
+                        item.unit_cost_at_sale,
+                        int(item.cost_known),
                     ),
                 )
             for barcode, quantity in wanted.items():
@@ -95,10 +146,16 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     return Transaction(
         id=transaction_id,
         created_at=_parse_timestamp(created_at_row["created_at"]),
-        items=list(transaction.items),
+        items=sold,
         dealership_code=None if location.is_unassigned else location.code,
         cashier=actor_label(cashier),
     )
+
+
+def _cents(amount: float) -> int:
+    """Prices are compared in whole cents, so 5.0 and 5.004 floats of the
+    same price never read as a change."""
+    return int(round(float(amount) * 100))
 
 
 def get_by_id(transaction_id: int) -> Transaction:
@@ -115,8 +172,8 @@ def get_by_id(transaction_id: int) -> Transaction:
             raise TransactionNotFoundError(transaction_id)
 
         item_rows = conn.execute(
-            "SELECT product_barcode, product_name_at_sale, unit_price_at_sale, quantity "
-            "FROM transaction_items WHERE transaction_id = ?",
+            "SELECT product_barcode, product_name_at_sale, unit_price_at_sale, quantity, "
+            "unit_cost_at_sale, cost_known FROM transaction_items WHERE transaction_id = ? ORDER BY id",
             (transaction_id,),
         ).fetchall()
 
@@ -126,6 +183,8 @@ def get_by_id(transaction_id: int) -> Transaction:
             product_name_at_sale=item["product_name_at_sale"],
             unit_price_at_sale=item["unit_price_at_sale"],
             quantity=item["quantity"],
+            unit_cost_at_sale=item["unit_cost_at_sale"],
+            cost_known=bool(item["cost_known"]),
         )
         for item in item_rows
     ]
@@ -178,8 +237,8 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
         transactions: list[Transaction] = []
         for header in header_rows:
             item_rows = conn.execute(
-                "SELECT product_barcode, product_name_at_sale, unit_price_at_sale, quantity "
-                "FROM transaction_items WHERE transaction_id = ?",
+                "SELECT product_barcode, product_name_at_sale, unit_price_at_sale, quantity, "
+                "unit_cost_at_sale, cost_known FROM transaction_items WHERE transaction_id = ? ORDER BY id",
                 (header["id"],),
             ).fetchall()
             items = [
@@ -188,6 +247,8 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
                     product_name_at_sale=item["product_name_at_sale"],
                     unit_price_at_sale=item["unit_price_at_sale"],
                     quantity=item["quantity"],
+                    unit_cost_at_sale=item["unit_cost_at_sale"],
+                    cost_known=bool(item["cost_known"]),
                 )
                 for item in item_rows
             ]

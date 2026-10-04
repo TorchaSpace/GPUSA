@@ -55,6 +55,7 @@ from database import (
     attendance_repository,
     dealership_repository,
     product_repository,
+    sale_cost_repository,
     stock_repository,
     transaction_repository,
     warehouse_repository,
@@ -213,6 +214,7 @@ class OverviewPage(AdminPage):
             dealerships = dealership_repository.list_all()
             sales = transaction_repository.list_between(period.start_datetime, period.end_exclusive)
             previous = transaction_repository.list_between(period.prev_start_datetime, period.prev_end_exclusive)
+            sale_cost_repository.attach_costs(sales)  # what those units cost when they were sold, for profit
             self._roster = attendance_repository.list_roster()
         except DATABASE_ERRORS:
             self._products, self._levels, self._warehouses, self._roster = [], [], [], []
@@ -245,7 +247,16 @@ class OverviewPage(AdminPage):
         footer = self._revenue_card.footer_layout()
         if not regions:
             footer.addWidget(stat_breakdown_item(tr("admin.overview.this_month"), tr("admin.overview.no_sales_yet")))
-        for region, value in regions[:3]:
+        # Gross profit counts only the lines whose cost was known when they
+        # were sold, and says how much of the revenue that leaves out.
+        profit = analytics.profit_between(sales, period.start, period.end)
+        if profit.has_profit:
+            footer.addWidget(stat_breakdown_item(tr("admin.overview.gross_profit"), format_amount(profit.profit)))
+            footer.addWidget(stat_breakdown_item(tr("admin.overview.margin"), analytics.margin_display(profit.margin)))
+        if profit.revenue_cents > 0 and profit.unknown_revenue_cents > 0:
+            footer.addWidget(stat_breakdown_item(
+                tr("admin.overview.cost_unknown"), tr("admin.overview.of_revenue").format(percent=profit.unknown_percent)))
+        for region, value in regions[:2 if profit.revenue_cents > 0 else 3]:
             footer.addWidget(stat_breakdown_item(region_label(region), analytics.compact_amount(value)))
 
     def _render_warehouses(self, summary: overview.CapacitySummary) -> None:

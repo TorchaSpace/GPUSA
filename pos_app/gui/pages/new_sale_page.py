@@ -46,7 +46,14 @@ from PySide6.QtWidgets import (
 )
 
 from database import account_repository, product_repository, stock_repository
-from database.exceptions import DATABASE_ERRORS, InsufficientStockError
+from database.exceptions import (
+    DATABASE_ERRORS,
+    DealershipInactiveError,
+    InsufficientStockError,
+    PriceChangedError,
+    ProductNotFoundError,
+    SessionInvalidError,
+)
 from pos_app.gui.auth_flow import till_dealership_problem
 from pos_app.gui.components.action_button import ActionButton
 from pos_app.gui.product_status import stock_status
@@ -463,6 +470,27 @@ class NewSalePage(QWidget):
         """The visible cart-changed notice ('' when none) - for tests."""
         return self._cart_notice.text() if not self._cart_notice.isHidden() else ""
 
+    def _warn_sign_in_again(self) -> None:
+        QMessageBox.warning(
+            self, tr_or("pos.sign_in_again_title", "Sign in again"),
+            str(SessionInvalidError()) + "\n\n" + tr_or("pos.cart_changed_body", "Nothing was charged. Check the updated cart and try again."),
+        )
+
+    def _cart_changed_by_database(self, exc: Exception) -> None:
+        """finalize_transaction() refused the sale because the cart no longer
+        matches the database. Re-read it (new prices, withdrawn lines
+        removed, quantities cut back), show the 'cart changed' notice and
+        tell the cashier nothing was charged."""
+        self.reload()  # refreshes the cart from the database and shows what changed
+        if not self.cart_notice():  # the refresh found nothing to add: use the database's own words
+            self._cart_notice.setText(str(exc))
+            self._cart_notice.show()
+        QMessageBox.warning(
+            self,
+            tr_or("pos.cart_changed_title", "Cart changed"),
+            str(exc) + "\n\n" + tr_or("pos.cart_changed_body", "Nothing was charged. Check the updated cart and try again."),
+        )
+
     def _checkout(self, payment_label: str) -> None:
         if not self._cart:
             QMessageBox.information(self, "Cart is empty", "Add a product before completing a sale.")
@@ -499,30 +527,32 @@ class NewSalePage(QWidget):
             ]
         )
 
+        # Friendly pre-checks. finalize_transaction() repeats every one of them
+        # inside its own transaction (that is the authoritative check - these
+        # only spare the cashier a round trip), so nothing here is load-bearing.
         session = current_session.get()
         if session is not None and not account_repository.is_session_valid(session):
-            QMessageBox.warning(
-                self, "Sign in again",
-                "This sign-in is no longer valid (the account was switched off or changed). "
-                "Nothing was charged. Please switch cashier.",
-            )
+            self._warn_sign_in_again()
             return
         if self._location.kind == "dealership":
             problem = till_dealership_problem(self._location.code)
             if problem:
-                QMessageBox.warning(self, "Till switched off", problem)
+                QMessageBox.warning(self, tr_or("pos.till_off_title", "Till switched off"), problem)
                 return
 
         try:
             finalized = complete_sale(pending, self._location, current_session.actor())
-        except InsufficientStockError as exc:
-            QMessageBox.warning(
-                self,
-                "Not enough stock",
-                f"Only {exc.available} of {exc.barcode!r} left on this shelf - someone else may have just sold it. "
-                "Adjust the cart and try again.",
-            )
-            self.reload()
+        except (PriceChangedError, ProductNotFoundError, InsufficientStockError) as exc:
+            # The database found the cart out of date at the moment of charging
+            # (a price moved, a product was withdrawn/deactivated, stock ran
+            # out): nothing was charged. Bring the cart in line and say so.
+            self._cart_changed_by_database(exc)
+            return
+        except SessionInvalidError:
+            self._warn_sign_in_again()
+            return
+        except DealershipInactiveError as exc:
+            QMessageBox.warning(self, tr_or("pos.till_off_title", "Till switched off"), str(exc))
             return
         except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, "Sale failed", str(exc))

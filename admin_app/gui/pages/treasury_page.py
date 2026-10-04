@@ -20,6 +20,13 @@ endorsed (received checks/notes only), Reopen, Edit and Delete on the
 selected row, and a Site column (depot_app records its own site's
 documents from its Manager Portal).
 
+Every change is audited (database.ledger_repository's ledger_audit): the
+page passes the signed-in person (shared.current_session.actor()) to each
+repository call and refuses when nobody is signed in. Below the table, the
+selected document's "History" (who / when / what, an edit shown field by
+field as old → new) and a "Recent activity" list for the whole ledger -
+deleted documents leave their trace there.
+
 Deliberately different from the mockup:
 - The top line is the running NET of scheduled items starting at 0, not
   a "projected balance" - the mockup starts that from a made-up $1.84M
@@ -40,6 +47,7 @@ import html
 from datetime import date
 
 from PySide6.QtCore import Qt
+from PySide6.QtGui import QTextDocument
 from PySide6.QtWidgets import (
     QButtonGroup,
     QHBoxLayout,
@@ -58,12 +66,13 @@ from admin_app.gui.components.milestone_strip import MilestoneStrip
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
+from shared import current_session, ledger_audit
 from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import ledger_repository, purchase_order_repository
 from database.exceptions import DATABASE_ERRORS, LedgerEntryStateError
 from shared.formatting import format_amount, month_abbr
-from shared.models import LedgerEntry
+from shared.models import LedgerAuditRecord, LedgerEntry
 from shared.treasury import (
     compact_amount,
     display_status,
@@ -74,8 +83,15 @@ from shared.treasury import (
     summarize,
 )
 
+_ACTIVITY_LIMIT = 15
 _TABS = ("in", "out")
 _STATUS_FILTERS = ("All", "Pending", "Cleared", "Overdue")
+
+
+def _plain_text(rich: str) -> str:
+    document = QTextDocument()
+    document.setHtml(rich)
+    return document.toPlainText()
 
 
 def _item_label(key: str) -> str:
@@ -134,6 +150,7 @@ class TreasuryPage(AdminPage):
         self.body_layout().addWidget(self._build_kpi_row())
         self.body_layout().addWidget(self._build_milestones())
         self.body_layout().addWidget(self._build_documents(), stretch=1)
+        self.body_layout().addWidget(self._build_audit())
 
         self._popup = LedgerEntryFormPopup(self)
         self._popup.accepted.connect(self._save_popup)
@@ -327,6 +344,85 @@ class TreasuryPage(AdminPage):
         section.body_layout().addWidget(self._footer_label)
         return section
 
+    # --- audit trail -----------------------------------------------------------
+
+    def _build_audit(self) -> QWidget:
+        p = CLASSICAL_PALETTE
+        row = QWidget()
+        layout = QHBoxLayout(row)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(16)
+
+        def label() -> QLabel:
+            widget = QLabel()
+            widget.setTextFormat(Qt.RichText)  # always built from html.escape()d parts
+            widget.setWordWrap(True)
+            widget.setAlignment(Qt.AlignTop | Qt.AlignLeft)
+            widget.setStyleSheet(f"font-size: 12px; color: {p['text_primary']}; padding: 10px 16px 12px 16px;")
+            return widget
+
+        self._history_section = Section("", tr("admin.treasury.hist_kicker"))
+        self._history_label = label()
+        self._history_section.body_layout().addWidget(self._history_label)
+        self._activity_section = Section("", tr("admin.treasury.act_heading"))
+        self._activity_label = label()
+        self._activity_section.body_layout().addWidget(self._activity_label)
+        layout.addWidget(self._history_section, stretch=1)
+        layout.addWidget(self._activity_section, stretch=1)
+        return row
+
+    @staticmethod
+    def _audit_html(record: LedgerAuditRecord, with_subject: bool) -> str:
+        p = CLASSICAL_PALETTE
+        head = html.escape(ledger_audit.summary_line(record, with_subject=with_subject))
+        lines = "".join(
+            f"<br><span style='color:{p['text_secondary']}'>&nbsp;&nbsp;{html.escape(line)}</span>"
+            for line in ledger_audit.change_lines(record)
+        )
+        return f"<div style='margin-bottom:6px'>{head}{lines}</div>"
+
+    def history_text(self) -> str:
+        """The selected document's history as plain text (one line per
+        change, its field diffs beneath) - for tests."""
+        return _plain_text(self._history_label.text())
+
+    def activity_text(self) -> str:
+        return _plain_text(self._activity_label.text())
+
+    def _refresh_history(self) -> None:
+        entry = self.selected_entry()
+        if entry is None:
+            self._history_label.setText(html.escape(tr("admin.treasury.hist_pick")))
+            return
+        try:
+            records = ledger_repository.list_audit(entry.id)
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._history_label.setText(html.escape(tr("admin.treasury.hist_load_failed").format(error=exc)))
+            return
+        title = tr("admin.treasury.hist_heading").format(type=entry.type_label, doc=entry.doc_no)
+        body = "".join(self._audit_html(r, with_subject=False) for r in records) or html.escape(
+            tr("admin.treasury.hist_legacy"))
+        self._history_label.setText(f"<b>{html.escape(title)}</b><br>{body}")
+
+    def _refresh_activity(self) -> None:
+        try:
+            records = ledger_repository.list_recent_audit(_ACTIVITY_LIMIT)
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._activity_label.setText(html.escape(tr("admin.treasury.hist_load_failed").format(error=exc)))
+            return
+        self._activity_label.setText(
+            "".join(self._audit_html(r, with_subject=True) for r in records)
+            or html.escape(tr("admin.treasury.act_none"))
+        )
+
+    def _actor_or_refuse(self):
+        """Who is making this change, or None after saying why not: every
+        ledger change is recorded under a name."""
+        actor = current_session.actor()
+        if actor is None:
+            self._message_label.setText(tr("err.ledger_actor_required"))
+        return actor
+
     # --- data ----------------------------------------------------------------
 
     def load_error(self) -> str | None:
@@ -358,6 +454,7 @@ class TreasuryPage(AdminPage):
         self._footer_label.setText(self._load_error)
         self._message_label.setText("")
         self._update_actions()
+        self._activity_label.setText("")
 
     def reload(self) -> None:
         try:
@@ -433,6 +530,7 @@ class TreasuryPage(AdminPage):
         for key in _TABS:
             self._tab_buttons[key].setText(f"{tr(f'admin.treasury.tab_{key}')}  {counts[key]}".replace("&", "&&"))
         self._render_table()
+        self._refresh_activity()
 
     def _set_tab(self, key: str) -> None:
         self._tab = key
@@ -517,20 +615,24 @@ class TreasuryPage(AdminPage):
         self._endorse_button.setEnabled(
             has and entry.is_open and entry.direction == "in" and entry.doc_type in ("check", "note")
         )
+        self._refresh_history()
 
     def _change_status(self, action: str) -> None:
         entry = self.selected_entry()
         if entry is None:
             return
+        actor = self._actor_or_refuse()
+        if actor is None:
+            return
         try:
             if action == "clear":
-                updated = ledger_repository.mark_cleared(entry.id)
+                updated = ledger_repository.mark_cleared(entry.id, actor)
                 message = tr("admin.treasury.msg_cleared").format(type=entry.type_label, doc=entry.doc_no)
             elif action == "endorse":
-                updated = ledger_repository.mark_endorsed(entry.id)
+                updated = ledger_repository.mark_endorsed(entry.id, actor)
                 message = tr("admin.treasury.msg_endorsed").format(type=entry.type_label, doc=entry.doc_no)
             else:
-                updated = ledger_repository.reopen(entry.id)
+                updated = ledger_repository.reopen(entry.id, actor)
                 message = tr("admin.treasury.msg_reopened").format(type=entry.type_label, doc=entry.doc_no)
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._message_label.setText(tr("admin.treasury.update_failed").format(error=exc))
@@ -553,6 +655,8 @@ class TreasuryPage(AdminPage):
         return names, sorted(sites)
 
     def _open_record(self) -> None:
+        if self._actor_or_refuse() is None:
+            return
         names, sites = self._suggestions()
         self._popup.open_or_refresh(entry=None, direction=self._tab, counterparties=names, sites=sites, today=self.today())
 
@@ -563,13 +667,22 @@ class TreasuryPage(AdminPage):
         if not entry.is_open:
             self._message_label.setText(tr("admin.treasury.reopen_first"))
             return
+        if self._actor_or_refuse() is None:
+            return
         names, sites = self._suggestions()
         self._popup.open_or_refresh(entry=entry, counterparties=names, sites=sites, today=self.today())
 
     def _save_popup(self) -> None:
         entry = self._popup.result_entry()
+        actor = current_session.actor()
+        if actor is None:  # signed out while the form was open
+            self._popup.show_error(tr("err.ledger_actor_required"))
+            return
         try:
-            saved = ledger_repository.update(entry) if self._popup.is_editing() else ledger_repository.create(entry)
+            if self._popup.is_editing():
+                saved = ledger_repository.update(entry, actor)
+            else:
+                saved = ledger_repository.create(entry, actor)
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._popup.show_error(tr("admin.treasury.save_failed").format(error=exc))
             return
@@ -591,10 +704,13 @@ class TreasuryPage(AdminPage):
 
     def _delete_selected(self) -> None:
         entry = self.selected_entry()
-        if entry is None or not self._confirm_delete(entry):
+        if entry is None:
+            return
+        actor = self._actor_or_refuse()
+        if actor is None or not self._confirm_delete(entry):
             return
         try:
-            ledger_repository.delete(entry.id)
+            ledger_repository.delete(entry.id, actor)
         except (ValueError, *DATABASE_ERRORS) as exc:
             self.reload()  # e.g. it was settled/removed elsewhere
             self._message_label.setText(tr("admin.treasury.delete_failed").format(error=exc))

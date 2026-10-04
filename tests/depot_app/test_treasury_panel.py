@@ -9,17 +9,23 @@ import pytest
 from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 
 import database.connection as connection
-from database import ledger_repository as ledger
+from database import ledger_repository
+from tests.ledger_support import ACTOR, SignedIn, session_for
 from shared.models import LedgerEntry
 
 SITE = "WH-01 · Test"
 TODAY = date(2026, 9, 24)
+
+ledger = SignedIn(ledger_repository)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "t.db")
     monkeypatch.setattr(connection, "_initialized", False)
+    from shared import current_session
+
+    current_session.set(session_for(ACTOR, area="depot_console"))  # (conftest signs everyone out after each test)
 
 
 def _add(doc_type, doc_no, direction, amount, due=date(2026, 9, 30), site=SITE):
@@ -94,6 +100,54 @@ def test_record_document_stamps_the_site_and_retries_on_error(panel, monkeypatch
     assert (saved.site, saved.amount, saved.direction) == (SITE.upper(), 64500, "in")  # sites are stored upper-cased
     assert "Recorded" in panel._message.text()
     assert len(attempts) == 2
+
+
+def test_a_recorded_document_carries_who_recorded_it(panel, monkeypatch):
+    def fake_run(dialog):
+        dialog.doc_no_input.setText("ÇK-9")
+        dialog.counterparty_input.setText("Ege Gıda")
+        dialog.amount_input.setValue(100)
+        return True
+
+    monkeypatch.setattr(panel, "_run_dialog", fake_run)
+    panel._record()
+
+    saved = next(e for e in ledger.list_entries() if e.doc_no == "ÇK-9")
+    assert saved.created_by == ACTOR.label
+    [record] = ledger_repository.list_audit(saved.id)
+    assert (record.action, record.actor_badge) == ("created", "B-100")
+
+
+def test_recording_needs_a_signed_in_person(panel, monkeypatch):
+    from shared import current_session
+
+    current_session.clear()
+    monkeypatch.setattr(panel, "_run_dialog", lambda dialog: pytest.fail("the dialog must not open"))
+    panel._record()
+
+    assert "Sign in first" in panel._message.text()
+    assert ledger.list_entries() == []
+
+
+def test_signing_out_while_the_dialog_is_open_keeps_it_open_with_the_reason(panel, monkeypatch):
+    from shared import current_session
+
+    shown = []
+
+    def fake_run(dialog):
+        if shown:
+            assert "Sign in first" in dialog.error_label.text()
+            return False
+        shown.append(1)
+        dialog.doc_no_input.setText("ÇK-9")
+        dialog.counterparty_input.setText("Ege Gıda")
+        dialog.amount_input.setValue(100)
+        current_session.clear()
+        return True
+
+    monkeypatch.setattr(panel, "_run_dialog", fake_run)
+    panel._record()
+    assert ledger.list_entries() == []
 
 
 # --- review fixes -------------------------------------------------------------

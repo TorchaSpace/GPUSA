@@ -20,9 +20,13 @@ def complete_sale(pending_transaction: Transaction, location: StockLocation = UN
 
     Stock comes off `location` - this terminal's dealership shelf.
     Returns the finalized Transaction (with id/created_at populated).
-    Raises database.exceptions.InsufficientStockError without printing
-    anything if stock ran out from under the cart (e.g. a race with
-    another concurrent sale).
+    Nothing is printed, and nothing was written, when the database refuses
+    the sale - finalize_transaction() re-checks everything authoritatively
+    and its errors propagate unchanged: PriceChangedError (a price moved
+    since the line was added), ProductInactiveError / ProductNotFoundError,
+    InsufficientStockError (e.g. a race with another sale),
+    SessionInvalidError (the cashier's account was switched off) and
+    DealershipInactiveError (the till's dealership was switched off).
     """
     finalized = transaction_repository.finalize_transaction(pending_transaction, location, cashier)
     profile = settings_repository.safe_store_profile()

@@ -7,9 +7,12 @@ from datetime import date
 import pytest
 
 import database.connection as connection
-from database import dealership_repository, ledger_repository as ledger, product_repository, purchase_order_repository
+from database import dealership_repository, ledger_repository, product_repository, purchase_order_repository
+from tests.ledger_support import ACTOR, OTHER, SignedIn
 from database.exceptions import DataAccessError, DuplicateLedgerDocumentError, LedgerEntryNotFoundError, LedgerEntryStateError
 from shared.models import Dealership, LedgerEntry, PriceRange, Product
+
+ledger = SignedIn(ledger_repository)
 
 
 @pytest.fixture(autouse=True)
@@ -193,7 +196,7 @@ def test_stray_sqlite_errors_become_data_access_errors(monkeypatch):
     def boom(*a, **k):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(ledger, "connection_scope", boom)
+    monkeypatch.setattr(ledger_repository, "connection_scope", boom)
     for call in (lambda: ledger.get(1), lambda: ledger.list_entries(), lambda: ledger.mark_cleared(1),
                  lambda: ledger.delete(1), lambda: ledger.known_counterparties()):
         with pytest.raises(DataAccessError):

@@ -162,6 +162,23 @@ def log_movement(
     )
 
 
+def receive_in(conn: sqlite3.Connection, location: StockLocation, barcode: str, quantity: int, *,
+               note: str | None = None, actor: Actor | None = None, reference: str | None = None) -> int:
+    """receive() inside the caller's open transaction (it neither begins nor
+    commits one): the checks, the level + company-total change and the
+    'receive' audit row, so purchase_order_repository can book a delivery
+    against an order atomically with the order's own update. `quantity`
+    must already be a positive whole number. `reference` (e.g. "PO-00042")
+    is stored on the movement. Returns the new level there."""
+    require_location(conn, location)
+    code = resolve_product(conn, barcode, active_only=True)[0]
+    require_can_hold(conn, location, quantity)
+    new = change_level(conn, location, code, quantity, change_total=True)
+    log_movement(conn, location, code, "receive", quantity, reason="receive", note=_clean(note),
+                 reference=reference, actor=actor)
+    return new
+
+
 def _write(fn):
     """Run fn(conn) inside one BEGIN IMMEDIATE transaction."""
     with connection_scope() as conn:
@@ -194,16 +211,7 @@ def receive(location: StockLocation, barcode: str, quantity: int, note: str | No
     """New stock arrives at `location` from outside the company (the depot
     Floor's Inbound). Returns the new level there."""
     quantity = _positive(quantity)
-
-    def run(conn):
-        require_location(conn, location)
-        code = resolve_product(conn, barcode, active_only=True)[0]
-        require_can_hold(conn, location, quantity)
-        new = change_level(conn, location, code, quantity, change_total=True)
-        log_movement(conn, location, code, "receive", quantity, reason="receive", note=_clean(note), actor=actor)
-        return new
-
-    return _write(run)
+    return _write(lambda conn: receive_in(conn, location, barcode, quantity, note=note, actor=actor))
 
 
 def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | None = None,

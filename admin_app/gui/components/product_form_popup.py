@@ -19,6 +19,8 @@ from PySide6.QtWidgets import (
     QSpinBox,
 )
 
+from shared.costing import cost_exceeds_price
+from shared.formatting import MAX_AMOUNT
 from shared.gui_kit.popup_window import RefreshablePopup
 from shared.i18n import tr
 from shared.models import Product
@@ -47,6 +49,19 @@ class ProductFormPopup(RefreshablePopup):
         self._price_input.setRange(0, _MAX_PRICE)
         self._price_input.setDecimals(2)
 
+        # Unit cost: 0 = not known yet. Purchase-order receipts keep it up to
+        # date as a weighted average; typing one here overrides that.
+        self._cost_input = QDoubleSpinBox()
+        self._cost_input.setRange(0, MAX_AMOUNT)
+        self._cost_input.setDecimals(2)
+        self._original_cost = 0.0  # the cost the product had when this form opened (see cost_changed)
+        self._cost_warning = QLabel(tr("admin.form_cost_warning"))
+        self._cost_warning.setWordWrap(True)
+        self._cost_warning.setStyleSheet("color: #c47f00;")
+        self._cost_warning.setVisible(False)
+        self._cost_input.valueChanged.connect(self._update_cost_warning)
+        self._price_input.valueChanged.connect(self._update_cost_warning)
+
         self._stock_input = QSpinBox()
         self._stock_input.setRange(0, _MAX_QUANTITY)
 
@@ -68,6 +83,8 @@ class ProductFormPopup(RefreshablePopup):
         form.addRow(tr("admin.form_barcode"), self._barcode_input)
         form.addRow(tr("admin.form_name"), self._name_input)
         form.addRow(tr("admin.form_price"), self._price_input)
+        form.addRow(tr("admin.form_cost"), self._cost_input)
+        form.addRow(self._cost_warning)
         form.addRow(tr("admin.form_stock"), self._stock_input)
         form.addRow(tr("admin.form_critical_level"), self._critical_input)
         form.addRow(self._error_label)
@@ -97,6 +114,9 @@ class ProductFormPopup(RefreshablePopup):
 
         self._name_input.setText(shown.name if shown is not None else "")
         self._price_input.setValue(shown.price if shown is not None else 0.0)
+        self._original_cost = product.cost_price if product is not None else 0.0
+        self._cost_input.setValue(shown.cost_price if shown is not None else 0.0)
+        self._update_cost_warning()
 
         self._stock_input.setValue(shown.stock_quantity if shown is not None else 0)
         # Editable only while adding: a brand-new product's starting
@@ -109,6 +129,22 @@ class ProductFormPopup(RefreshablePopup):
         self._stock_input.setEnabled(product is None)
 
         self._critical_input.setValue(shown.critical_stock_level if shown is not None else 0)
+
+    def cost_warning(self) -> str | None:
+        """A heads-up (not an error: Save still works) when the typed cost is
+        above the price, so every sale would lose money."""
+        if cost_exceeds_price(self._cost_input.value(), self._price_input.value()):
+            return tr("admin.form_cost_warning")
+        return None
+
+    def _update_cost_warning(self, *_args) -> None:
+        self._cost_warning.setVisible(self.cost_warning() is not None)
+
+    def cost_changed(self) -> bool:
+        """Whether the cost field differs from what the product had when the
+        form opened - only then is it written (product_repository.set_cost),
+        so a form left open can't overwrite a cost a delivery has updated."""
+        return round(self._cost_input.value(), 2) != round(self._original_cost, 2)
 
     def validation_error(self) -> str | None:
         """What is wrong with the form as filled in (None: fine to save).
@@ -153,4 +189,5 @@ class ProductFormPopup(RefreshablePopup):
             stock_quantity=self._stock_input.value(),
             critical_stock_level=self._critical_input.value(),
             is_active=self._editing_active,
+            cost_price=self._cost_input.value(),
         )

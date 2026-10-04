@@ -32,6 +32,7 @@ Sales Reports tab is still reachable from the header button.
 
 from __future__ import annotations
 
+import html
 from datetime import date, datetime
 from pathlib import Path
 
@@ -56,7 +57,7 @@ from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
 from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
-from database import dealership_repository, transaction_repository
+from database import dealership_repository, sale_cost_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics
 from shared.formatting import day_month_text, format_amount, format_number
@@ -158,6 +159,13 @@ class ReportsPage(AdminPage):
         self._note.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px; padding: 2px 16px 0 16px;")
         body.addWidget(self._note)
 
+        # Gross profit and margin of the period (only sold lines with a known
+        # cost), and how much of the revenue that leaves out.
+        self._profit_note = QLabel("")
+        self._profit_note.setWordWrap(True)
+        self._profit_note.setStyleSheet(f"color: {p['text_primary']}; font-size: 12px; padding: 2px 16px 0 16px;")
+        body.addWidget(self._profit_note)
+
         self._readout = QLabel(" ")
         self._readout.setStyleSheet(f"color: {p['text_primary']}; font-size: 12px; padding: 6px 16px 0 16px;")
         body.addWidget(self._readout)
@@ -236,6 +244,8 @@ class ReportsPage(AdminPage):
                 transaction_repository.list_between(period.week_start_datetime, period.start_datetime)
                 if period.week_start < period.start else []
             )
+            for sales in (transactions, previous, lead_in):  # what the units cost when sold, for profit
+                sale_cost_repository.attach_costs(sales)
         except DATABASE_ERRORS as exc:
             self._view = None
             self._document = None
@@ -292,8 +302,22 @@ class ReportsPage(AdminPage):
         if view.projected_total is not None:
             parts.append(tr("admin.reports.proj_note").format(amount=format_amount(view.projected_total)))
         self._note.setText(" · ".join(parts))
+        self._profit_note.setText(self._profit_text(view))
         self._readout.setText(" ")
         self._chart.set_series(view.current, view.previous, view.projection, view.x_labels, view.total_points)
+
+    @staticmethod
+    def _profit_text(view: analytics.ReportView) -> str:
+        profit = view.profit
+        if profit.revenue_cents <= 0:
+            return ""
+        parts = []
+        if profit.has_profit:
+            parts.append(tr("admin.reports.profit_note").format(
+                profit=format_amount(profit.profit), margin=analytics.margin_display(profit.margin)))
+        if profit.unknown_revenue_cents > 0:
+            parts.append(tr("admin.reports.cost_unknown").format(percent=profit.unknown_percent))
+        return " · ".join(parts)
 
     def _on_chart_hover(self, index: int) -> None:
         if self._view is None or index < 0:
@@ -365,9 +389,16 @@ class ReportsPage(AdminPage):
             spark.set_values(entry.week, up=entry.trend is None or entry.trend >= 0)
             layout.addWidget(spark)
             trend_color = p["text_primary"] if entry.trend is None or entry.trend >= 0 else p["alert_warning"]
+            profit_line = (
+                "<br><span style='color:%s; font-size:11px'>%s</span>" % (p["text_secondary"], html.escape(
+                    tr("admin.reports.top_profit").format(
+                        profit=format_amount(entry.profit.profit), margin=analytics.margin_display(entry.profit.margin))))
+                if entry.profit.has_profit else ""
+            )
             figures = QLabel(
                 f"{format_amount(entry.revenue)}<br>"
                 f"<span style='color:{trend_color}; font-size:11px'>{analytics.change_text(entry.trend)}</span>"
+                f"{profit_line}"
             )
             figures.setAlignment(Qt.AlignRight)
             figures.setStyleSheet(f"color: {p['text_primary']}; font-size: 13px;")

@@ -144,12 +144,22 @@ def erase_all_data(confirmation: str | None = None) -> Path:
         conn.execute("PRAGMA foreign_keys = OFF")  # must be set outside a transaction
         conn.execute("BEGIN IMMEDIATE")
         try:
+            # Append-only guards (ledger_audit) would refuse the wipe: lift
+            # them inside this transaction and put them back before commit.
+            guard_rows = conn.execute(
+                "SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND name LIKE 'trg\\_%\\_no\\_%' ESCAPE '\\'"
+            ).fetchall()
+            guards = [row[1] for row in guard_rows]
+            for row in guard_rows:
+                conn.execute('DROP TRIGGER "%s"' % row[0].replace('"', '""'))
             tables = [row[0] for row in conn.execute(
                 "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'")]
             for table in tables:  # names come from sqlite_master itself, quoted anyway
                 conn.execute('DELETE FROM "%s"' % table.replace('"', '""'))
             if conn.execute("SELECT 1 FROM sqlite_master WHERE name = 'sqlite_sequence'").fetchone():
                 conn.execute("DELETE FROM sqlite_sequence")
+            for sql in guards:
+                conn.execute(sql)
         except Exception:
             conn.execute("ROLLBACK")
             raise

@@ -9,16 +9,22 @@ import pytest
 from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 
 import database.connection as connection
-from database import ledger_repository as ledger
+from database import ledger_repository
+from tests.ledger_support import ACTOR, OTHER, SignedIn, session_for
 from shared.models import LedgerEntry
 
 TODAY = date(2026, 9, 24)
+
+ledger = SignedIn(ledger_repository)
 
 
 @pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "t.db")
     monkeypatch.setattr(connection, "_initialized", False)
+    from shared import current_session
+
+    current_session.set(session_for(ACTOR, area="admin"))  # (conftest signs everyone out after each test)
 
 
 def _add(direction="in", doc_type="check", doc_no="CHK-1", due=date(2026, 9, 26), amount=84200, **kw):
@@ -276,3 +282,110 @@ def test_popup_amount_range_matches_the_repository_cap(page):
     from shared.formatting import MAX_AMOUNT
 
     assert page._popup._amount_input.maximum() == MAX_AMOUNT
+
+
+# --- audit trail: who / when / what -------------------------------------------------
+
+
+def test_history_shows_who_did_what_for_the_selected_document(page):
+    from shared import current_session
+
+    entry = _add(doc_no="CHK-1")  # recorded by Murat
+    page.reload()
+    assert "Select a document" in page.history_text()
+
+    page.select_entry(entry.id)
+    text = page.history_text()
+    assert "Check · CHK-1" in text and "Murat Yılmaz · B-100" in text and "recorded" in text
+
+    current_session.set(session_for(OTHER))
+    page._change_status("clear")
+    text = page.history_text()
+    assert "Ayşe Demir · B-200" in text and "marked cleared" in text
+    assert "Status: Pending → Cleared" in text
+    assert ledger.get(entry.id).settled_by == "Ayşe Demir · B-200"
+
+
+def test_an_edit_is_shown_field_by_field_as_old_to_new(page, qapp):
+    entry = _add(doc_no="CHK-1", amount=84200)
+    page.reload()
+    page.select_entry(entry.id)
+
+    page._open_edit()
+    page._popup._amount_input.setValue(90000)
+    page._popup._counterparty_input.setText("Metro Heavy Parts")
+    page._popup._validate_and_accept()
+    pump(qapp)
+
+    text = page.history_text()
+    assert "edited" in text
+    assert "Amount: 84,200.00 → 90,000.00" in text
+    assert "Counterparty: Harbor Point → Metro Heavy Parts" in text
+    assert "Document no." not in text  # unchanged fields are not listed
+
+
+def test_a_legacy_document_says_nothing_was_recorded_instead_of_a_blank(page):
+    entry = _add(doc_no="OLD-1")
+    from database.connection import connection_scope
+
+    with connection_scope() as conn:  # as if it were entered before auditing existed
+        conn.execute("DROP TRIGGER trg_ledger_audit_no_delete")
+        conn.execute("DELETE FROM ledger_audit")
+    page.reload()
+    page.select_entry(entry.id)
+    assert "entered before changes were tracked" in page.history_text()
+
+
+def test_recent_activity_lists_every_change_and_keeps_deleted_documents(page, monkeypatch):
+    kept = _add(doc_no="CHK-1")
+    gone = _add(doc_no="CHK-2")
+    page.reload()
+    assert "recorded" in page.activity_text()
+
+    page.select_entry(gone.id)
+    monkeypatch.setattr(page, "_confirm_delete", lambda e: True)
+    page._delete_selected()
+
+    text = page.activity_text()
+    assert "deleted · Check · CHK-2" in text  # the entry is gone from the table, not from the trail
+    assert "recorded · Check · CHK-1" in text
+    assert text.index("deleted") < text.index("recorded")  # newest first
+    assert [e.id for e in ledger.list_entries()] == [kept.id]
+
+
+def test_nothing_changes_without_a_signed_in_person(page, monkeypatch):
+    from shared import current_session
+
+    entry = _add(doc_no="CHK-1")
+    page.reload()
+    page.select_entry(entry.id)
+    current_session.clear()
+
+    page._change_status("clear")
+    assert "Sign in first" in page._message_label.text()
+    assert ledger.get(entry.id).status == "pending"
+
+    monkeypatch.setattr(page, "_confirm_delete", lambda e: pytest.fail("must refuse before asking"))
+    page._delete_selected()
+    assert len(ledger.list_entries()) == 1 and "Sign in first" in page._message_label.text()
+
+    page._open_record()
+    page._open_edit()
+    assert not page._popup.isVisible()
+    assert len(ledger_repository.list_audit(entry.id)) == 1  # still just the creation
+
+
+def test_signing_out_while_the_form_is_open_refuses_the_save(page, qapp):
+    from shared import current_session
+
+    page._open_record()
+    popup = page._popup
+    popup._doc_no_input.setText("PN-1")
+    popup._counterparty_input.setText("Someone")
+    popup._amount_input.setValue(10)
+    current_session.clear()
+    popup._validate_and_accept()
+    pump(qapp)
+
+    assert "Sign in first" in popup._error.text()
+    assert ledger.list_entries() == []

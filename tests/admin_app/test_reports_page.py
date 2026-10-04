@@ -97,3 +97,65 @@ def test_every_export_writes_a_file(page, tmp_path, monkeypatch, kind, suffix):
     monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
     getattr(page, f"export_{kind}")()
     assert target.exists() and target.stat().st_size > 0
+
+
+# --- gross profit -----------------------------------------------------------
+
+
+def _costed_sale(day_iso: str, dealership_code: str, quantity: int, cost: float, known: bool = True) -> None:
+    """A sale of `quantity` x P2 (price 10) with the cost snapshot a checkout
+    would have stored (cost_known 0 = sold before costs were tracked)."""
+    saved = transaction_repository.finalize_transaction(
+        Transaction(items=[LineItem(product_barcode="P2", product_name_at_sale="Gadget", unit_price_at_sale=10.0, quantity=quantity)])
+    )
+    with connection_scope() as conn:
+        conn.execute(
+            "UPDATE transactions SET created_at = ?, dealership_code = ? WHERE id = ?",
+            (f"{day_iso}T12:00:00.000Z", dealership_code, saved.id),
+        )
+        conn.execute(
+            "UPDATE transaction_items SET unit_cost_at_sale = ?, cost_known = ? WHERE transaction_id = ?",
+            (cost, 1 if known else 0, saved.id),
+        )
+        conn.commit()
+
+
+@pytest.fixture
+def costed_world():
+    product_repository.create(Product(barcode="P2", name="Gadget", price=10.0, stock_quantity=1000, critical_stock_level=1))
+    dealership_repository.create(Dealership("CST-04", "Harbor Point", "Coastal", "Norfolk"))
+
+
+def _open_page(qapp):
+    from admin_app.gui.pages.reports_page import ReportsPage
+
+    widget = ReportsPage(today_provider=lambda: TODAY)
+    widget.show()
+    pump(qapp)
+    return widget
+
+
+def test_profit_note_shows_profit_and_margin_when_every_cost_is_known(qapp, costed_world):
+    _costed_sale("2026-09-02", "CST-04", 3, 6.0)  # revenue 30, cost 18
+    widget = _open_page(qapp)
+    text = widget._profit_note.text()
+    assert "12.00" in text and "40.0%" in text
+    assert "unknown" not in text.lower()
+    widget.close()
+
+
+def test_profit_note_states_how_much_revenue_has_unknown_cost(qapp, costed_world):
+    _costed_sale("2026-09-02", "CST-04", 3, 6.0)  # known: revenue 30
+    _costed_sale("2026-09-03", "CST-04", 1, 0.0, known=False)  # unknown: revenue 10 of 40
+    widget = _open_page(qapp)
+    text = widget._profit_note.text()
+    assert "12.00" in text and "25%" in text
+    widget.close()
+
+
+def test_profit_note_has_no_profit_when_no_cost_was_ever_known(qapp, costed_world):
+    _costed_sale("2026-09-02", "CST-04", 2, 0.0, known=False)
+    widget = _open_page(qapp)
+    assert "Gross profit" not in widget._profit_note.text()
+    assert "100%" in widget._profit_note.text()
+    widget.close()

@@ -230,3 +230,85 @@ def test_initial_stock_from_the_form_leaves_an_audit_row(page):
     assert product_repository.get_by_barcode("NEW-2").stock_quantity == 8
     [movement] = [m for m in stock_repository.list_movements() if m["barcode"] == "NEW-2"]
     assert movement["quantity"] == 8 and "Initial stock" in movement["note"]
+
+
+# --- unit cost and margin -------------------------------------------------
+
+
+def test_table_shows_cost_and_margin_and_dashes_while_cost_is_unknown(page):
+    product_repository.set_cost("BOX", 30)
+    page.reload()
+    model = page._table.model()
+    box = _skus(page).index("BOX")
+    new = _skus(page).index("NEW")
+    assert model.index(box, 5).data() == "30.00"
+    assert model.index(box, 6).data() == "25.0%"  # (40 - 30) / 40
+    assert model.index(new, 5).data() == "—"
+    assert model.index(new, 6).data() == "—"
+
+
+def test_margin_helpers_flag_a_loss_in_red_and_leave_the_rest_alone():
+    from admin_app.gui.components.inventory_table import cost_text, margin_color, margin_text
+
+    losing = Product("L", "Loss", 10, 0, 0, cost_price=12.5)
+    fine = Product("F", "Fine", 10, 0, 0, cost_price=5)
+    unknown = Product("U", "Unknown", 10, 0, 0)
+    assert margin_text(losing) == "-25.0%" and margin_color(losing) is not None
+    assert margin_text(fine) == "50.0%" and margin_color(fine) is None
+    assert margin_text(unknown) == "—" and margin_color(unknown) is None
+    assert cost_text(unknown) == "—" and cost_text(losing) == "12.50"
+
+
+def test_form_warns_when_cost_is_above_price_but_still_saves(qapp):
+    from admin_app.gui.components.product_form_popup import ProductFormPopup
+
+    form = ProductFormPopup()
+    form.open_or_refresh(product=Product("BOX", "Carton", 40, 12, 5))
+    assert form.cost_warning() is None and form._cost_warning.isHidden()
+    form._cost_input.setValue(55)
+    assert form.cost_warning() is not None and not form._cost_warning.isHidden()
+    assert form.validation_error() is None  # a warning, not an error
+    form._cost_input.setValue(10)
+    assert form.cost_warning() is None and form._cost_warning.isHidden()
+    form.close()
+
+
+def test_form_cost_changed_only_when_the_field_was_edited(qapp):
+    from admin_app.gui.components.product_form_popup import ProductFormPopup
+
+    form = ProductFormPopup()
+    form.open_or_refresh(product=Product("BOX", "Carton", 40, 12, 5, cost_price=30))
+    assert form.cost_changed() is False
+    form._cost_input.setValue(31.5)
+    assert form.cost_changed() is True
+    assert form.result_product().cost_price == 31.5
+    form.close()
+
+
+def test_editing_the_cost_in_the_form_is_saved(page):
+    _select(page, "BOX")
+    page._open_edit_popup()
+    page._popup._cost_input.setValue(28.75)
+    page._popup.accept()
+    assert product_repository.get_by_barcode("BOX").cost_price == 28.75
+
+
+def test_saving_the_form_untouched_does_not_overwrite_a_newer_cost(page):
+    _select(page, "BOX")
+    page._open_edit_popup()  # form opens with cost 0
+    product_repository.set_cost("BOX", 22)  # e.g. a delivery updated it meanwhile
+    page._popup._name_input.setText("Carton XL")
+    page._popup.accept()
+    saved = product_repository.get_by_barcode("BOX")
+    assert saved.name == "Carton XL" and saved.cost_price == 22
+
+
+def test_new_product_can_be_added_with_a_cost(page):
+    page._open_add_popup()
+    form = page._popup
+    form._barcode_input.setText("COSTED")
+    form._name_input.setText("Costed")
+    form._price_input.setValue(10)
+    form._cost_input.setValue(4)
+    form.accept()
+    assert product_repository.get_by_barcode("COSTED").cost_price == 4

@@ -30,7 +30,7 @@ from PySide6.QtWidgets import (
 from admin_app.export.excel_report_exporter import export_to_excel
 from admin_app.export.pdf_report_exporter import export_to_pdf
 from admin_app.gui.components.compact_button import CompactButton
-from database import transaction_repository
+from database import sale_cost_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from shared.builders.report_builder import ReportDocument, build_sales_report
 from shared.gui_kit.visual_tab import VisualTab
@@ -88,7 +88,7 @@ class SalesReportsTab(VisualTab):
             return
         start, end = self._selected_range()
         try:
-            transactions = transaction_repository.list_between(start, end)
+            transactions = sale_cost_repository.attach_costs(transaction_repository.list_between(start, end))
         except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, tr("admin.report_failed_title"), str(exc))
             return

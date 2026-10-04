@@ -14,6 +14,26 @@ re-checks the version after taking the write lock - so when POS, Depot
 and Admin all start at the same moment against an old database, exactly
 one of them migrates and the others see the new version and do nothing.
 
+Version 5 - ledger audit trail: ledger_entries.created_by / settled_by /
+updated_by ("name · badge" snapshots; NULL on rows from before auditing) and
+the append-only ledger_audit table (who / when / what, one row per change,
+written in the same transaction as the change; entry_id is a plain integer,
+never a foreign key, so deleting an entry can't delete its history). The
+table is new, so schema.sql creates it; the step re-creates it (and its
+no-update / no-delete triggers) only if missing.
+
+Version 4 - purchase-order receiving, product cost and profit:
+- purchase_orders is REBUILT (create new, copy, drop, rename - all inside
+  the migration's one transaction, ids and values kept, AUTOINCREMENT
+  counter preserved) because SQLite can't alter a CHECK constraint: status
+  now also allows received / partially_received / cancelled, and the table
+  gains received_qty (default 0), received_at, received_by, cancelled_at,
+  cancelled_by. Nothing refers to purchase_orders, so no foreign key moves.
+  Skipped when the table already has the new shape (a new database).
+- products.cost_price (default 0 = unknown), transaction_items.unit_cost_at_sale
+  (default 0) and transaction_items.cost_known (default 0: every sale made
+  before costing existed stays "cost unknown" and is left out of profit).
+
 Version 3 - product safety: products.is_active (default 1: every existing
 product stays active) and a case-insensitive UNIQUE index on
 products.barcode (skipped, harmlessly, if an old database already holds two
@@ -43,7 +63,7 @@ from __future__ import annotations
 
 import sqlite3
 
-LATEST_VERSION = 3
+LATEST_VERSION = 5
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -161,7 +181,116 @@ def _to_v3(conn: sqlite3.Connection) -> None:
     _ensure_barcode_nocase_index(conn)
 
 
-_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3}
+# Version 4 - receiving, cost, profit. The purchase_orders definition below
+# is schema.sql's, spelled out because the rebuild has to create it.
+_V4_COLUMNS = (
+    ("products", "cost_price", "REAL NOT NULL DEFAULT 0 CHECK (cost_price >= 0)"),
+    ("transaction_items", "unit_cost_at_sale", "REAL NOT NULL DEFAULT 0 CHECK (unit_cost_at_sale >= 0)"),
+    ("transaction_items", "cost_known", "INTEGER NOT NULL DEFAULT 0 CHECK (cost_known IN (0, 1))"),
+)
+
+_PURCHASE_ORDERS_V4 = """
+CREATE TABLE purchase_orders_v4 (
+    id                    INTEGER PRIMARY KEY AUTOINCREMENT,
+    product_barcode       TEXT NOT NULL REFERENCES products(barcode),
+    product_name_at_order TEXT NOT NULL,
+    supplier              TEXT NOT NULL,
+    quantity              INTEGER NOT NULL CHECK (quantity > 0),
+    unit_price            REAL NOT NULL CHECK (unit_price > 0),
+    site                  TEXT NOT NULL,
+    range_min             REAL,
+    range_max             REAL,
+    status                TEXT NOT NULL CHECK (status IN
+                          ('pending', 'sent', 'rejected', 'received', 'partially_received', 'cancelled')),
+    hold_reason           TEXT CHECK (hold_reason IN ('above_range', 'below_range', 'no_range')),
+    created_at            TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    decided_at            TEXT,
+    decision_note         TEXT,
+    raised_by             TEXT,
+    decided_by            TEXT,
+    received_qty          INTEGER NOT NULL DEFAULT 0 CHECK (received_qty >= 0 AND received_qty <= quantity),
+    received_at           TEXT,
+    received_by           TEXT,
+    cancelled_at          TEXT,
+    cancelled_by          TEXT
+)
+"""
+
+_PURCHASE_ORDER_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_purchase_orders_status ON purchase_orders(status)",
+    "CREATE INDEX IF NOT EXISTS idx_purchase_orders_created_at ON purchase_orders(created_at)",
+)
+
+
+def _purchase_orders_have_v4_shape(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'purchase_orders'").fetchone()
+    return row is not None and "partially_received" in (row[0] or "") and "received_qty" in (row[0] or "")
+
+
+def _rebuild_purchase_orders(conn: sqlite3.Connection) -> None:
+    """Swap purchase_orders for a copy with the v4 constraint and columns.
+    Runs inside the caller's transaction, so a failure leaves the old table
+    untouched."""
+    old_columns = [row[1] for row in conn.execute("PRAGMA table_info(purchase_orders)")]
+    seq_row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'purchase_orders'").fetchone()
+    conn.execute("DROP TABLE IF EXISTS purchase_orders_v4")
+    conn.execute(_PURCHASE_ORDERS_V4)
+    new_columns = {row[1] for row in conn.execute("PRAGMA table_info(purchase_orders_v4)")}
+    shared = [c for c in old_columns if c in new_columns]
+    names = ", ".join(shared)
+    conn.execute(f"INSERT INTO purchase_orders_v4 ({names}) SELECT {names} FROM purchase_orders")
+    conn.execute("DROP TABLE purchase_orders")
+    conn.execute("ALTER TABLE purchase_orders_v4 RENAME TO purchase_orders")
+    if seq_row is not None:  # ids of deleted/rejected rows must never be handed out again
+        conn.execute(
+            "UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'purchase_orders'", (int(seq_row[0]),)
+        )
+    for statement in _PURCHASE_ORDER_INDEXES:
+        conn.execute(statement)
+
+
+def _to_v4(conn: sqlite3.Connection) -> None:
+    _add_columns(conn, _V4_COLUMNS)
+    if not _purchase_orders_have_v4_shape(conn):
+        _rebuild_purchase_orders(conn)
+
+
+# Version 5 - ledger audit trail.
+_V5_COLUMNS = (
+    ("ledger_entries", "created_by", "TEXT"),
+    ("ledger_entries", "settled_by", "TEXT"),
+    ("ledger_entries", "updated_by", "TEXT"),
+)
+
+_LEDGER_AUDIT_STATEMENTS = (
+    """
+CREATE TABLE IF NOT EXISTS ledger_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    entry_id    INTEGER NOT NULL,
+    at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    actor_badge TEXT NOT NULL,
+    actor_name  TEXT NOT NULL,
+    action      TEXT NOT NULL CHECK (action IN ('created', 'edited', 'cleared', 'endorsed', 'reopened', 'deleted')),
+    before_json TEXT,
+    after_json  TEXT
+)""",
+    "CREATE INDEX IF NOT EXISTS idx_ledger_audit_entry ON ledger_audit(entry_id, id)",
+    """
+CREATE TRIGGER IF NOT EXISTS trg_ledger_audit_no_update BEFORE UPDATE ON ledger_audit
+BEGIN SELECT RAISE(ABORT, 'ledger_audit is append-only'); END""",
+    """
+CREATE TRIGGER IF NOT EXISTS trg_ledger_audit_no_delete BEFORE DELETE ON ledger_audit
+BEGIN SELECT RAISE(ABORT, 'ledger_audit is append-only'); END""",
+)
+
+
+def _to_v5(conn: sqlite3.Connection) -> None:
+    _add_columns(conn, _V5_COLUMNS)
+    for statement in _LEDGER_AUDIT_STATEMENTS:
+        conn.execute(statement)
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

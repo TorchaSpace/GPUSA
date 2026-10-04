@@ -45,9 +45,12 @@ from PySide6.QtWidgets import (
 
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
-from admin_app.gui.components.inventory_table import InventoryTable, InventoryTableModel, status_for
+from admin_app.gui.components.inventory_table import (
+    InventoryTable, InventoryTableModel, cost_text, margin_color, margin_text, status_for,
+)
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
+from shared.costing import unit_margin_percent
 from shared.formatting import format_amount, format_int
 from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
@@ -272,6 +275,11 @@ class InventoryPage(AdminPage):
 
         status_label, status_color = status_for(product)
         self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.base_price"), f"${format_amount(product.price)}"))
+        self._detail_rows_container.addWidget(self._detail_row(
+            tr("admin.inventory.unit_cost"),
+            f"${cost_text(product)}" if product.cost_known else tr("admin.inventory.cost_unknown")))
+        self._detail_rows_container.addWidget(
+            self._detail_row(tr("admin.inventory.margin"), margin_text(product), color=margin_color(product)))
         self._detail_rows_container.addWidget(
             self._detail_row(tr("admin.inventory_total_network"), str(product.stock_quantity)))
         # Where those units are (per-location stock - see stock_repository).
@@ -339,6 +347,8 @@ class InventoryPage(AdminPage):
         try:
             if editing:
                 product_repository.update(product)
+                if self._popup.cost_changed():
+                    product_repository.set_cost(product.barcode, product.cost_price)
             else:
                 product_repository.create(product)
         except (ValueError, *DATABASE_ERRORS) as exc:
@@ -391,10 +401,14 @@ class InventoryPage(AdminPage):
         try:
             with open(path_str, "w", newline="", encoding="utf-8") as handle:
                 writer = csv.writer(handle)
-                writer.writerow(["Barcode", "Name", "Price", "Stock", "Reorder At"])
+                writer.writerow(["Barcode", "Name", "Price", "Stock", "Reorder At", "Cost", "Margin %"])
                 for product in self._all_products:
+                    margin = unit_margin_percent(product.price, product.cost_price)
                     writer.writerow(
-                        [product.barcode, product.name, f"{product.price:.2f}", product.stock_quantity, product.critical_stock_level]
+                        [product.barcode, product.name, f"{product.price:.2f}", product.stock_quantity,
+                         product.critical_stock_level,
+                         f"{product.cost_price:.2f}" if product.cost_known else "",
+                         f"{margin:.1f}" if margin is not None else ""]
                     )
         except OSError as exc:
             QMessageBox.warning(self, tr("admin.inventory.export_failed"), str(exc))

@@ -237,3 +237,267 @@ def test_a_raw_sqlite_error_on_submit_is_shown_not_raised(panel, qapp, monkeypat
     panel._send_button.click()
     pump(qapp)
     assert "locked" in panel._error_label.text()
+
+
+# --- receiving a delivery and cancelling (purchase order life after approval) ---------------
+
+from database import stock_repository, warehouse_repository  # noqa: E402
+from shared import current_session  # noqa: E402
+from shared.models import StockLocation, Warehouse  # noqa: E402
+from tests.po_support import ADMIN as PO_ADMIN, DEPOT, OTHER_DEPOT, seed_people, session_for  # noqa: E402
+
+WH1 = StockLocation.warehouse("WH-01")
+
+
+@pytest.fixture
+def desk(qapp):
+    """The purchasing panel for WH-01, signed in as a depot manager (conftest signs out afterwards)."""
+    warehouse_repository.create(Warehouse(code="WH-01", name="Test", city="Tuzla", capacity_units=1000))
+    product_repository.create(Product("PLT-4410", "Pallet wrap 500mm", 900, 0, 10))
+    po_repo.set_price_range(PriceRange("PLT-4410", 520, 680, "Kuzey Ambalaj A.Ş."))
+    seed_people()
+    current_session.set(session_for(DEPOT, "depot_manager"))
+    from depot_app.gui.purchasing_panel import PurchasingPanel
+
+    widget = PurchasingPanel("WH-01 · Test")
+    widget.show()
+    pump(qapp)
+    yield widget
+    widget.close()
+
+
+def _order(qty=100, price=600.0, raised_by=DEPOT):
+    return po_repo.submit("PLT-4410", "Kuzey", qty, price, "WH-01 · Test", raised_by=raised_by)
+
+
+def _row_of(panel, order):
+    return next(r for r in range(panel._table.rowCount()) if panel._table.item(r, 0).text() == order.number)
+
+
+def _status_of(panel, order):
+    return panel._table.item(_row_of(panel, order), 7).text()
+
+
+def test_status_text_shows_what_has_arrived():
+    from depot_app.gui.purchasing_panel import status_text
+    from shared.models import PurchaseOrder
+
+    def order(status, received=0, decided=None):
+        return PurchaseOrder("B", "n", "s", 100, 5.0, "WH", status, received_qty=received, decided_at=decided)
+
+    assert status_text(order("pending")) == "Awaiting Admin Approval"
+    assert status_text(order("sent")) == "Sent"
+    assert status_text(order("sent", decided="2026-09-25T07:00:00.000Z")) == "Approved · Sent"
+    assert status_text(order("partially_received", 40)) == "Partially received · 40 of 100"
+    assert status_text(order("received", 100)) == "Received · 100 of 100"
+    assert status_text(order("cancelled")) == "Cancelled"
+    assert status_text(order("rejected")) == "Rejected"
+
+
+def test_status_text_in_turkish():
+    from depot_app.gui.purchasing_panel import status_text
+    from shared import i18n
+    from shared.models import PurchaseOrder
+
+    i18n.set_language("tr")
+    try:
+        assert status_text(PurchaseOrder("B", "n", "s", 100, 5.0, "WH", "partially_received", received_qty=40)) == (
+            "Kısmen teslim alındı · 40 / 100")
+        assert status_text(PurchaseOrder("B", "n", "s", 100, 5.0, "WH", "cancelled")) == "İptal edildi"
+    finally:
+        i18n.set_language("en")
+
+
+def test_warehouse_code_comes_from_the_site_label():
+    from depot_app.gui.purchasing_panel import warehouse_code_of
+
+    assert warehouse_code_of("WH-01 · İSTANBUL MERKEZ") == "WH-01"
+    assert warehouse_code_of("wh-02") == "WH-02" and warehouse_code_of("") == ""
+
+
+def test_only_approved_orders_with_goods_due_offer_receive(desk, qapp):
+    sent = _order()
+    held = _order(10, 742.5)
+    partial = _order(50)
+    po_repo.receive_against_order(partial.id, 20, DEPOT, WH1)
+    done = _order(5)
+    po_repo.receive_against_order(done.id, 5, DEPOT, WH1)
+    cancelled = _order(5)
+    po_repo.cancel_order(cancelled.id, PO_ADMIN)
+    desk._refresh_orders_now()
+    pump(qapp)
+
+    assert desk.action_button("receive", sent.id) is not None
+    assert desk.action_button("receive", partial.id) is not None
+    for order in (held, done, cancelled):
+        assert desk.action_button("receive", order.id) is None
+
+
+def test_receiving_a_delivery_books_the_stock_and_the_row_follows(desk, qapp, monkeypatch):
+    order = _order(100)
+    desk._refresh_orders_now()
+    asked = []
+    monkeypatch.setattr(desk, "_ask_receive_quantity", lambda o: asked.append(o.id) or 40)
+
+    desk.action_button("receive", order.id).click()
+    pump(qapp)
+
+    assert asked == [order.id]
+    assert stock_repository.quantity_at(WH1, "PLT-4410") == 40
+    assert po_repo.get(order.id).status == "partially_received"
+    assert _status_of(desk, order) == "Partially received · 40 of 100"
+    assert desk._action_label.isVisibleTo(desk) and "40" in desk._action_label.text() and "WH-01" in desk._action_label.text()
+
+    monkeypatch.setattr(desk, "_ask_receive_quantity", lambda o: o.remaining_qty)  # the rest arrives
+    desk.action_button("receive", order.id).click()
+    pump(qapp)
+
+    assert stock_repository.quantity_at(WH1, "PLT-4410") == 100
+    assert po_repo.get(order.id).status == "received"
+    assert _status_of(desk, order) == "Received · 100 of 100"
+    assert desk.action_button("receive", order.id) is None  # nothing left to receive
+    assert "received in full" in desk._action_label.text()
+    assert po_repo.get(order.id).received_by == "Deniz Depo · D-1"
+
+
+def test_closing_the_dialog_receives_nothing(desk, qapp, monkeypatch):
+    order = _order(100)
+    desk._refresh_orders_now()
+    monkeypatch.setattr(desk, "_ask_receive_quantity", lambda o: None)
+    desk.action_button("receive", order.id).click()
+    pump(qapp)
+    assert po_repo.get(order.id).received_qty == 0 and stock_repository.quantity_at(WH1, "PLT-4410") == 0
+    assert not desk._action_label.isVisibleTo(desk)
+
+
+def test_a_refused_receipt_is_explained_and_changes_nothing(desk, qapp, monkeypatch):
+    order = _order(100)
+    desk._refresh_orders_now()
+    warehouse = warehouse_repository.get_by_code("WH-01")
+    warehouse.is_active = False
+    warehouse_repository.update(warehouse)
+    monkeypatch.setattr(desk, "_ask_receive_quantity", lambda o: 10)
+
+    desk.action_button("receive", order.id).click()
+    pump(qapp)
+
+    assert "inactive" in desk._action_label.text() and order.number in desk._action_label.text()
+    assert po_repo.get(order.id).received_qty == 0
+
+
+def test_a_stale_quantity_that_would_over_receive_is_refused_with_the_remaining_units(desk, qapp, monkeypatch):
+    order = _order(100)
+    desk._refresh_orders_now()  # this screen thinks 100 are still due ...
+    po_repo.receive_against_order(order.id, 80, OTHER_DEPOT, WH1)  # ... another console took 80
+    monkeypatch.setattr(desk, "_ask_receive_quantity", lambda o: 50)
+
+    desk.action_button("receive", order.id).click()
+    pump(qapp)
+
+    assert "only 20 units still due" in desk._action_label.text()
+    assert po_repo.get(order.id).received_qty == 80 and stock_repository.quantity_at(WH1, "PLT-4410") == 80
+    assert _status_of(desk, order) == "Partially received · 80 of 100"  # and the table caught up
+
+
+def test_cancel_is_offered_only_where_the_person_may_cancel(desk, qapp):
+    mine = _order(10, 742.5, raised_by=DEPOT)
+    theirs = _order(10, 742.5, raised_by=OTHER_DEPOT)
+    approved = _order(10, 600)
+    desk._refresh_orders_now()
+    assert desk.action_button("cancel", mine.id) is not None
+    assert desk.action_button("cancel", theirs.id) is None  # someone else's held order
+    assert desk.action_button("cancel", approved.id) is None  # only an administrator cancels an approved one
+
+    current_session.set(session_for(PO_ADMIN, "admin"))
+    desk._refresh_orders_now()
+    assert desk.action_button("cancel", mine.id) is not None and desk.action_button("cancel", theirs.id) is not None
+    assert desk.action_button("cancel", approved.id) is None  # this panel only cancels held orders
+
+    current_session.clear()
+    desk._refresh_orders_now()
+    assert desk.action_button("cancel", mine.id) is None
+
+
+def test_cancelling_a_held_order_asks_first(desk, qapp, monkeypatch):
+    held = _order(10, 742.5)
+    desk._refresh_orders_now()
+    asked = []
+    monkeypatch.setattr(desk, "_confirm_cancel", lambda o: asked.append(o.number) or False)
+    desk.action_button("cancel", held.id).click()
+    pump(qapp)
+    assert asked == [held.number] and po_repo.get(held.id).status == "pending"
+
+    monkeypatch.setattr(desk, "_confirm_cancel", lambda o: True)
+    desk.action_button("cancel", held.id).click()
+    pump(qapp)
+    done = po_repo.get(held.id)
+    assert done.status == "cancelled" and done.cancelled_by == "Deniz Depo · D-1"
+    assert _status_of(desk, held) == "Cancelled"
+    assert "cancelled" in desk._action_label.text() and held.number in desk._action_label.text()
+    assert desk.action_button("cancel", held.id) is None
+
+
+def test_the_awaiting_banner_gives_way_when_the_held_order_is_cancelled(desk, qapp):
+    _fill(desk, qapp, "PLT-4410", 40, "742,50")
+    desk._hold_button.click()
+    pump(qapp)
+    held = po_repo.list_pending()[0]
+    assert desk._awaiting_banner.isVisibleTo(desk)
+
+    po_repo.cancel_order(held.id, DEPOT)
+    desk._refresh_orders_now()
+    pump(qapp)
+
+    assert not desk._awaiting_banner.isVisibleTo(desk)
+    assert "cancelled" in desk._notice_text.text() and held.number in desk._notice_text.text()
+
+
+def test_cancelling_the_order_in_the_awaiting_banner_returns_to_the_form(desk, qapp, monkeypatch):
+    _fill(desk, qapp, "PLT-4410", 40, "742,50")
+    desk._hold_button.click()
+    pump(qapp)
+    held = po_repo.list_pending()[0]
+    monkeypatch.setattr(desk, "_confirm_cancel", lambda o: True)
+
+    desk.action_button("cancel", held.id).click()
+    pump(qapp)
+
+    assert po_repo.get(held.id).status == "cancelled"
+    assert not desk._awaiting_banner.isVisibleTo(desk) and desk._form.isVisibleTo(desk)
+
+
+def test_an_approved_order_still_waiting_stays_listed_however_old(desk, qapp, monkeypatch):
+    from depot_app.gui import purchasing_panel
+
+    old_waiting = _order(10, 600)
+    for _ in range(3):
+        _order(10, 742.5)  # newer held orders
+    monkeypatch.setattr(purchasing_panel, "_TABLE_LIMIT", 2)
+    desk._refresh_orders_now()
+    pump(qapp)
+
+    numbers = [desk._table.item(r, 0).text() for r in range(desk._table.rowCount())]
+    assert old_waiting.number in numbers and len(numbers) == 3  # the 2 newest + the one still waiting
+    assert numbers == sorted(numbers, reverse=True)
+
+
+def test_receive_dialog_limits_the_quantity_to_what_is_due(qapp):
+    from PySide6.QtWidgets import QLabel
+
+    from depot_app.gui.components.receive_delivery_dialog import ReceiveDeliveryDialog
+    from shared.models import PurchaseOrder
+
+    order = PurchaseOrder("PLT-4410", "Pallet wrap", "Kuzey", 100, 600.0, "WH-01", "partially_received",
+                          id=7, received_qty=30)
+    dialog = ReceiveDeliveryDialog(order, "WH-01")
+    assert dialog.quantity() == 70  # defaults to everything still due
+    spin = dialog._quantity_input
+    assert (spin.minimum(), spin.maximum()) == (1, 70)
+    spin.setValue(500)
+    assert dialog.quantity() == 70  # can't type past what is due
+    spin.setValue(0)
+    assert dialog.quantity() == 1
+    assert "PO-00007" in dialog.windowTitle()
+    texts = " ".join(label.text() for label in dialog.findChildren(QLabel))
+    assert "Kuzey" in texts and "WH-01" in texts and "70" in texts
+    dialog.close()
