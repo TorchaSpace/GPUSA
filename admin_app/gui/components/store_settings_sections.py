@@ -67,8 +67,12 @@ class GeneralSection(Section):
         form.addRow(_note(tr("settings.store_note")))
         form.addRow(_note(tr("settings.language_note")))
         self._error = QLabel("")
+        self._error.setWordWrap(True)
         self._error.setStyleSheet(f"font-size: 12px; color: {CLASSICAL_PALETTE['alert_critical']};")
         form.addRow(self._error)
+        self._status = QLabel("")
+        self._status.setStyleSheet(f"font-size: 12px; color: {CLASSICAL_PALETTE['alert_success']};")
+        form.addRow(self._status)
         save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
@@ -90,6 +94,7 @@ class GeneralSection(Section):
         index = self._language_input.findData(settings_repository.safe_language())
         self._language_input.setCurrentIndex(max(0, index))
         self._error.setText("")
+        self._status.setText("")
         self._baseline = self._current()
 
     def save(self) -> bool:
@@ -101,10 +106,29 @@ class GeneralSection(Section):
             self._error.setText(str(exc))
             return False
         self._error.setText("")
+        self._status.setText(tr("settings.saved"))  # visible proof the click did something
         self._name_input.setText(profile.name)
         self._baseline = self._current()
         self.saved.emit()
+        if self._language_input.currentData() != i18n.current_language():
+            self._offer_restart()
         return True
+
+    def _confirm_restart(self) -> bool:
+        """Separate so tests can answer without a modal dialog."""
+        box = QMessageBox(self)
+        box.setWindowTitle(tr("settings.language_restart_title"))
+        box.setText(tr("settings.language_restart_body"))
+        now = box.addButton(tr("settings.language_restart_now"), QMessageBox.AcceptRole)
+        box.addButton(tr("settings.language_restart_later"), QMessageBox.RejectRole)
+        box.exec()
+        return box.clickedButton() is now
+
+    def _offer_restart(self) -> None:
+        if self._confirm_restart():
+            from admin_app.gui.restart import restart_app
+
+            restart_app()
 
 
 class NotificationsSection(Section):

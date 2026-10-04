@@ -17,6 +17,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
+from admin_app.gui.motion import HoverTween, blend, count_up
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 
 
@@ -32,16 +33,10 @@ class StatCard(QFrame):
     ):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
-        self.setStyleSheet(
-            f"""
-            StatCard {{
-                background-color: {p['background']};
-                border: 1px solid {p['border']};
-                border-radius: {p['radius_md']};
-            }}
-            QLabel {{ border: none; }}
-            """
-        )
+        self._apply_frame_style(0.0)
+        # The border warms toward the accent under the mouse (a quiet cue
+        # that the card is a live surface, no layout change).
+        self._hover = HoverTween(self, self._apply_frame_style)
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 14, 16, 14)
@@ -83,8 +78,22 @@ class StatCard(QFrame):
         self._footer_frame.setVisible(False)
         outer.addWidget(self._footer_frame)
 
+    def _apply_frame_style(self, level: float) -> None:
+        p = CLASSICAL_PALETTE
+        edge = blend(p["border"], p["accent"], 0.55 * level)
+        self.setStyleSheet(
+            f"""
+            StatCard {{
+                background-color: {p['background']};
+                border: 1px solid {edge};
+                border-radius: {p['radius_md']};
+            }}
+            QLabel {{ border: none; }}
+            """
+        )
+
     def set_value(self, value: str) -> None:
-        self._value_label.setText(value)
+        count_up(self._value_label, value)  # the number counts up; the final text is exactly `value`
 
     def set_trend(self, text: str, positive: bool | None = None) -> None:
         """The small coloured annotation beside the value (green when

@@ -965,4 +965,9 @@ EN_ADMIN = {
     "admin.reports.profit_note": "Gross profit {profit} · margin {margin}",
     "admin.reports.cost_unknown": "Cost unknown for {percent}% of revenue",
     "admin.reports.top_profit": "Profit {profit} · {margin}",
+    "settings.saved": "Saved.",
+    "settings.language_restart_title": "Restart to change language",
+    "settings.language_restart_body": "The language is saved. Admin needs to restart to use it. Restart now?",
+    "settings.language_restart_now": "Restart now",
+    "settings.language_restart_later": "Later",
 }

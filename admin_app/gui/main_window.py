@@ -24,6 +24,7 @@ from __future__ import annotations
 import sys
 
 from PySide6.QtGui import QKeySequence, QShortcut
+from admin_app.gui.motion import fade_in
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository, purchase_order_repository, settings_repository
@@ -152,7 +153,10 @@ class MainWindow(QMainWindow):
     def _show_page(self, key: str) -> None:
         widget = self._pages.get(key)
         if widget is not None:
+            changed = self._stack.currentWidget() is not widget
             self._stack.setCurrentWidget(widget)
+            if changed:
+                fade_in(widget)
             if key == "purchase_requests":
                 self._purchase_requests_page.reload()  # always fresh when opened
             elif key == "treasury":

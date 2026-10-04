@@ -154,6 +154,7 @@ def test_general_save_writes_profile_and_language_in_one_call(settings, monkeypa
     monkeypatch.setattr(settings_repository, "save_store_profile", forbidden)
     monkeypatch.setattr(settings_repository, "save_language", forbidden)
     general = settings._general
+    monkeypatch.setattr(type(general), "_confirm_restart", lambda self: False)
     general._name_input.setText("Acme Parts")
     general._language_input.setCurrentIndex(general._language_input.findData("tr"))
     assert general.save()

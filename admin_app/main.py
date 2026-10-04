@@ -8,6 +8,7 @@ from shared.i18n import tr
 from admin_app.gui.app_style import admin_extra_qss
 from admin_app.gui.auth_flow import sign_in
 from admin_app.gui.main_window import MainWindow
+from admin_app.gui.motion import install_dialog_fade
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.dealership_bootstrap import register_sidecars_beside_this_exe
 from shared.warehouse_bootstrap import register_warehouse_sidecars_beside_this_exe
@@ -30,6 +31,7 @@ def main() -> int:
     app = QApplication(sys.argv)
     apply_theme(app, palette=CLASSICAL_PALETTE)
     app.setStyleSheet(app.styleSheet() + admin_extra_qss(CLASSICAL_PALETTE))
+    install_dialog_fade(app)
     i18n.set_language(settings_repository.safe_language())
     # Nobody sees Admin without signing in (see admin_app/gui/auth_flow.py):
     # the first administrator is created here on a fresh system.

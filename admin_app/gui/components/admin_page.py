@@ -23,6 +23,10 @@ class AdminPage(QWidget):
         outer.setSpacing(20)
 
         header = QWidget()
+        # A bare QWidget picks up the dark app background and shows as a darker
+        # band behind the title; keep it see-through like the page around it.
+        header.setObjectName("adminPageHeader")
+        header.setStyleSheet("#adminPageHeader { background: transparent; }")
         self._header_layout = QHBoxLayout(header)
         self._header_layout.setContentsMargins(0, 0, 0, 0)
 

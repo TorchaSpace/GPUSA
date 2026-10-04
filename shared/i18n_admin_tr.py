@@ -1020,4 +1020,9 @@ TR_ADMIN = {
     "admin.reports.profit_note": "Brüt kâr {profit} · marj {margin}",
     "admin.reports.cost_unknown": "Maliyeti bilinmeyen ciro payı: %{percent}",
     "admin.reports.top_profit": "Kâr {profit} · {margin}",
+    "settings.saved": "Kaydedildi.",
+    "settings.language_restart_title": "Dil için yeniden başlat",
+    "settings.language_restart_body": "Dil kaydedildi. Kullanmak için Admin'in yeniden başlaması gerekiyor. Şimdi yeniden başlatılsın mı?",
+    "settings.language_restart_now": "Şimdi yeniden başlat",
+    "settings.language_restart_later": "Sonra",
 }
