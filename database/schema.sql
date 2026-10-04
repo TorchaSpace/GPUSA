@@ -101,7 +101,10 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     -- Who logged it ("Murat Yılmaz · B-100" snapshot, see shared/auth.Actor);
     -- NULL when nobody was signed in (the depot Floor kiosk) or for rows
     -- from before sign-in existed. Added by migration v2 on old databases.
-    handled_by          TEXT
+    handled_by          TEXT,
+    -- The shelf bin / dock door the Floor typed (added by migration v6); NULL on older rows,
+    -- where that text sits inside `note`.
+    bin_code            TEXT
 );
 
 CREATE INDEX IF NOT EXISTS idx_stock_movements_product_barcode

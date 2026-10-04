@@ -26,6 +26,7 @@ from shared.constants import CRITICAL_STOCK_POLL_INTERVAL_MS
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.motion import animations_enabled, fade_in
 from shared.gui_kit.polling import PollingTimer
+from shared.i18n import plural, tr
 from shared.models import UNASSIGNED, Product, StockLocation
 
 _AMBER = "#f4b400"
@@ -100,7 +101,7 @@ class LowStockBanner(QWidget):
         )
         header.addWidget(self._heading)
         header.addStretch(1)
-        note = QLabel("Reorders are raised by the Purchasing Manager")
+        note = QLabel(tr("depot.banner.reorder_note"))
         note.setStyleSheet(f"font-size: 13px; font-weight: 500; color: {p['text_primary']};")
         header.addWidget(note)
         card_layout.addLayout(header)
@@ -163,7 +164,7 @@ class LowStockBanner(QWidget):
         self._card.show()
         if newly_shown:
             fade_in(self._card)
-        self._heading.setText(f"{len(products)} Low Stock Alert{'s' if len(products) != 1 else ''}")
+        self._heading.setText(plural("depot.banner.alert", len(products)))
         for index, product in enumerate(products):
             self._pills_layout.insertWidget(index, self._build_pill(product))
 
@@ -192,7 +193,7 @@ class LowStockBanner(QWidget):
         name_label.setStyleSheet(
             f"font-weight: 700; font-size: 14px; color: {p['text_primary']}; background: transparent; border: none;"
         )
-        below_label = QLabel(f"left of min {product.critical_stock_level}")
+        below_label = QLabel(tr("depot.banner.left_of_min").format(minimum=product.critical_stock_level))
         below_label.setStyleSheet(
             f"font-size: 12px; color: {p['text_primary']}; background: transparent; border: none;"
         )

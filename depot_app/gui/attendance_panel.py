@@ -38,7 +38,7 @@ from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING, INDUSTRY_PALETTE
 from shared.auth import normalize_badge_id
 from shared.formatting import local_clock_text
-from shared.i18n import tr
+from shared.i18n import enum_label, tr
 
 
 class AttendancePanel(QWidget):
@@ -91,7 +91,7 @@ class AttendancePanel(QWidget):
         form.setSpacing(8)
 
         self._badge_input = QLineEdit()
-        self._badge_input.setPlaceholderText("Scan or type badge")
+        self._badge_input.setPlaceholderText(tr("depot.attendance.scan_badge"))
         self._badge_input.setStyleSheet(
             f"QLineEdit {{ background-color: {p['background']}; color: {p['text_primary']}; "
             f"border: 1px solid {p['border']}; border-radius: 0; padding: 10px 10px; "
@@ -99,12 +99,12 @@ class AttendancePanel(QWidget):
         )
         form.addWidget(self._badge_input, stretch=1)
 
-        check_in_button = IndustryButton("Check in", variant="primary")
+        check_in_button = IndustryButton(tr("depot.checkin.check_in"), variant="primary")
         check_in_button.clicked.connect(self._on_check_in)
         self._badge_input.returnPressed.connect(self._on_check_in)
         form.addWidget(check_in_button)
 
-        check_out_button = IndustryButton("Check out", variant="ghost")
+        check_out_button = IndustryButton(tr("depot.checkin.check_out"), variant="ghost")
         check_out_button.clicked.connect(self._on_check_out)
         form.addWidget(check_out_button)
 
@@ -116,7 +116,7 @@ class AttendancePanel(QWidget):
         p = INDUSTRY_PALETTE
         table = QTableWidget(0, 7)
         table.setHorizontalHeaderLabels(
-            ["Badge", "Name", "Role", "Status", "Checked in", "Checked out", "Hours"]
+            [tr(f"depot.attendance.col_{c}") for c in ("badge", "name", "role", "status", "in", "out", "hours")]
         )
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
@@ -135,7 +135,7 @@ class AttendancePanel(QWidget):
     def _on_check_in(self) -> None:
         badge_id = normalize_badge_id(self._badge_input.text())
         if not badge_id:
-            self._show_error("Scan or enter a badge ID first.")
+            self._show_error(tr("depot.checkin.scan_first"))
             return
         try:
             attendance_repository.check_in(badge_id)
@@ -147,7 +147,7 @@ class AttendancePanel(QWidget):
     def _on_check_out(self) -> None:
         badge_id = normalize_badge_id(self._badge_input.text())
         if not badge_id:
-            self._show_error("Scan or enter a badge ID first.")
+            self._show_error(tr("depot.checkin.scan_first"))
             return
         try:
             attendance_repository.check_out(badge_id)
@@ -175,14 +175,14 @@ class AttendancePanel(QWidget):
         except DATABASE_ERRORS:
             on_floor, total, roster = 0, 0, []
 
-        self._on_floor_label.setText(f"{on_floor} of {total} on floor")
+        self._on_floor_label.setText(tr("depot.attendance.on_floor").format(on=on_floor, total=total))
 
         self._table.setRowCount(len(roster))
         for row, entry in enumerate(roster):
             self._table.setItem(row, 0, QTableWidgetItem(entry["badge_id"]))
             self._table.setItem(row, 1, QTableWidgetItem(entry["name"]))
-            self._table.setItem(row, 2, QTableWidgetItem(entry["role"]))
-            status = entry["status"] + (" · " + tr("admin.workforce.long_open") if entry.get("long_open") else "")
+            self._table.setItem(row, 2, QTableWidgetItem(enum_label("role", entry["role"])))
+            status = enum_label("attendance", entry["status"]) + (" · " + tr("admin.workforce.long_open") if entry.get("long_open") else "")
             self._table.setItem(row, 3, QTableWidgetItem(status))
             # Local time (a shift from an earlier day also shows its date), not the UTC text of the stamp.
             in_text = local_clock_text(entry["check_in_at"])

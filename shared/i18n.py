@@ -11,6 +11,7 @@ from __future__ import annotations
 from collections.abc import Iterable, Mapping
 
 from shared.i18n_admin_en import EN_ADMIN
+from shared.i18n_depot import EN_DEPOT, TR_DEPOT
 from shared.i18n_tr import TR
 
 _CURRENT_LANGUAGE = "en"
@@ -182,8 +183,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "common.cancel": "Cancel",
         "common.save": "Save",
         **EN_ADMIN,
+        **EN_DEPOT,
     },
-    "tr": TR,
+    "tr": {**TR, **TR_DEPOT},
 }
 
 LANGUAGE_NAMES = {"en": "English", "tr": "T\u00fcrk\u00e7e"}

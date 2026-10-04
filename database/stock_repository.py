@@ -149,6 +149,7 @@ def log_movement(
     note: str | None = None,
     reference: str | None = None,
     actor: Actor | None = None,
+    bin_code: str | None = None,
 ) -> None:
     """One `stock_movements` audit row. movement_type is 'receive' (units
     arrived at `location`) or 'dispatch' (units left it); `reason` and
@@ -156,14 +157,15 @@ def log_movement(
     (None on the open depot Floor)."""
     conn.execute(
         "INSERT INTO stock_movements (product_barcode, movement_type, quantity, note, "
-        "location_kind, location_code, reason, reference, handled_by) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+        "location_kind, location_code, reason, reference, handled_by, bin_code) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         (barcode, movement_type, int(quantity), note, location.kind, location.code, reason, reference,
-         actor_label(actor)),
+         actor_label(actor), _clean(bin_code)),
     )
 
 
 def receive_in(conn: sqlite3.Connection, location: StockLocation, barcode: str, quantity: int, *,
-               note: str | None = None, actor: Actor | None = None, reference: str | None = None) -> int:
+               note: str | None = None, actor: Actor | None = None, reference: str | None = None,
+               bin_code: str | None = None) -> int:
     """receive() inside the caller's open transaction (it neither begins nor
     commits one): the checks, the level + company-total change and the
     'receive' audit row, so purchase_order_repository can book a delivery
@@ -175,7 +177,7 @@ def receive_in(conn: sqlite3.Connection, location: StockLocation, barcode: str, 
     require_can_hold(conn, location, quantity)
     new = change_level(conn, location, code, quantity, change_total=True)
     log_movement(conn, location, code, "receive", quantity, reason="receive", note=_clean(note),
-                 reference=reference, actor=actor)
+                 reference=reference, actor=actor, bin_code=bin_code)
     return new
 
 
@@ -207,15 +209,16 @@ def _clean(note: str | None) -> str | None:
 # --- writes -----------------------------------------------------------------
 
 def receive(location: StockLocation, barcode: str, quantity: int, note: str | None = None,
-            actor: Actor | None = None) -> int:
+            actor: Actor | None = None, reference: str | None = None, bin_code: str | None = None) -> int:
     """New stock arrives at `location` from outside the company (the depot
     Floor's Inbound). Returns the new level there."""
     quantity = _positive(quantity)
-    return _write(lambda conn: receive_in(conn, location, barcode, quantity, note=note, actor=actor))
+    return _write(lambda conn: receive_in(conn, location, barcode, quantity, note=note, actor=actor,
+                                          reference=_clean(reference), bin_code=bin_code))
 
 
 def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | None = None,
-             actor: Actor | None = None) -> int:
+             actor: Actor | None = None, reference: str | None = None, bin_code: str | None = None) -> int:
     """Stock leaves the company from `location` (damaged, returned to the
     supplier, scrapped - the depot Floor's Outbound; NOT a shipment to a
     dealership, which stays inside the company). Raises
@@ -226,7 +229,8 @@ def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | N
         require_location(conn, location)
         code = resolve_product(conn, barcode)[0]
         new = change_level(conn, location, code, -quantity, change_total=True)
-        log_movement(conn, location, code, "dispatch", quantity, reason="dispatch", note=_clean(note), actor=actor)
+        log_movement(conn, location, code, "dispatch", quantity, reason="dispatch", note=_clean(note),
+                     reference=_clean(reference), actor=actor, bin_code=bin_code)
         return new
 
     return _write(run)
@@ -451,7 +455,7 @@ def list_movements(
     """Recent stock movements, newest first, as plain dicts: id, barcode,
     product_name, movement_type, quantity, note, created_at, location
     (a StockLocation, or None for rows logged before per-location stock),
-    reason, reference, handled_by. Filter by one location, by a kind of
+    reason, reference, handled_by, bin_code. Filter by one location, by a kind of
     location ('warehouse' - Admin's Movement Logs), by direction, and/or
     by time - `since` (inclusive) / `until` (exclusive) db timestamps, for
     the depot's Reports. `limit` None = no limit."""
@@ -475,7 +479,7 @@ def list_movements(
         params.append(until)
     sql = (
         "SELECT m.id, m.product_barcode, p.name AS product_name, m.movement_type, m.quantity, m.note, "
-        "m.created_at, m.location_kind, m.location_code, m.reason, m.reference, m.handled_by "
+        "m.created_at, m.location_kind, m.location_code, m.reason, m.reference, m.handled_by, m.bin_code "
         "FROM stock_movements m JOIN products p ON p.barcode = m.product_barcode"
     )
     if clauses:
@@ -499,6 +503,7 @@ def list_movements(
             "reason": r["reason"],
             "reference": r["reference"],
             "handled_by": r["handled_by"],
+            "bin_code": r["bin_code"],
         }
         for r in rows
     ]

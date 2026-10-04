@@ -21,6 +21,8 @@ scope, not invented here.
 
 from __future__ import annotations
 
+import time
+
 from PySide6.QtCore import QEasingCurve, QVariantAnimation, Qt, Signal
 from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
@@ -36,8 +38,11 @@ from PySide6.QtWidgets import (
 )
 
 from database.exceptions import DATABASE_ERRORS, InsufficientStockError, ProductInactiveError, ProductNotFoundError
+from database import attendance_repository
 from database.inventory_repository import list_recent_movements
 from shared.models import UNASSIGNED, StockLocation
+from shared.i18n import tr
+from shared.textcase import upper
 from shared.warehousing import tr_or
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.floor_style import floor_table, input_style, labelled, notice_style
@@ -46,32 +51,38 @@ from depot_app.services import dispatch_service, receiving_service
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.motion import animations_enabled, blend, fade_in, toast
 
+# The same SKU, quantity, reference and bin logged again within this many seconds is
+# taken for a scanner double-read and ignored.
+DOUBLE_SCAN_SECONDS = 0.35
+
+# Spec values that are i18n keys are looked up with tr() when widgets are built
+# (never at import time); placeholders and glyphs are literal.
 _DIRECTIONS = {
     "receive": {
         "glyph": "↓",
-        "title": "Inbound",
-        "unit_noun": "receipts",
-        "ref_label": "PO / ASN ref",
-        "ref_col": "Ref",
-        "loc_col": "Bin",
+        "title": "depot.move.receive.title",
+        "unit_noun": "depot.move.receive.unit_noun",
+        "ref_label": "depot.move.receive.ref_label",
+        "ref_col": "depot.move.receive.ref_col",
+        "loc_col": "depot.move.receive.loc_col",
         "ref_placeholder": "PO-20931",
-        "loc_label": "Put-away bin",
+        "loc_label": "depot.move.receive.loc_label",
         "loc_placeholder": "A-03",
-        "submit_label": "Log receipt",
-        "unknown_sku_error": "Unknown SKU. Add the product in Admin first.",
+        "submit_label": "depot.move.receive.submit",
+        "unknown_sku_error": "depot.move.unknown_sku_error",
     },
     "dispatch": {
         "glyph": "↑",
-        "title": "Outbound",
-        "unit_noun": "picks",
-        "ref_label": "Order #",
-        "ref_col": "Order",
-        "loc_col": "Dock",
+        "title": "depot.move.dispatch.title",
+        "unit_noun": "depot.move.dispatch.unit_noun",
+        "ref_label": "depot.move.dispatch.ref_label",
+        "ref_col": "depot.move.dispatch.ref_col",
+        "loc_col": "depot.move.dispatch.loc_col",
         "ref_placeholder": "SO-58812",
-        "loc_label": "Dock door",
+        "loc_label": "depot.move.dispatch.loc_label",
         "loc_placeholder": "D-07",
-        "submit_label": "Log shipment",
-        "unknown_sku_error": "Unknown SKU. Add the product in Admin first.",
+        "submit_label": "depot.move.dispatch.submit",
+        "unknown_sku_error": "depot.move.unknown_sku_error",
     },
 }
 
@@ -90,6 +101,7 @@ class MovementPanel(QWidget):
         self._direction = direction
         self._location = location  # this depot's warehouse - stock moves in/out of it only
         self._spec = _DIRECTIONS[direction]
+        self._last_logged: tuple | None = None  # (what, when) - see _on_submit's double-scan guard
         p = INDUSTRY_PALETTE
 
         outer = QVBoxLayout(self)
@@ -112,7 +124,7 @@ class MovementPanel(QWidget):
         glyph = QLabel(self._spec["glyph"])
         glyph.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 30px; font-weight: 600; color: {bar};")
         header.addWidget(glyph)
-        title = QLabel(self._spec["title"].upper())
+        title = QLabel(upper(self._spec_text("title")))
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 28px; color: {p['text_primary']};"
@@ -141,10 +153,10 @@ class MovementPanel(QWidget):
         grid.setColumnStretch(1, 1)
 
         self._sku_input = QLineEdit()
-        self._sku_input.setPlaceholderText("Scan or type")
+        self._sku_input.setPlaceholderText(tr("depot.move.scan_or_type"))
         self._sku_input.setMinimumHeight(58)
         self._sku_input.setStyleSheet(input_style(24))
-        grid.addWidget(labelled("SKU / barcode", self._sku_input), 0, 0)
+        grid.addWidget(labelled(tr("depot.move.sku_label"), self._sku_input), 0, 0)
 
         self._qty_input = QSpinBox()
         self._qty_input.setRange(1, 100_000)
@@ -152,33 +164,42 @@ class MovementPanel(QWidget):
         self._qty_input.setMinimumHeight(58)
         self._qty_input.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._qty_input.setStyleSheet(input_style(24))
-        grid.addWidget(labelled("Qty", self._qty_input), 0, 1)
+        grid.addWidget(labelled(tr("depot.move.qty_label"), self._qty_input), 0, 1)
 
         self._ref_input = QLineEdit()
         self._ref_input.setPlaceholderText(self._spec["ref_placeholder"])
         self._ref_input.setMinimumHeight(48)
         self._ref_input.setStyleSheet(input_style(18))
-        grid.addWidget(labelled(self._spec["ref_label"], self._ref_input), 1, 0)
+        grid.addWidget(labelled(self._spec_text("ref_label"), self._ref_input), 1, 0)
 
         self._loc_input = QLineEdit()
         self._loc_input.setPlaceholderText(self._spec["loc_placeholder"])
         self._loc_input.setMinimumHeight(48)
         self._loc_input.setStyleSheet(input_style(18))
-        grid.addWidget(labelled(self._spec["loc_label"], self._loc_input), 1, 1)
+        grid.addWidget(labelled(self._spec_text("loc_label"), self._loc_input), 1, 1)
+
+        # Who is doing this: a badge that is checked in. It stays filled between entries so
+        # a picker scans their own badge once per shift, not once per pallet.
+        self._operator_input = QLineEdit()
+        self._operator_input.setPlaceholderText(tr("depot.move.operator_placeholder"))
+        self._operator_input.setMinimumHeight(44)
+        self._operator_input.setStyleSheet(input_style(16))
+        grid.addWidget(labelled(tr("depot.move.operator_label"), self._operator_input), 2, 0, 1, 2)
 
         self._error_label = QLabel()
         self._error_label.setStyleSheet(notice_style())
         self._error_label.setWordWrap(True)
         self._error_label.hide()
-        grid.addWidget(self._error_label, 2, 0, 1, 2)
+        grid.addWidget(self._error_label, 3, 0, 1, 2)
 
-        submit = IndustryButton(f"{self._spec['submit_label']} \u23ce", variant="primary", height=60, font_px=20)
+        submit = IndustryButton(f"{self._spec_text('submit_label')} \u23ce", variant="primary", height=60, font_px=20)
         submit.clicked.connect(self._on_submit)
         self._submit_button = submit
         self._sku_input.returnPressed.connect(self._on_submit)
         self._ref_input.returnPressed.connect(self._on_submit)
         self._loc_input.returnPressed.connect(self._on_submit)
-        grid.addWidget(submit, 3, 0, 1, 2)
+        self._operator_input.returnPressed.connect(self._on_submit)
+        grid.addWidget(submit, 4, 0, 1, 2)
 
         widget = QWidget()
         widget.setStyleSheet("background: transparent;")
@@ -186,7 +207,11 @@ class MovementPanel(QWidget):
         return widget
 
     def _build_table(self) -> QTableWidget:
-        table = floor_table(["Time", "SKU", "Qty", self._spec["ref_col"], self._spec["loc_col"]], stretch=(1,))
+        table = floor_table(
+            [tr("depot.move.col_time"), tr("depot.move.col_sku"), tr("depot.move.col_qty"),
+             self._spec_text("ref_col"), self._spec_text("loc_col"), tr("depot.move.col_operator")],
+            stretch=(1,),
+        )
         table.setMinimumHeight(200)
         return table
 
@@ -195,29 +220,47 @@ class MovementPanel(QWidget):
         quantity = self._qty_input.value()
         ref = self._ref_input.text().strip()
         loc = self._loc_input.text().strip()
-        note = " · ".join(part for part in (ref, loc) if part) or None
+        operator_badge = self._operator_input.text().strip()
+        signature = (barcode, quantity, ref, loc)
+        if (
+            barcode
+            and self._last_logged is not None
+            and self._last_logged[0] == signature
+            and time.monotonic() - self._last_logged[1] < DOUBLE_SCAN_SECONDS
+        ):
+            return  # a scanner that fires the same read twice must not log it twice
 
         if not barcode:
-            self._show_error("Scan or enter a SKU first.")
+            self._show_error(tr("depot.move.scan_sku_first"))
             return
+
+        actor = None
+        if operator_badge:
+            try:
+                actor = attendance_repository.operator_actor(operator_badge)
+            except DATABASE_ERRORS as exc:  # unknown badge / not checked in / deactivated
+                self._show_error(str(exc))
+                return
 
         service = receiving_service if self._direction == "receive" else dispatch_service
         action = service.receive if self._direction == "receive" else service.dispatch
         try:
-            action(barcode, quantity, note, location=self._location)
+            action(barcode, quantity, None, location=self._location, actor=actor,
+                   reference=ref or None, bin_code=loc or None)
         except ProductInactiveError:
             self._show_error(tr_or("depot.sku_inactive", 'SKU "{sku}" is deactivated - it can\'t be received. Reactivate it in Admin first.').format(sku=barcode))
             return
         except ProductNotFoundError:
-            self._show_error(f'Unknown SKU "{barcode}". Scan again.')
+            self._show_error(tr("depot.move.unknown_sku").format(sku=barcode))
             return
         except InsufficientStockError as exc:
-            self._show_error(f"Only {exc.available} on hand at {self._location.label} for {barcode}. Not logged.")
+            self._show_error(tr("depot.move.insufficient").format(available=exc.available, location=self._location.label, sku=barcode))
             return
         except (ValueError, *DATABASE_ERRORS) as exc:  # e.g. over capacity, inactive warehouse, bad quantity
             self._show_error(str(exc))
             return
 
+        self._last_logged = (signature, time.monotonic())
         self._error_label.hide()
         self._sku_input.clear()
         self._ref_input.clear()
@@ -226,8 +269,16 @@ class MovementPanel(QWidget):
         self._sku_input.setFocus()
         self.reload()
         self._flash_newest_row()
-        toast(self, f"{self._spec['submit_label']}: {quantity} \u00d7 {barcode}")
+        toast(self, f"{self._spec_text('submit_label')}: {quantity} \u00d7 {barcode}")
         self.movement_logged.emit()
+
+    def _spec_text(self, name: str) -> str:
+        """The translated text of a spec entry (evaluated now, in the current language)."""
+        return tr(self._spec[name])
+
+    def focus_scan(self) -> None:
+        """Put the cursor in the SKU box, ready for the next scan."""
+        self._sku_input.setFocus()
 
     def _show_error(self, message: str) -> None:
         self._error_label.setText(message)
@@ -276,13 +327,13 @@ class MovementPanel(QWidget):
                 if m["reason"] in (None, self._direction)
             ][:50]
         except DATABASE_ERRORS as exc:  # a locked database on a refresh must not crash the Floor
-            self._show_error(f"Couldn't load the log: {exc}")
+            self._show_error(tr("depot.move.load_failed").format(error=exc))
             return
         total_units = sum(m["quantity"] for m in movements)
         p = INDUSTRY_PALETTE
         self._summary_label.setText(
-            f"<b style='font-size:18px; color:{p['text_primary']}'>{total_units}</b> units \u00b7 "
-            f"{len(movements)} {self._spec['unit_noun']}"
+            tr("depot.move.summary").format(
+                color=p["text_primary"], units=total_units, count=len(movements), noun=self._spec_text("unit_noun"))
         )
 
         self._table.setRowCount(len(movements))
@@ -302,9 +353,16 @@ class MovementPanel(QWidget):
             big = self._bold(19)
             qty.setFont(big)
             self._table.setItem(row, 2, qty)
-            parts = (movement["note"] or "").split(" \u00b7 ", 1)
-            self._table.setItem(row, 3, QTableWidgetItem(parts[0]))
-            self._table.setItem(row, 4, QTableWidgetItem(parts[1] if len(parts) > 1 else ""))
+            ref, bin_code = movement.get("reference"), movement.get("bin_code")
+            if ref is None and bin_code is None:  # a row from before these had columns: ref and bin sit in the note
+                parts = (movement["note"] or "").split(" \u00b7 ", 1)
+                ref, bin_code = parts[0], (parts[1] if len(parts) > 1 else "")
+            self._table.setItem(row, 3, QTableWidgetItem(ref or ""))
+            self._table.setItem(row, 4, QTableWidgetItem(bin_code or ""))
+            who = (movement.get("handled_by") or "").split(" \u00b7 ")[0]
+            operator = QTableWidgetItem(who or "\u2014")
+            operator.setForeground(QColor(p["text_secondary"]))
+            self._table.setItem(row, 5, operator)
 
     @staticmethod
     def _bold(size: int | None = None) -> QFont:

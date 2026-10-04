@@ -36,6 +36,7 @@ from shared.constants import WAREHOUSE_POLL_INTERVAL_MS
 from shared.distribution import eta_text, live_status
 from shared.formatting import local_time_text
 from shared.gui_kit.polling import PollingTimer
+from shared.i18n import enum_label, tr
 from shared.models import Warehouse
 from shared.treasury import is_overdue
 from shared.warehousing import (
@@ -93,21 +94,27 @@ class DashboardPage(QWidget):
         grid = QGridLayout()
         grid.setSpacing(12)
         self.cells: dict[str, StatCell] = {}
-        for index, (key, caption) in enumerate((
-            ("capacity", "Capacity used"), ("skus", "SKUs held"), ("low", "Below reorder here"),
-            ("today", "Today in / out"), ("shipments", "Shipments leaving"), ("staff", "On the floor"),
-            ("orders", "POs awaiting approval"), ("ledger", "Overdue documents"),
+        for index, (key, caption_key) in enumerate((
+            ("capacity", "depot.dash.cap"), ("skus", "depot.dash.skus"), ("low", "depot.dash.low"),
+            ("today", "depot.dash.today"), ("shipments", "depot.dash.shipments"), ("staff", "depot.dash.staff"),
+            ("orders", "depot.dash.orders"), ("ledger", "depot.dash.ledger"),
         )):
-            cell = StatCell(caption)
+            cell = StatCell(tr(caption_key))
             self.cells[key] = cell
             grid.addWidget(cell, index // 4, index % 4)
         layout.addLayout(grid)
 
         row = QHBoxLayout()
         row.setSpacing(12)
-        self.low_card, self.low_table = self._card("Below reorder here", ["SKU", "Product", "On hand", "Reorder at"], 1)
-        self.ship_card, self.ship_table = self._card("Leaving soon", ["No.", "To", "Status", "ETA"], 1)
-        self.recent_card, self.recent_table = self._card("Latest activity", ["Time", "Movement", "SKU", "Qty", "Why"], 4)
+        self.low_card, self.low_table = self._card(
+            tr("depot.dash.low"),
+            [tr(k) for k in ("depot.dash.col_sku", "depot.dash.col_product", "depot.dash.col_on_hand", "depot.dash.col_reorder")], 1)
+        self.ship_card, self.ship_table = self._card(
+            tr("depot.dash.card_leaving"),
+            [tr(k) for k in ("depot.dash.col_no", "depot.dash.col_to", "depot.dash.col_status", "depot.dash.col_eta")], 1)
+        self.recent_card, self.recent_table = self._card(
+            tr("depot.dash.card_activity"),
+            [tr(k) for k in ("depot.dash.col_time", "depot.dash.col_movement", "depot.dash.col_sku", "depot.dash.col_qty", "depot.dash.col_why")], 4)
         for card in (self.low_card, self.ship_card, self.recent_card):
             row.addWidget(card, stretch=1)
         layout.addLayout(row, stretch=1)
@@ -150,23 +157,23 @@ class DashboardPage(QWidget):
         fraction = capacity_fraction(data["used"], w.capacity_units)
         near = capacity_status(w, data["used"]) == STATUS_NEAR
         if w.capacity_units:
-            self.cells["capacity"].set(percent_text(fraction), f"{data['used']:,} of {w.capacity_units:,} units", warn=near)
+            self.cells["capacity"].set(percent_text(fraction), tr("depot.dash.cap_of").format(used=f"{data['used']:,}", cap=f"{w.capacity_units:,}"), warn=near)
         else:
-            self.cells["capacity"].set(f"{data['used']:,}", "units held · capacity not set in Admin")
-        self.cells["skus"].set(str(data["skus"]), "products with stock here")
+            self.cells["capacity"].set(f"{data['used']:,}", tr("depot.dash.cap_unset"))
+        self.cells["skus"].set(str(data["skus"]), tr("depot.dash.skus_note"))
         out = sum(1 for p in data["critical"] if p.stock_quantity <= 0)
-        self.cells["low"].set(str(len(data["critical"])), f"{out} out of stock here", warn=bool(data["critical"]))
+        self.cells["low"].set(str(len(data["critical"])), tr("depot.dash.out_here").format(n=out), warn=bool(data["critical"]))
         inbound, outbound = data["today"]
-        self.cells["today"].set(f"+{inbound:,} / −{outbound:,}", "units since midnight")
+        self.cells["today"].set(f"+{inbound:,} / −{outbound:,}", tr("depot.dash.since_midnight"))
         statuses = [live_status(s) for s in data["shipments"]]
         on_road = sum(1 for s in data["shipments"] if s.status == "in_transit")
         delayed = statuses.count("Delayed")
         self.cells["shipments"].set(str(len(data["shipments"])),
-                                    f"{on_road} on the road · {len(data['shipments']) - on_road} scheduled"
-                                    + (f" · {delayed} delayed" if delayed else ""), warn=bool(delayed))
-        self.cells["staff"].set(f"{len(data['on_floor'])} / {len(data['rostered'])}", "checked in / rostered here")
-        self.cells["orders"].set(str(len(data["held_orders"])), "held for Admin's decision", warn=bool(data["held_orders"]))
-        self.cells["ledger"].set(str(len(data["overdue"])), "checks / notes / invoices past due", warn=bool(data["overdue"]))
+                                    tr("depot.dash.ship_note").format(road=on_road, sched=len(data["shipments"]) - on_road)
+                                    + (tr("depot.dash.ship_delayed").format(n=delayed) if delayed else ""), warn=bool(delayed))
+        self.cells["staff"].set(f"{len(data['on_floor'])} / {len(data['rostered'])}", tr("depot.dash.staff_note"))
+        self.cells["orders"].set(str(len(data["held_orders"])), tr("depot.dash.orders_note"), warn=bool(data["held_orders"]))
+        self.cells["ledger"].set(str(len(data["overdue"])), tr("depot.dash.ledger_note"), warn=bool(data["overdue"]))
 
         low = data["critical"][:_LIST_ROWS * 2]
         self.low_table.setRowCount(len(low))
@@ -180,7 +187,7 @@ class DashboardPage(QWidget):
         for r, s in enumerate(ships):
             status = live_status(s)
             for c, cell in enumerate([item(s.number), item(s.dealership_name),
-                                      item(status, color=AMBER if status == "Delayed" else None), item(eta_text(s))]):
+                                      item(enum_label("ship_status", status), color=AMBER if status == "Delayed" else None), item(eta_text(s))]):
                 self.ship_table.setItem(r, c, cell)
         recent = data["recent"]
         self.recent_table.setRowCount(len(recent))

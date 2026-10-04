@@ -36,6 +36,7 @@ from depot_app.gui.components.industry_widgets import AMBER, industry_table, ite
 from depot_app.theme import INDUSTRY_PALETTE
 from shared import current_session
 from shared.formatting import local_datetime_text
+from shared.i18n import tr
 from shared.models import Product, Warehouse
 from shared.warehousing import tr_or
 
@@ -71,7 +72,7 @@ class InventoryPage(QWidget):
         layout.setSpacing(10)
 
         top = QHBoxLayout()
-        top.addWidget(kicker(f"Stock at {warehouse.site_label}"), stretch=1)
+        top.addWidget(kicker(tr("depot.inv.kicker").format(site=warehouse.site_label)), stretch=1)
         self.summary_label = QLabel()
         self.summary_label.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         top.addWidget(self.summary_label)
@@ -79,7 +80,7 @@ class InventoryPage(QWidget):
 
         bar = QHBoxLayout()
         self.search_input = QLineEdit()
-        self.search_input.setPlaceholderText("Search SKU or product")
+        self.search_input.setPlaceholderText(tr("depot.inv.search"))
         self.search_input.setStyleSheet(
             f"background-color: {p['surface_raised']}; color: {p['text_primary']}; border: 1px solid {p['border']}; "
             f"padding: 6px 8px; font-size: 14px;"
@@ -90,7 +91,7 @@ class InventoryPage(QWidget):
         group.setExclusive(True)
         self.filter_buttons: dict[str, QPushButton] = {}
         for name in FILTERS:
-            button = QPushButton(name)
+            button = QPushButton(tr(f"depot.inv.filter.{name}"))
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
             button.setStyleSheet(
@@ -103,7 +104,7 @@ class InventoryPage(QWidget):
             bar.addWidget(button)
             self.filter_buttons[name] = button
         self.filter_buttons["All"].setChecked(True)
-        self.count_button = IndustryButton("Count selected…", variant="primary")
+        self.count_button = IndustryButton(tr("depot.inv.count_btn"), variant="primary")
         self.count_button.clicked.connect(self.count_selected)
         bar.addWidget(self.count_button)
         layout.addLayout(bar)
@@ -113,8 +114,8 @@ class InventoryPage(QWidget):
         self.message.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
         layout.addWidget(self.message)
 
-        self.table = industry_table(["SKU", "Product", "On hand here", "Reorder at", "Status", "Rest of company",
-                                     "Last moved here"], selectable=True)
+        self.table = industry_table([tr(f"depot.inv.{k}") for k in (
+            "col_sku", "col_product", "col_on_hand", "col_reorder", "col_status", "col_rest", "col_last")], selectable=True)
         header = self.table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
@@ -132,10 +133,10 @@ class InventoryPage(QWidget):
             self._totals = {pr.barcode: pr.stock_quantity for pr in product_repository.list_all()}
             self._last = stock_repository.last_movement_at(self.warehouse.location)
         except DATABASE_ERRORS as exc:
-            self.message.setText(f"Couldn't load stock: {exc}")
+            self.message.setText(tr("depot.inv.load_failed").format(error=exc))
             return
         held = [pr for pr in self._products if pr.stock_quantity > 0]
-        self.summary_label.setText(f"{len(held)} SKUs held · {sum(pr.stock_quantity for pr in held):,} units")
+        self.summary_label.setText(tr("depot.inv.summary").format(n=len(held), units=f"{sum(pr.stock_quantity for pr in held):,}"))
         self._render()
 
     def set_filter(self, name: str) -> None:
@@ -168,7 +169,7 @@ class InventoryPage(QWidget):
                 item(pr.barcode),
                 item(pr.name if pr.is_active else f"{pr.name} ({tr_or('admin.inactive_badge', 'inactive')})"),
                 item(f"{pr.stock_quantity:,}", right=True),
-                item(pr.critical_stock_level, right=True), item(status, color=color),
+                item(pr.critical_stock_level, right=True), item(tr(f"depot.inv.status.{status}"), color=color),
                 item(f"{self._totals.get(pr.barcode, 0) - pr.stock_quantity:,}", right=True),
                 item(local_datetime_text(last) if last else "—"),
             ]):
@@ -198,7 +199,8 @@ class InventoryPage(QWidget):
         signed-in manager's name; returns the difference."""
         diff = stock_repository.set_count(self.warehouse.location, barcode, counted, note, actor=current_session.actor())
         self.message.setText(
-            f"{barcode}: count matches ({counted:,})." if diff == 0 else f"{barcode}: set to {counted:,} ({diff:+,}), logged as a stock count."
+            tr("depot.inv.count_match").format(barcode=barcode, counted=f"{counted:,}") if diff == 0
+            else tr("depot.inv.count_set").format(barcode=barcode, counted=f"{counted:,}", diff=f"{diff:+,}")
         )
         self.reload()
         return diff
@@ -208,12 +210,13 @@ class InventoryPage(QWidget):
         if product is None:
             return
         counted, ok = QInputDialog.getInt(
-            self, "Stock count", f"{product.barcode} · {product.name}\nUnits actually on the shelf here "
-            f"(the system says {product.stock_quantity:,}):", product.stock_quantity, 0, 10_000_000)
+            self, tr("depot.inv.count_title"),
+            tr("depot.inv.count_prompt").format(barcode=product.barcode, name=product.name, qty=f"{product.stock_quantity:,}"),
+            product.stock_quantity, 0, 10_000_000)
         if not ok:
             return
-        note, _ok = QInputDialog.getText(self, "Stock count", "Note (optional):")
+        note, _ok = QInputDialog.getText(self, tr("depot.inv.count_title"), tr("depot.inv.count_note"))
         try:
             self.record_count(product.barcode, counted, note)
         except (ValueError, *DATABASE_ERRORS) as exc:
-            self.message.setText(f"Couldn't record the count: {exc}")
+            self.message.setText(tr("depot.inv.count_failed").format(error=exc))

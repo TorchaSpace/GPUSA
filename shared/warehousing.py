@@ -193,6 +193,8 @@ def reference_text(movement: dict) -> str:
             parts.append(tr("wh.ref_from" if movement["movement_type"] == "receive" else "wh.ref_to").format(ref=reference))
         else:
             parts.append(reference)
+    if movement.get("bin_code"):
+        parts.append(movement["bin_code"])
     if movement.get("note"):
         parts.append(movement["note"])
     return " · ".join(parts) or "—"

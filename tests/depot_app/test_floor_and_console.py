@@ -121,3 +121,62 @@ def test_inbound_past_capacity_is_a_message_not_a_crash(floor):
     inbound._on_submit()
     assert "exceed" in inbound._error_label.text()
     assert stock_repository.quantity_at(WH1, "BOX") == 0
+
+
+def _worker():
+    from database import attendance_repository, employee_repository
+    from shared.models import Employee
+
+    employee_repository.create(Employee("W-1", "Ayşe Kaya", "Operations", "Warehouse", "WH-01"))
+    attendance_repository.check_in("W-1")
+
+
+def test_floor_movement_is_credited_to_a_checked_in_operator_with_ref_and_bin(floor):
+    _worker()
+    inbound = floor._receive_panel
+    inbound._sku_input.setText("BOX")
+    inbound._qty_input.setValue(5)
+    inbound._ref_input.setText("PO-77")
+    inbound._loc_input.setText("A-03")
+    inbound._operator_input.setText("w-1")
+    inbound._on_submit()
+    move = stock_repository.list_movements(1)[0]
+    assert (move["reference"], move["bin_code"], move["handled_by"]) == ("PO-77", "A-03", "Ayşe Kaya · W-1")
+    assert inbound._table.item(0, 3).text() == "PO-77" and inbound._table.item(0, 4).text() == "A-03"
+    assert inbound._table.item(0, 5).text() == "Ayşe Kaya"
+    assert inbound._operator_input.text() == "w-1"  # stays filled for the next scan
+
+
+def test_unknown_or_checked_out_operator_is_refused(floor):
+    inbound = floor._receive_panel
+    inbound._sku_input.setText("BOX")
+    inbound._operator_input.setText("NOPE")
+    inbound._on_submit()
+    assert inbound._error_label.text()
+    assert stock_repository.quantity_at(WH1, "BOX") == 0
+
+
+def test_same_scan_twice_in_a_blink_is_logged_once(floor):
+    inbound = floor._receive_panel
+    for _ in range(2):
+        inbound._sku_input.setText("BOX")
+        inbound._qty_input.setValue(2)
+        inbound._on_submit()
+    assert stock_repository.quantity_at(WH1, "BOX") == 2
+
+
+def test_console_locks_when_idle_or_when_the_account_is_switched_off(floor, qapp, monkeypatch):
+    from depot_app.gui import console_window as cw
+
+    floor._open_console(MANAGER)
+    console = floor._console_window
+    reasons = []
+    console.locked.connect(reasons.append)
+    monkeypatch.setattr(cw.account_repository, "is_session_valid", lambda s: True)
+    assert console._check_session() is None
+    later = console._activity.last + cw.IDLE_LOCK_SECONDS + 1
+    assert "inactivity" in console._check_session(now=later)
+    assert console.session is None and reasons
+    floor._open_console(MANAGER)
+    monkeypatch.setattr(cw.account_repository, "is_session_valid", lambda s: False)
+    assert "Admin" in console._check_session()

@@ -27,6 +27,7 @@ from database.exceptions import (
     EmployeeNotFoundError,
     NoOpenAttendanceRecordError,
 )
+from shared.auth import Actor
 from shared.formatting import parse_db_timestamp, to_db_timestamp
 
 # An open shift older than this is almost certainly a forgotten check-out:
@@ -130,6 +131,22 @@ def close_open_shifts(conn, employee_id: int, note: str) -> int:
         (note, note, employee_id),
     )
     return cursor.rowcount
+
+
+def operator_actor(badge_id: str) -> Actor:
+    """Who a Floor movement is credited to: the employee with this badge,
+    who must be active and CHECKED IN right now. Raises
+    EmployeeNotFoundError / EmployeeInactiveError / NoOpenAttendanceRecordError."""
+    with connection_scope() as conn:
+        row = _employee(conn, badge_id)
+        if not row["is_active"]:
+            raise EmployeeInactiveError(row["badge_id"])
+        open_row = conn.execute(
+            "SELECT 1 FROM attendance_records WHERE employee_id = ? AND check_out_at IS NULL", (row["id"],)
+        ).fetchone()
+        if open_row is None:
+            raise NoOpenAttendanceRecordError(row["badge_id"])
+        return Actor(row["badge_id"], row["name"])
 
 
 def list_open() -> list[dict]:

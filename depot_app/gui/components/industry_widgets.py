@@ -11,12 +11,13 @@ from PySide6.QtGui import QColor
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.motion import count_up
+from shared.textcase import upper
 
 AMBER = "#f4b400"
 
 
 def kicker(text: str) -> QLabel:
-    label = QLabel(text.upper())
+    label = QLabel(upper(text))
     label.setStyleSheet(f"font-size: 12px; letter-spacing: 1px; color: {INDUSTRY_PALETTE['text_secondary']};")
     return label
 
@@ -66,7 +67,7 @@ class StatCell(BlueprintFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(14, 12, 14, 12)
         layout.setSpacing(2)
-        cap = QLabel(caption.upper())
+        cap = QLabel(upper(caption))
         cap.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         layout.addWidget(cap)
         self.value_label = QLabel("—")

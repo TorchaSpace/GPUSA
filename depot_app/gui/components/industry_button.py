@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QPushButton
 
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.motion import HoverTween, blend
+from shared.textcase import upper
 
 MIN_HEIGHT_PX = 44
 
@@ -28,7 +29,7 @@ _VARIANT_STYLES = {
 
 class IndustryButton(QPushButton):
     def __init__(self, label: str, variant: str = "primary", parent=None, height: int = MIN_HEIGHT_PX, font_px: int = 13):
-        super().__init__(label.upper(), parent)
+        super().__init__(upper(label), parent)
         if variant not in _VARIANT_STYLES:
             raise ValueError(f"Unknown IndustryButton variant {variant!r}")
         p = INDUSTRY_PALETTE

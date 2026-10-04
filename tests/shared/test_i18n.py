@@ -297,3 +297,8 @@ def test_repository_validation_messages_are_translated_but_english_by_default(tu
     with pytest.raises(ValueError) as caught:
         dealerships.validate_fields(bad)
     assert str(caught.value) == "Enter a dealership code."
+
+
+def test_every_depot_text_has_a_turkish_translation():
+    missing = [key for key in EN if key.startswith("depot.") and key not in TR_TABLE]
+    assert not missing, missing[:20]

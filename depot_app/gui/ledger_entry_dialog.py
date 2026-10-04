@@ -27,27 +27,20 @@ from PySide6.QtWidgets import (
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import MAX_AMOUNT
+from shared.i18n import tr
 from shared.models import LEDGER_DOC_TYPES, LedgerEntry
+from shared.textcase import upper
 
 # The depot mockup's own names for the four document types - its view of
 # the usual direction (a transfer is a "Payment", an invoice a
 # "Receivable"). Direction decides the real name: use depot_type_label().
-DEPOT_TYPE_LABELS = {
-    "check": "Check",
-    "note": "Promissory note",
-    "transfer": "Payment",
-    "invoice": "Receivable",
-}
+# These are i18n KEYS; the text is looked up when a label is built.
+DEPOT_TYPE_LABELS = {key: f"depot.ledger.type.{key}" for key in ("check", "note", "transfer", "invoice")}
 
 _LABELS_BY_DIRECTION = {
-    ("in", "check"): "Received check",
-    ("out", "check"): "Issued check",
-    ("in", "note"): "Received promissory note",
-    ("out", "note"): "Issued promissory note",
-    ("in", "transfer"): "Incoming transfer",
-    ("out", "transfer"): "Payment",
-    ("in", "invoice"): "Receivable",
-    ("out", "invoice"): "Payable",
+    (direction, key): f"depot.ledger.type.{direction}_{key}"
+    for direction in ("in", "out")
+    for key in ("check", "note", "transfer", "invoice")
 }
 
 
@@ -55,7 +48,8 @@ def depot_type_label(direction: str, doc_type: str) -> str:
     """The name for a document by direction AND type: an incoming invoice
     is a Receivable, an outgoing one a Payable; an outgoing transfer is a
     Payment, an incoming one an Incoming transfer."""
-    return _LABELS_BY_DIRECTION.get((direction, doc_type), DEPOT_TYPE_LABELS.get(doc_type, doc_type))
+    key = _LABELS_BY_DIRECTION.get((direction, doc_type)) or DEPOT_TYPE_LABELS.get(doc_type)
+    return tr(key) if key else doc_type
 
 
 def _date_edit(value: date) -> QDateEdit:
@@ -70,7 +64,7 @@ class LedgerEntryDialog(QDialog):
         super().__init__(parent)
         p = INDUSTRY_PALETTE
         self._site = site
-        self.setWindowTitle("Record ledger document")
+        self.setWindowTitle(tr("depot.ledger.window_title"))
         self.setStyleSheet(
             f"""
             QDialog {{ background-color: {p['background']}; }}
@@ -81,28 +75,28 @@ class LedgerEntryDialog(QDialog):
             """
         )
 
-        title = QLabel(f"RECORD DOCUMENT · {site}")
+        title = QLabel(f"{upper(tr('depot.ledger.record_document'))} · {site}")
         title.setTextFormat(Qt.PlainText)
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; letter-spacing: 1px;"
         )
 
         self.direction_input = QComboBox()
-        self.direction_input.addItem("Received (money coming in)", "in")
-        self.direction_input.addItem("Issued (money going out)", "out")
+        self.direction_input.addItem(tr("depot.ledger.dir_in"), "in")
+        self.direction_input.addItem(tr("depot.ledger.dir_out"), "out")
         self.type_input = QComboBox()
         for key in LEDGER_DOC_TYPES:
             self.type_input.addItem(depot_type_label("in", key), key)
         self.direction_input.currentIndexChanged.connect(self._relabel_types)
         self.doc_no_input = QLineEdit()
-        self.doc_no_input.setPlaceholderText("e.g. ÇK-004812")
+        self.doc_no_input.setPlaceholderText(tr("depot.ledger.doc_no_placeholder"))
         self.counterparty_input = QLineEdit()
         completer = QCompleter(list(counterparties), self.counterparty_input)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         completer.setFilterMode(Qt.MatchContains)
         self.counterparty_input.setCompleter(completer)
         self.detail_input = QLineEdit()
-        self.detail_input.setPlaceholderText("Bank or note term (optional)")
+        self.detail_input.setPlaceholderText(tr("depot.ledger.detail_placeholder"))
         self.issue_input = _date_edit(today)
         self.due_input = _date_edit(today)
         self.amount_input = QDoubleSpinBox()
@@ -126,20 +120,20 @@ class LedgerEntryDialog(QDialog):
         form.setContentsMargins(22, 18, 22, 18)
         form.setSpacing(10)
         form.addRow(title)
-        form.addRow("Direction", self.direction_input)
-        form.addRow("Type", self.type_input)
-        form.addRow("Doc no.", self.doc_no_input)
-        form.addRow("Counterparty", self.counterparty_input)
-        form.addRow("Bank / detail", self.detail_input)
-        form.addRow("Issue date", self.issue_input)
-        form.addRow("Due date", self.due_input)
-        form.addRow("Amount", self.amount_input)
+        form.addRow(tr("depot.ledger.f_direction"), self.direction_input)
+        form.addRow(tr("depot.ledger.f_type"), self.type_input)
+        form.addRow(tr("depot.ledger.f_doc_no"), self.doc_no_input)
+        form.addRow(tr("depot.ledger.f_counterparty"), self.counterparty_input)
+        form.addRow(tr("depot.ledger.f_detail"), self.detail_input)
+        form.addRow(tr("depot.ledger.f_issue"), self.issue_input)
+        form.addRow(tr("depot.ledger.f_due"), self.due_input)
+        form.addRow(tr("depot.ledger.f_amount"), self.amount_input)
         form.addRow(self.error_label)
 
         buttons = QHBoxLayout()
-        cancel = IndustryButton("Cancel", variant="ghost")
+        cancel = IndustryButton(tr("depot.ledger.cancel"), variant="ghost")
         cancel.clicked.connect(self.reject)
-        save = IndustryButton("Record", variant="accent")
+        save = IndustryButton(tr("depot.ledger.record"), variant="accent")
         save.clicked.connect(self._validate_and_accept)
         buttons.addStretch(1)
         buttons.addWidget(cancel)
@@ -155,13 +149,13 @@ class LedgerEntryDialog(QDialog):
     def _validate_and_accept(self) -> None:
         problems = []
         if not self.doc_no_input.text().strip():
-            problems.append("Enter a document number.")
+            problems.append(tr("depot.ledger.err_doc_no"))
         if not self.counterparty_input.text().strip():
-            problems.append("Enter a counterparty.")
+            problems.append(tr("depot.ledger.err_counterparty"))
         if self.amount_input.value() <= 0:
-            problems.append("Enter an amount above 0.")
+            problems.append(tr("depot.ledger.err_amount"))
         if self.due_input.date() < self.issue_input.date():
-            problems.append("The due date can't be before the issue date.")
+            problems.append(tr("depot.ledger.err_dates"))
         if problems:
             self.show_error(" ".join(problems))
             return

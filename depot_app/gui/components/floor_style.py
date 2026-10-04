@@ -8,6 +8,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QLabel, QTableWidget, QVBoxLayout, QWidget
 
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.textcase import upper
 
 AMBER = "#f4b400"
 AMBER_SOFT = "#ffd24d"
@@ -15,7 +16,7 @@ AMBER_PALE = "#fff6d6"
 
 
 def field_label(text: str) -> QLabel:
-    label = QLabel(text.upper())
+    label = QLabel(upper(text))
     label.setStyleSheet(
         f"font-size: 11px; letter-spacing: 1.2px; font-weight: 600; color: {INDUSTRY_PALETTE['text_secondary']};"
     )
@@ -67,7 +68,7 @@ def info_style() -> str:
 def floor_table(headers: list[str], stretch: tuple[int, ...] = (), row_height: int = 46) -> QTableWidget:
     p = INDUSTRY_PALETTE
     table = QTableWidget(0, len(headers))
-    table.setHorizontalHeaderLabels([h.upper() for h in headers])
+    table.setHorizontalHeaderLabels([upper(h) for h in headers])
     table.verticalHeader().setVisible(False)
     table.verticalHeader().setDefaultSectionSize(row_height)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -94,7 +95,7 @@ def floor_table(headers: list[str], stretch: tuple[int, ...] = (), row_height: i
 
 
 def heading_label(text: str, px: int = 26) -> QLabel:
-    label = QLabel(text.upper())
+    label = QLabel(upper(text))
     label.setStyleSheet(
         f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; font-size: {px}px; "
         f"color: {INDUSTRY_PALETTE['text_primary']};"

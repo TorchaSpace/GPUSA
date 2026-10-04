@@ -28,6 +28,10 @@ from depot_app.theme import INDUSTRY_PALETTE
 from shared.auth import normalize_badge_id
 from shared.formatting import local_clock_text
 from shared.gui_kit.motion import count_up, fade_in
+from shared.i18n import enum_label, tr
+from shared.textcase import upper
+from shared.models import Warehouse
+from shared.warehousing import works_at
 
 
 class _Dot(QWidget):
@@ -45,9 +49,11 @@ class _Dot(QWidget):
 class CheckInPanel(BlueprintFrame):
     attendance_changed = Signal()
 
-    def __init__(self, parent: QWidget | None = None):
+    def __init__(self, warehouse: Warehouse | None = None, parent: QWidget | None = None):
         p = INDUSTRY_PALETTE
         super().__init__(tick_color=p["text_primary"], parent=parent)
+        # Only people whose Location is this warehouse are listed (None = everyone).
+        self._warehouse = warehouse
         self.setObjectName("checkInPanel")
         self.setStyleSheet(f"#checkInPanel {{ background-color: {p['surface']}; border: 1px solid {p['border']}; }}")
         layout = QVBoxLayout(self)
@@ -55,16 +61,16 @@ class CheckInPanel(BlueprintFrame):
         layout.setSpacing(14)
 
         head = QHBoxLayout()
-        head.addWidget(heading_label("Check-in Log", 24))
+        head.addWidget(heading_label(tr("depot.checkin.title"), 24))
         head.addStretch(1)
         self._count = QLabel()
         self._count.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         head.addWidget(self._count)
         layout.addLayout(head)
 
-        layout.addWidget(field_label("Badge ID"))
+        layout.addWidget(field_label(tr("depot.checkin.badge_id")))
         self._badge_input = QLineEdit()
-        self._badge_input.setPlaceholderText("Scan badge")
+        self._badge_input.setPlaceholderText(tr("depot.checkin.scan_badge"))
         self._badge_input.setMinimumHeight(54)
         self._badge_input.setStyleSheet(input_style(22))
         self._badge_input.returnPressed.connect(self._on_check_in)
@@ -73,9 +79,9 @@ class CheckInPanel(BlueprintFrame):
 
         buttons = QHBoxLayout()
         buttons.setSpacing(10)
-        self._in_button = IndustryButton("Check in", variant="accent", height=48, font_px=16)
+        self._in_button = IndustryButton(tr("depot.checkin.check_in"), variant="accent", height=48, font_px=16)
         self._in_button.clicked.connect(self._on_check_in)
-        self._out_button = IndustryButton("Check out", variant="ghost", height=48, font_px=16)
+        self._out_button = IndustryButton(tr("depot.checkin.check_out"), variant="ghost", height=48, font_px=16)
         self._out_button.clicked.connect(self._on_check_out)
         buttons.addWidget(self._in_button, stretch=1)
         buttons.addWidget(self._out_button, stretch=1)
@@ -86,7 +92,7 @@ class CheckInPanel(BlueprintFrame):
         self._message.hide()
         layout.addWidget(self._message)
 
-        layout.addWidget(self._section_title("Roster"))
+        layout.addWidget(self._section_title(tr("depot.checkin.roster")))
         self._roster_host = QWidget()
         self._roster_host.setStyleSheet("background: transparent;")
         self._roster_layout = QVBoxLayout(self._roster_host)
@@ -100,7 +106,7 @@ class CheckInPanel(BlueprintFrame):
         scroll.setMinimumHeight(150)
         layout.addWidget(scroll, stretch=2)
 
-        layout.addWidget(self._section_title("Today's punches"))
+        layout.addWidget(self._section_title(tr("depot.checkin.punches_today")))
         self._punch_host = QWidget()
         self._punch_host.setStyleSheet("background: transparent;")
         self._punch_layout = QVBoxLayout(self._punch_host)
@@ -113,7 +119,7 @@ class CheckInPanel(BlueprintFrame):
 
     @staticmethod
     def _section_title(text: str) -> QLabel:
-        label = QLabel(text.upper())
+        label = QLabel(upper(text))
         label.setStyleSheet(
             f"font-size: 11px; letter-spacing: 1.4px; font-weight: 600; color: {INDUSTRY_PALETTE['text_secondary']};"
         )
@@ -124,7 +130,7 @@ class CheckInPanel(BlueprintFrame):
     def _punch(self, action) -> None:
         badge_id = normalize_badge_id(self._badge_input.text())
         if not badge_id:
-            self._say("Scan or enter a badge ID first.", ok=False)
+            self._say(tr("depot.checkin.scan_first"), ok=False)
             return
         try:
             action(badge_id)
@@ -144,11 +150,11 @@ class CheckInPanel(BlueprintFrame):
 
     def _do_in(self, badge_id: str) -> None:
         attendance_repository.check_in(badge_id)
-        self._say(f"Badge {badge_id} checked in at {datetime.now().strftime('%H:%M')}.", ok=True)
+        self._say(tr("depot.checkin.checked_in_msg").format(badge=badge_id, time=datetime.now().strftime("%H:%M")), ok=True)
 
     def _do_out(self, badge_id: str) -> None:
         attendance_repository.check_out(badge_id)
-        self._say(f"Badge {badge_id} checked out at {datetime.now().strftime('%H:%M')}.", ok=True)
+        self._say(tr("depot.checkin.checked_out_msg").format(badge=badge_id, time=datetime.now().strftime("%H:%M")), ok=True)
 
     def _say(self, text: str, ok: bool) -> None:
         self._message.setStyleSheet(info_style() if ok else notice_style())
@@ -161,13 +167,18 @@ class CheckInPanel(BlueprintFrame):
     def reload(self) -> None:
         try:
             roster = attendance_repository.list_roster()
-            punches = attendance_repository.list_punches(limit=8)
+            punches = attendance_repository.list_punches(limit=40)
         except DATABASE_ERRORS:
             roster, punches = [], []
         # Inactive people stay off the floor list unless they are still checked in.
         roster = [r for r in roster if r["is_active"] or r["status"] == "Present"]
+        if self._warehouse is not None:
+            roster = [r for r in roster if works_at(r["location_type"], r["location_name"], self._warehouse)]
+            here = {r["badge_id"] for r in roster}
+            punches = [x for x in punches if x["badge_id"] in here]
+        punches = punches[:8]
         on_floor = sum(1 for r in roster if r["status"] == "Present")
-        count_up(self._count, f"{on_floor} / {len(roster)} on floor")
+        count_up(self._count, tr("depot.checkin.on_floor_count").format(on=on_floor, total=len(roster)))
         self._fill_roster(roster)
         self._fill_punches(punches)
 
@@ -182,7 +193,7 @@ class CheckInPanel(BlueprintFrame):
         p = INDUSTRY_PALETTE
         self._clear(self._roster_layout)
         if not roster:
-            empty = QLabel("No staff yet. Add employees in Admin > Personnel.")
+            empty = QLabel(tr("depot.checkin.no_staff"))
             empty.setWordWrap(True)
             empty.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']}; padding: 10px 0;")
             self._roster_layout.addWidget(empty)
@@ -200,14 +211,14 @@ class CheckInPanel(BlueprintFrame):
             names.setSpacing(0)
             name = QLabel(entry["name"])
             name.setStyleSheet(f"font-size: 15px; font-weight: 500; color: {p['text_primary']}; border: none;")
-            role = QLabel(f"#{entry['badge_id']} · {entry['role']}")
+            role = QLabel(f"#{entry['badge_id']} · {enum_label('role', entry['role'])}")
             role.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']}; border: none;")
             names.addWidget(name)
             names.addWidget(role)
             line.addLayout(names, stretch=1)
             state = QVBoxLayout()
             state.setSpacing(0)
-            label = {"Present": "ON FLOOR", "Checked out": "CHECKED OUT"}.get(entry["status"], "OFF")
+            label = tr({"Present": "depot.checkin.state_on", "Checked out": "depot.checkin.state_out"}.get(entry["status"], "depot.checkin.state_off"))
             status = QLabel(label)
             status.setAlignment(Qt.AlignRight)
             status.setStyleSheet(
@@ -227,7 +238,7 @@ class CheckInPanel(BlueprintFrame):
         p = INDUSTRY_PALETTE
         self._clear(self._punch_layout)
         if not punches:
-            empty = QLabel("No punches yet today.")
+            empty = QLabel(tr("depot.checkin.no_punches"))
             empty.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
             self._punch_layout.addWidget(empty)
         for punch in punches:
@@ -238,7 +249,7 @@ class CheckInPanel(BlueprintFrame):
             when.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
             who = QLabel(punch["name"])
             who.setStyleSheet(f"font-size: 14px; color: {p['text_primary']};")
-            action = QLabel(punch["action"])
+            action = QLabel(tr("depot.checkin.punch_in") if punch["action"] == "IN" else tr("depot.checkin.punch_out") if punch["action"] == "OUT" else punch["action"])
             action.setAlignment(Qt.AlignRight)
             action.setFixedWidth(40)
             action.setStyleSheet(

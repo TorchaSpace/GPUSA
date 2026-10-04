@@ -8,7 +8,8 @@ depot's own warehouse is marked "THIS DEPOT".
 Numbers are real (see shared/warehousing.py): used = units in its stock
 levels, capacity as set in Admin (or "capacity not set"). The mockup's
 pallet counts and dock occupancy ("6/8") aren't tracked, so they're not
-shown - just the number of docks.
+shown - instead the card shows the free units (capacity minus held) and the
+number of docks.
 """
 
 from __future__ import annotations
@@ -20,6 +21,8 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.models import Warehouse
+from shared.i18n import enum_label, plural, tr
+from shared.textcase import upper
 from shared.warehousing import STATUS_NEAR, capacity_fraction, capacity_status, percent_text
 
 _AMBER = "#f4b400"
@@ -65,7 +68,7 @@ class WarehouseCard(BlueprintFrame):
         kicker.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         top.addWidget(kicker, stretch=1)
         if is_this_depot:
-            mine = QLabel("THIS DEPOT")
+            mine = QLabel(tr("depot.card.this_depot"))
             mine.setStyleSheet(f"font-size: 10px; letter-spacing: 1px; color: {p['accent_900']}; "
                                f"background-color: {p['accent_100']}; padding: 1px 6px;")
             top.addWidget(mine)
@@ -107,11 +110,11 @@ class WarehouseCard(BlueprintFrame):
         fraction = capacity_fraction(used_units, w.capacity_units)
         status = capacity_status(w, used_units)
         if w.capacity_units:
-            self.usage_label.setText(f"{used_units:,} / {w.capacity_units:,} units · {percent_text(fraction)}")
+            self.usage_label.setText(tr("depot.card.usage").format(used=f"{used_units:,}", capacity=f"{w.capacity_units:,}", percent=percent_text(fraction)))
         else:
-            self.usage_label.setText(f"{used_units:,} units · capacity not set")
+            self.usage_label.setText(tr("depot.card.usage_unset").format(used=f"{used_units:,}"))
         near = status == STATUS_NEAR
-        self.status_label.setText(status.upper())
+        self.status_label.setText(upper(enum_label("wh_status", status)))
         self.status_label.setStyleSheet(
             f"font-size: 10px; letter-spacing: 1px; padding: 1px 6px; "
             f"color: {p['text_primary'] if near else p['accent_900']}; "
@@ -119,9 +122,12 @@ class WarehouseCard(BlueprintFrame):
             f"border: 1px solid {_AMBER if near else p['accent']};"
         )
         self.bar.set_fraction(fraction, _AMBER if near else p["accent"])
-        docks = f"{w.docks} dock{'s' if w.docks != 1 else ''}" if w.docks else "docks not set"
+        docks = plural("depot.card.docks", w.docks) if w.docks else tr("depot.card.docks_unset")
+        free = (tr("depot.card.free_units").format(free=f"{max(0, w.capacity_units - used_units):,}")
+                if w.capacity_units else tr("depot.card.free_unknown"))
         self.detail_label.setText(
-            f"{sku_count} SKU{'s' if sku_count != 1 else ''} held · {docks} · today +{inbound_today} / −{outbound_today}"
+            f"{plural('depot.card.skus_held', sku_count)} · {free}\n"
+            + tr("depot.card.detail_line").format(docks=docks, inbound=inbound_today, outbound=outbound_today)
         )
 
     def mousePressEvent(self, event) -> None:

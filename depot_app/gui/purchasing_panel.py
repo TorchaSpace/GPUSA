@@ -76,6 +76,7 @@ from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
 from shared.models import PriceRange, Product, PurchaseOrder, StockLocation, hold_reason_for
+from shared.textcase import upper
 from shared import current_session
 
 MAX_QUANTITY = purchase_order_repository.MAX_QUANTITY  # same cap the repository enforces
@@ -84,6 +85,12 @@ STATUS_POLL_INTERVAL_MS = 5000
 _TABLE_LIMIT = 20
 
 _ACTIONS_COLUMN = 9
+_AWAITING_CAPTIONS = {
+    "Item": "depot.purchasing.cap_item",
+    "Unit price": "depot.purchasing.cap_unit_price",
+    "Safe band": "depot.purchasing.cap_safe_band",
+    "Order total": "depot.purchasing.cap_order_total",
+}
 _ROW_HEIGHT = 52  # room for the action buttons
 
 
@@ -116,11 +123,11 @@ def decision_tooltip(order: PurchaseOrder) -> str:
     visible on the order after the banner is gone. "" if undecided."""
     lines = []
     if order.decided_at:
-        who = f" by {order.decided_by}" if order.decided_by else ""
-        verb = "Rejected" if order.status == "rejected" else "Approved"
-        lines.append(f"{verb} {local_datetime_text(order.decided_at)}{who}")
+        who = tr("depot.purchasing.tip_by").format(name=order.decided_by) if order.decided_by else ""
+        key = "depot.purchasing.tip_rejected" if order.status == "rejected" else "depot.purchasing.tip_approved"
+        lines.append(tr(key).format(when=local_datetime_text(order.decided_at)) + who)
     if order.decision_note:
-        lines.append(f"Note: {order.decision_note}")
+        lines.append(tr("depot.purchasing.tip_note").format(note=order.decision_note))
     return "\n".join(lines)
 
 
@@ -187,7 +194,7 @@ class PriceBandBar(QWidget):
 
         if self._range is None:
             painter.setPen(QPen(QColor(p["text_secondary"])))
-            painter.drawText(track, Qt.AlignCenter, "No safe range set")
+            painter.drawText(track, Qt.AlignCenter, tr("depot.purchasing.no_safe_range"))
             return
 
         scale = self.scale_max()
@@ -230,7 +237,7 @@ class PriceBandBar(QWidget):
 
 
 def _kicker(text: str) -> QLabel:
-    label = QLabel(text.upper())
+    label = QLabel(upper(text))
     label.setStyleSheet(
         f"font-size: 12px; letter-spacing: 1px; color: {INDUSTRY_PALETTE['text_secondary']}; border: none;"
     )
@@ -306,7 +313,7 @@ class PurchasingPanel(QWidget):
         body.setSpacing(14)
 
         title_row = QHBoxLayout()
-        title = QLabel("AWAITING ADMIN APPROVAL")
+        title = QLabel(upper(tr("depot.po.status.pending")))
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; "
             f"letter-spacing: 1px; color: {p['background']};"
@@ -322,7 +329,8 @@ class PurchasingPanel(QWidget):
         grid.setHorizontalSpacing(24)
         self._awaiting_values: dict[str, QLabel] = {}
         for column, key in enumerate(("Item", "Unit price", "Safe band", "Order total")):
-            caption = QLabel(key.upper())
+            # `key` stays an English id (see _show_result); only the caption is translated.
+            caption = QLabel(upper(tr(_AWAITING_CAPTIONS[key])))
             caption.setStyleSheet("font-size: 11px; letter-spacing: 1px; color: #b9b9bd;")
             value = QLabel()
             value.setTextFormat(Qt.PlainText)
@@ -338,7 +346,7 @@ class PurchasingPanel(QWidget):
         self._awaiting_message.setStyleSheet(f"font-size: 14px; color: {p['background']};")
         body.addWidget(self._awaiting_message)
 
-        new_order = IndustryButton("New order", variant="ghost")
+        new_order = IndustryButton(tr("depot.purchasing.new_order"), variant="ghost")
         new_order.setStyleSheet(
             new_order.styleSheet()
             + f"QPushButton {{ background-color: {p['background']}; color: {p['text_primary']}; }}"
@@ -365,7 +373,7 @@ class PurchasingPanel(QWidget):
         self._notice_text.setTextFormat(Qt.RichText)  # callers html.escape every value they put in
         self._notice_text.setWordWrap(True)
         row.addWidget(self._notice_text, stretch=1)
-        new_order = IndustryButton("New order", variant="ghost")
+        new_order = IndustryButton(tr("depot.purchasing.new_order"), variant="ghost")
         new_order.clicked.connect(self._show_form)
         row.addWidget(new_order)
         return banner
@@ -399,23 +407,23 @@ class PurchasingPanel(QWidget):
         # Left column: the order itself.
         left = QVBoxLayout()
         left.setSpacing(10)
-        left.addWidget(_kicker(f"New purchase · {self._site}"))
+        left.addWidget(_kicker(tr("depot.purchasing.new_purchase").format(site=self._site)))
 
-        left.addWidget(_kicker("Item"))
+        left.addWidget(_kicker(tr("depot.purchasing.cap_item")))
         self._item_input = QComboBox()
         self._item_input.setStyleSheet(f"QComboBox {{ {_input_style(16)} min-height: 34px; }}")
         self._item_input.currentIndexChanged.connect(self._on_item_changed)
         left.addWidget(self._item_input)
 
-        left.addWidget(_kicker("Supplier"))
+        left.addWidget(_kicker(tr("depot.purchasing.cap_supplier")))
         self._supplier_input = QLineEdit()
         self._supplier_input.setStyleSheet(_input_style(16))
         left.addWidget(self._supplier_input)
 
         numbers = QGridLayout()
         numbers.setHorizontalSpacing(12)
-        numbers.addWidget(_kicker("Quantity"), 0, 0)
-        numbers.addWidget(_kicker("Unit price"), 0, 1)
+        numbers.addWidget(_kicker(tr("depot.purchasing.cap_quantity")), 0, 0)
+        numbers.addWidget(_kicker(tr("depot.purchasing.cap_unit_price")), 0, 1)
         self._qty_input = QLineEdit()
         self._qty_input.setPlaceholderText("0")
         self._qty_input.setStyleSheet(_input_style(24))
@@ -429,7 +437,7 @@ class PurchasingPanel(QWidget):
         left.addLayout(numbers)
 
         total_row = QHBoxLayout()
-        total_row.addWidget(_kicker("Order total"))
+        total_row.addWidget(_kicker(tr("depot.purchasing.cap_order_total")))
         total_row.addStretch(1)
         self._total_label = QLabel("0.00")
         self._total_label.setStyleSheet(
@@ -448,8 +456,8 @@ class PurchasingPanel(QWidget):
         lock.setPixmap(svg_to_icon(icons.LOCK, p["text_secondary"], size=16).pixmap(16, 16))
         lock.setStyleSheet("border: none;")
         band_header.addWidget(lock)
-        band_header.addWidget(_kicker("Safe price range · set by Admin"), stretch=1)
-        read_only = QLabel("READ-ONLY")
+        band_header.addWidget(_kicker(tr("depot.purchasing.band_title")), stretch=1)
+        read_only = QLabel(upper(tr("depot.purchasing.read_only")))
         read_only.setStyleSheet(
             f"font-size: 10px; letter-spacing: 1px; color: {p['text_secondary']}; "
             f"border: 1px solid {p['text_secondary']}; padding: 1px 6px;"
@@ -464,7 +472,7 @@ class PurchasingPanel(QWidget):
             label.setStyleSheet(
                 f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 24px; color: {p['text_primary']}; border: none;"
             )
-        per_unit = QLabel("per unit")
+        per_unit = QLabel(tr("depot.purchasing.per_unit"))
         per_unit.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']}; border: none;")
         band_values.addWidget(self._band_min)
         band_values.addStretch(1)
@@ -477,7 +485,7 @@ class PurchasingPanel(QWidget):
         right.addWidget(self._band_bar)
         scale_row = QHBoxLayout()
         zero = QLabel("0")
-        approved = QLabel("Approved band")
+        approved = QLabel(tr("depot.purchasing.approved_band"))
         self._scale_label = QLabel("")
         for label in (zero, approved, self._scale_label):
             label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']}; border: none;")
@@ -488,7 +496,7 @@ class PurchasingPanel(QWidget):
         scale_row.addWidget(self._scale_label)
         right.addLayout(scale_row)
 
-        only_admin = QLabel("Only an administrator can change this range (Admin > Purchase requests).")
+        only_admin = QLabel(tr("depot.purchasing.only_admin"))
         only_admin.setWordWrap(True)
         only_admin.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']}; border: none;")
         right.addWidget(only_admin)
@@ -526,10 +534,10 @@ class PurchasingPanel(QWidget):
         self._error_label.hide()
         right.addWidget(self._error_label)
 
-        self._send_button = IndustryButton("Send purchase order", variant="accent")
+        self._send_button = IndustryButton(tr("depot.purchasing.send"), variant="accent")
         self._send_button.setMinimumHeight(54)
         self._send_button.clicked.connect(self._submit)
-        self._hold_button = IndustryButton("Submit for admin approval", variant="primary")
+        self._hold_button = IndustryButton(tr("depot.purchasing.hold"), variant="primary")
         self._hold_button.setMinimumHeight(54)
         self._hold_button.clicked.connect(self._submit)
         right.addWidget(self._send_button)
@@ -546,7 +554,7 @@ class PurchasingPanel(QWidget):
         layout = QVBoxLayout(box)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
-        layout.addWidget(_kicker(f"Purchase orders · {self._site}"))
+        layout.addWidget(_kicker(tr("depot.purchasing.orders_title").format(site=self._site)))
         self._action_label = QLabel()
         self._action_label.setTextFormat(Qt.PlainText)
         self._action_label.setWordWrap(True)
@@ -554,8 +562,9 @@ class PurchasingPanel(QWidget):
         layout.addWidget(self._action_label)
         self._table = QTableWidget(0, 10)
         self._table.setHorizontalHeaderLabels(
-            ["PO", "Time", "Item", "Supplier", "Qty", "Unit", "Total", "Status", "Admin note",
-             tr("depot.po.col_actions")]
+            [tr(f"depot.purchasing.col.{c}") for c in
+             ("po", "time", "item", "supplier", "qty", "unit", "total", "status", "note")]
+            + [tr("depot.po.col_actions")]
         )
         self._table.verticalHeader().setDefaultSectionSize(_ROW_HEIGHT)
         self._table.verticalHeader().setVisible(False)
@@ -589,7 +598,7 @@ class PurchasingPanel(QWidget):
         except (ValueError, *DATABASE_ERRORS) as exc:
             # Keep the last good catalog (an empty one would claim "No
             # products yet") and say the refresh failed.
-            self._show_error(f"Couldn't refresh products and price ranges: {exc}")
+            self._show_error(tr("depot.purchasing.refresh_failed").format(error=exc))
 
         current = self._item_input.currentData()
         self._item_input.blockSignals(True)
@@ -650,43 +659,43 @@ class PurchasingPanel(QWidget):
         has_product = self._selected_barcode() is not None
         reason = hold_reason_for(price_range, price) if (price and price > 0) else None
         if not has_product:
-            self._set_verdict("No products yet", "Add products in the Admin app first.", warning=True)
+            self._set_verdict(
+                tr("depot.purchasing.v_no_products"), tr("depot.purchasing.v_no_products_body"), warning=True
+            )
         elif price is None or price <= 0:
             if price_range is None:
                 self._set_verdict(
-                    "No safe range set",
-                    "An administrator hasn't set a safe price range for this item yet, so any order "
-                    "for it will be held until an administrator approves it.",
+                    tr("depot.purchasing.no_safe_range"),
+                    tr("depot.purchasing.v_no_range_any"),
                     warning=True,
                 )
             else:
-                self._set_verdict("", "Enter a unit price to check it against the safe range.", warning=None)
+                self._set_verdict("", tr("depot.purchasing.v_enter_price"), warning=None)
         elif reason == "above_range":
             over = price - price_range.max_unit_price
             pct = round(over / price_range.max_unit_price * 100) if price_range.max_unit_price else 0
             self._set_verdict(
-                "Out of safe range",
-                f"{format_amount(price)} is {format_amount(over)} ({pct}%) above the "
-                f"{format_amount(price_range.max_unit_price)} ceiling. This order will be held until an "
-                f"administrator approves it.",
+                tr("depot.purchasing.v_above_title"),
+                tr("depot.purchasing.v_above").format(
+                    price=format_amount(price), over=format_amount(over), pct=pct,
+                    ceiling=format_amount(price_range.max_unit_price)),
                 warning=True,
             )
         elif reason == "below_range":
             self._set_verdict(
-                "Below safe range",
-                f"{format_amount(price)} is under the {format_amount(price_range.min_unit_price)} floor. "
-                f"This order will be held until an administrator approves it.",
+                tr("depot.purchasing.v_below_title"),
+                tr("depot.purchasing.v_below").format(
+                    price=format_amount(price), floor=format_amount(price_range.min_unit_price)),
                 warning=True,
             )
         elif reason == "no_range":
             self._set_verdict(
-                "No safe range set",
-                "An administrator hasn't set a safe price range for this item yet, so this order will "
-                "be held until an administrator approves it.",
+                tr("depot.purchasing.no_safe_range"),
+                tr("depot.purchasing.v_no_range_this"),
                 warning=True,
             )
         else:
-            self._set_verdict("", "Within safe range. This order can be sent directly.", warning=False)
+            self._set_verdict("", tr("depot.purchasing.v_within"), warning=False)
 
         held = reason is not None or (has_product and price_range is None)
         self._send_button.setVisible(not held)
@@ -697,7 +706,7 @@ class PurchasingPanel(QWidget):
 
     def _set_verdict(self, title: str, body: str, warning: bool | None) -> None:
         p = INDUSTRY_PALETTE
-        self._verdict_title.setText(title.upper())
+        self._verdict_title.setText(upper(title))
         self._verdict_title.setVisible(bool(title))
         self._verdict_body.setText(body)
         self._verdict_stripe.setVisible(warning is True)
@@ -725,15 +734,15 @@ class PurchasingPanel(QWidget):
         self._error_label.hide()
         barcode = self._selected_barcode()
         if barcode is None:
-            self._show_error("Pick an item first.")
+            self._show_error(tr("depot.purchasing.err_pick_item"))
             return
         quantity = self._typed_quantity()
         if not quantity:
-            self._show_error(f"Enter a whole-number quantity from 1 to {MAX_QUANTITY:,}.")
+            self._show_error(tr("depot.purchasing.err_quantity").format(max=f"{MAX_QUANTITY:,}"))
             return
         price = parse_amount(self._price_input.text())
         if price is None:
-            self._show_error("Enter a unit price greater than 0 (e.g. 742,50 or 742.50).")
+            self._show_error(tr("depot.purchasing.err_price"))
             return
         try:
             price = round_money(price, "Unit price")
@@ -769,26 +778,32 @@ class PurchasingPanel(QWidget):
             band = (
                 f"{format_amount(order.range_min)} – {format_amount(order.range_max)}"
                 if order.range_min is not None
-                else "not set"
+                else tr("depot.purchasing.band_not_set")
             )
-            self._awaiting_values["Item"].setText(f"{order.product_barcode} · {order.quantity} units")
+            self._awaiting_values["Item"].setText(
+                tr("depot.purchasing.awaiting_item").format(sku=order.product_barcode, quantity=order.quantity)
+            )
             self._awaiting_values["Unit price"].setText(format_amount(order.unit_price))
             self._awaiting_values["Safe band"].setText(band)
             self._awaiting_values["Order total"].setText(format_amount(order.total))
             self._awaiting_message.setText(
-                f"On hold. Not sent to {order.supplier} until an administrator approves the price. "
-                f"Submitted {local_time_text(order.created_at)}. This updates by itself once an "
-                f"administrator decides."
+                tr("depot.purchasing.awaiting_msg").format(
+                    supplier=order.supplier, time=local_time_text(order.created_at))
             )
             self._awaiting_banner.show()
             return
 
         self._awaiting_banner.hide()
         if order.status == "rejected":
-            note = f" Note: {html.escape(order.decision_note)}" if order.decision_note else ""
+            note = (
+                tr("depot.purchasing.rejected_note").format(note=html.escape(order.decision_note))
+                if order.decision_note else ""
+            )
             self._set_notice(
-                f"<b>{html.escape(order.number)} rejected</b> by an administrator · "
-                f"not sent to {html.escape(order.supplier.rstrip('.'))}.{note}",
+                tr("depot.purchasing.banner_rejected").format(
+                    number=html.escape(order.number),
+                    supplier=html.escape(order.supplier.rstrip(".")),
+                    note=note),
                 positive=False,
             )
         elif order.status == "cancelled":
@@ -805,11 +820,12 @@ class PurchasingPanel(QWidget):
                 positive=True,
             )
         else:
-            approved = " (approved by an administrator)" if order.was_approved else ""
+            approved = tr("depot.purchasing.approved_suffix") if order.was_approved else ""
             self._set_notice(
-                f"<b>{html.escape(order.number)} sent</b>{approved} · {order.quantity} × "
-                f"{html.escape(order.product_barcode)} at {format_amount(order.unit_price)} to "
-                f"{html.escape(order.supplier)}",
+                tr("depot.purchasing.banner_sent").format(
+                    number=html.escape(order.number), approved=approved, quantity=order.quantity,
+                    sku=html.escape(order.product_barcode), price=format_amount(order.unit_price),
+                    supplier=html.escape(order.supplier)),
                 positive=True,
             )
         self._sent_banner.show()

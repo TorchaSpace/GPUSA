@@ -35,8 +35,11 @@ was built field-for-field rather than left as a placeholder.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTimer, Qt
+import time
+
+from PySide6.QtCore import QEvent, QObject, QTimer, Qt, Signal
 from PySide6.QtWidgets import (
+    QApplication,
     QButtonGroup,
     QFrame,
     QHBoxLayout,
@@ -70,6 +73,8 @@ from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
+from shared.i18n import tr
+from shared.textcase import upper
 from shared.auth import Session
 from shared.models import UNASSIGNED, Warehouse
 from shared.warehousing import direction_label, reason_label, reference_text, start_of_today_db
@@ -80,7 +85,30 @@ _NAV_ITEMS = ["Dashboard", "Warehouses", "Inventory", "Shipments", "Reports"]
 
 
 
+# A manager who walks away must not leave the Console open on a shared depot PC.
+IDLE_LOCK_SECONDS = 15 * 60
+SESSION_CHECK_MS = 15_000
+
+
+class _ActivityWatcher(QObject):
+    """Notes the last mouse / keyboard input anywhere in the app."""
+
+    _INPUT = {QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.KeyPress, QEvent.Wheel, QEvent.TouchBegin}
+
+    def __init__(self, parent: QObject):
+        super().__init__(parent)
+        self.last = time.monotonic()
+
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() in self._INPUT:
+            self.last = time.monotonic()
+        return False
+
+
 class ConsoleWindow(QMainWindow):
+    # Emitted (with a short reason) when the Console locked itself - the Floor shows it.
+    locked = Signal(str)
+
     def __init__(self, warehouse: Warehouse, session: Session | None = None):
         super().__init__()
         self.warehouse = warehouse  # the warehouse this depot instance runs
@@ -91,7 +119,7 @@ class ConsoleWindow(QMainWindow):
         self._selected_code = warehouse.code
         self._cards: list[WarehouseCard] = []
         p = INDUSTRY_PALETTE
-        self.setWindowTitle("Dockline Console")
+        self.setWindowTitle(tr("depot.console.window_title"))
         self.resize(1280, 820)
         self.setStyleSheet(f"QMainWindow {{ background-color: {p['background']}; }}")
 
@@ -129,6 +157,15 @@ class ConsoleWindow(QMainWindow):
         self.setCentralWidget(central)
         self._navigate("Warehouses")
 
+        self._activity = _ActivityWatcher(self)
+        app = QApplication.instance()
+        if app is not None:
+            app.installEventFilter(self._activity)
+        self._session_timer = QTimer(self)
+        self._session_timer.setInterval(SESSION_CHECK_MS)
+        self._session_timer.timeout.connect(self._check_session)
+        self._session_timer.start()
+
     def _build_sidebar(self) -> QWidget:
         p = INDUSTRY_PALETTE
         sidebar = QFrame()
@@ -165,7 +202,7 @@ class ConsoleWindow(QMainWindow):
         self._button_group.setExclusive(True)
         self._nav_buttons: dict[str, QPushButton] = {}
         for key in _NAV_ITEMS:
-            button = ConsoleNavButton(key)
+            button = ConsoleNavButton(self._nav_label(key))
             button.clicked.connect(lambda checked, k=key: self._navigate(k))
             nav_layout.addWidget(button)
             self._button_group.addButton(button)
@@ -183,12 +220,20 @@ class ConsoleWindow(QMainWindow):
         footer.setStyleSheet(f"#consoleFooter {{ border-top: 1px solid {p['border']}; }}")
         footer_layout = QVBoxLayout(footer)
         footer_layout.setContentsMargins(18, 12, 18, 12)
-        footer_label = QLabel("Manager console")
+        footer_label = QLabel(tr("depot.console.footer"))
         footer_label.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
         footer_layout.addWidget(footer_label)
         layout.addWidget(footer)
 
         return sidebar
+
+    @staticmethod
+    def _nav_label(key: str) -> str:
+        return tr(f"depot.console.nav.{key.lower()}")
+
+    @classmethod
+    def _breadcrumb_text(cls, key: str) -> str:
+        return tr("depot.console.breadcrumb").format(page=upper(cls._nav_label(key)))
 
     def _navigate(self, key: str) -> None:
         changed = self._stack.currentWidget() is not self._pages[key]
@@ -198,8 +243,8 @@ class ConsoleWindow(QMainWindow):
         self._nav_buttons[key].setChecked(True)
         # The header used to say WAREHOUSES whichever page was open.
         if hasattr(self, "_title_label"):
-            self._breadcrumb_label.setText(f"OPERATIONS / {key.upper()}")
-            self._title_label.setText(key.upper())
+            self._breadcrumb_label.setText(self._breadcrumb_text(key))
+            self._title_label.setText(upper(self._nav_label(key)))
         if key == "Warehouses":
             self._refresh_warehouses_page()
 
@@ -209,11 +254,11 @@ class ConsoleWindow(QMainWindow):
 
         titles = QVBoxLayout()
         titles.setSpacing(2)
-        breadcrumb = QLabel("OPERATIONS / WAREHOUSES")
+        breadcrumb = QLabel(self._breadcrumb_text("Warehouses"))
         breadcrumb.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         titles.addWidget(breadcrumb)
         self._breadcrumb_label = breadcrumb
-        title = QLabel("WAREHOUSES")
+        title = QLabel(upper(self._nav_label("Warehouses")))
         self._title_label = title
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
@@ -246,11 +291,11 @@ class ConsoleWindow(QMainWindow):
         who_widget = QWidget()
         who_widget.setLayout(who)
         header.addWidget(who_widget)
-        sign_out = IndustryButton("Sign out", variant="ghost")
+        sign_out = IndustryButton(tr("depot.console.sign_out"), variant="ghost")
         sign_out.clicked.connect(self.sign_out)
         header.addWidget(sign_out)
 
-        admin_login = IndustryButton("İdari Giriş", variant="primary")
+        admin_login = IndustryButton(tr("depot.console.admin_login"), variant="primary")
         admin_login.setIcon(svg_to_icon(icons.LOCK, "#ffffff", size=14))
         admin_login.clicked.connect(self._open_manager_portal)
         header.addWidget(admin_login)
@@ -267,12 +312,28 @@ class ConsoleWindow(QMainWindow):
 
     def _update_who(self) -> None:
         s = self.session
-        self._who_label.setText(s.name if s else "Not signed in")
+        self._who_label.setText(s.name if s else tr("depot.console.not_signed_in"))
         self._who_role_label.setText(f"{s.role_label} · {s.badge_id}" if s else "")
+
+    def _check_session(self, now: float | None = None) -> str | None:
+        """Lock the Console when the signed-in person has been switched off in
+        Admin, or has been idle too long. Returns why it locked (None = still fine)."""
+        if self.session is None or not self.isVisible():
+            return None
+        reason = None
+        if not account_repository.is_session_valid(self.session):
+            reason = tr("depot.console.locked.access_changed")
+        elif (now if now is not None else time.monotonic()) - self._activity.last > IDLE_LOCK_SECONDS:
+            reason = tr("depot.console.locked.idle")
+        if reason is not None:
+            self.sign_out()
+            self.locked.emit(reason)
+        return reason
 
     def set_session(self, session: Session) -> None:
         """Someone (re)signed in at the Floor's İdari Giriş."""
         self.session = session
+        self._activity.last = time.monotonic()
         current_session.set(session)
         self._update_who()
 
@@ -354,14 +415,14 @@ class ConsoleWindow(QMainWindow):
         moves_layout.addWidget(self._moves_note)
         self._movements_table = self._build_movements_table()
         moves_layout.addWidget(self._movements_table, stretch=1)
-        tabs.addTab(moves_tab, "Movement Logs")
+        tabs.addTab(moves_tab, tr("depot.console.tab.movements"))
 
         attendance_tab = QWidget()
         attendance_layout = QVBoxLayout(attendance_tab)
         attendance_layout.setContentsMargins(12, 12, 12, 12)
         self._attendance_panel = AttendancePanel()
         attendance_layout.addWidget(self._attendance_panel)
-        tabs.addTab(attendance_tab, "Workforce Attendance")
+        tabs.addTab(attendance_tab, tr("depot.console.tab.attendance"))
 
         tabs.currentChanged.connect(lambda _i: fade_in(tabs.currentWidget()))
         layout.addWidget(tabs, stretch=1)
@@ -370,7 +431,12 @@ class ConsoleWindow(QMainWindow):
     def _build_movements_table(self) -> QTableWidget:
         p = INDUSTRY_PALETTE
         table = QTableWidget(0, 8)
-        table.setHorizontalHeaderLabels(["Time", "Movement", "SKU", "Product", "Qty", "Why", "Reference", "Handled by"])
+        table.setHorizontalHeaderLabels(
+            [
+                tr(f"depot.console.col.{name}")
+                for name in ("time", "movement", "sku", "product", "qty", "why", "reference", "handled_by")
+            ]
+        )
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setSelectionMode(QTableWidget.NoSelection)
@@ -423,15 +489,14 @@ class ConsoleWindow(QMainWindow):
         unassigned = used.get(UNASSIGNED, 0)
         self._unassigned_note.setVisible(bool(unassigned))
         self._unassigned_note.setText(
-            f"{unassigned:,} units company-wide aren't placed at any warehouse or dealership yet "
-            f"(stock from before warehouses were tracked). Place them in Admin > Warehouses."
+            tr("depot.console.unassigned_note").format(units=f"{unassigned:,}")
         )
         self._select_warehouse(self._selected_code)
 
     def _refresh_movements(self) -> None:
         card = next((c for c in self._cards if c.warehouse.code == self._selected_code), None)
         warehouse = card.warehouse if card else self.warehouse
-        self._moves_note.setText(f"Showing {warehouse.site_label} · click a card to switch warehouse")
+        self._moves_note.setText(tr("depot.console.moves_note").format(site=warehouse.site_label))
         try:
             movements = stock_repository.list_movements(limit=100, location=warehouse.location)
         except DataAccessError:

@@ -23,6 +23,8 @@ from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.i18n import tr
+from shared.textcase import upper
 
 
 class PlaceholderPanel(BlueprintFrame):
@@ -39,7 +41,7 @@ class PlaceholderPanel(BlueprintFrame):
         layout.setSpacing(6)
         layout.setAlignment(Qt.AlignHCenter)
 
-        heading = QLabel(title.upper())
+        heading = QLabel(upper(title))
         heading.setAlignment(Qt.AlignHCenter)
         heading.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
@@ -71,4 +73,4 @@ class PlaceholderPage(QWidget):
 
         # No title of its own: the Console header above shows the page name.
 
-        layout.addWidget(PlaceholderPanel("Coming soon", note), stretch=1)
+        layout.addWidget(PlaceholderPanel(tr("depot.placeholder.coming_soon"), note), stretch=1)

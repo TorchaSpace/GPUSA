@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import sqlite3
 
-LATEST_VERSION = 5
+LATEST_VERSION = 6
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -290,7 +290,15 @@ def _to_v5(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
-_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5}
+# Version 6 - the Floor's bin / dock door gets its own column (it used to be glued onto `note`).
+_V6_COLUMNS = (("stock_movements", "bin_code", "TEXT"),)
+
+
+def _to_v6(conn: sqlite3.Connection) -> None:
+    _add_columns(conn, _V6_COLUMNS)
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

@@ -52,16 +52,18 @@ from depot_app.gui.ledger_entry_dialog import LedgerEntryDialog, depot_type_labe
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared import current_session
 from shared.formatting import format_amount
-from shared.i18n import UserError, tr
+from shared.i18n import UserError, enum_label, tr
 from shared.models import LedgerEntry
+from shared.textcase import upper
 from shared.treasury import display_status, is_overdue, summarize
 
 # Cell order and plural labels exactly as the mockup's `types` map.
+# (id, i18n key) - the text is looked up when a widget is built.
 _TYPE_CELLS = (
-    ("check", "Checks"),
-    ("note", "Promissory Notes"),
-    ("transfer", "Payments"),
-    ("invoice", "Receivables"),
+    ("check", "depot.treasury.cell.check"),
+    ("note", "depot.treasury.cell.note"),
+    ("transfer", "depot.treasury.cell.transfer"),
+    ("invoice", "depot.treasury.cell.invoice"),
 )
 
 
@@ -86,14 +88,20 @@ def type_caption(doc_type: str, entries: list[LedgerEntry]) -> str:
     when outgoing, plain Invoices when both; transfers likewise."""
     directions = {e.direction for e in entries}
     if doc_type == "invoice":
-        return {frozenset({"out"}): "Payables", frozenset({"in", "out"}): "Invoices"}.get(
-            frozenset(directions), "Receivables"
+        return tr(
+            {
+                frozenset({"out"}): "depot.treasury.cell.payables",
+                frozenset({"in", "out"}): "depot.treasury.cell.invoices",
+            }.get(frozenset(directions), "depot.treasury.cell.invoice")
         )
     if doc_type == "transfer":
-        return {frozenset({"in"}): "Incoming transfers", frozenset({"in", "out"}): "Transfers"}.get(
-            frozenset(directions), "Payments"
+        return tr(
+            {
+                frozenset({"in"}): "depot.treasury.cell.incoming_transfers",
+                frozenset({"in", "out"}): "depot.treasury.cell.transfers",
+            }.get(frozenset(directions), "depot.treasury.cell.transfer")
         )
-    return dict(_TYPE_CELLS)[doc_type]
+    return tr(dict(_TYPE_CELLS)[doc_type])
 
 
 def cell_total_text(entries: list[LedgerEntry], today: date) -> str:
@@ -169,7 +177,7 @@ class TreasuryPanel(QWidget):
         filters_row = QHBoxLayout()
         filters_row.setSpacing(0)
         self._filter_buttons: dict[str | None, QPushButton] = {}
-        for key, label in ((None, "All"),) + _TYPE_CELLS:
+        for key, label in ((None, tr("enum.ledger_filter.All")),) + tuple((k, tr(v)) for k, v in _TYPE_CELLS):
             button = QPushButton(label)
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
@@ -187,18 +195,20 @@ class TreasuryPanel(QWidget):
             self._filter_buttons[key] = button
             filters_row.addWidget(button)
         filters_row.addStretch(1)
-        record = IndustryButton("+ Record document", variant="ghost")
+        record = IndustryButton(tr("depot.treasury.record"), variant="ghost")
         record.clicked.connect(self._record)
         filters_row.addWidget(record)
         outer.addLayout(filters_row)
 
-        scope = QLabel(f"Filtered to <b>{html.escape(site)}</b>")
+        scope = QLabel(tr("depot.treasury.filtered_to").format(site=html.escape(site)))
         scope.setTextFormat(Qt.RichText)
         scope.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
         outer.addWidget(scope, alignment=Qt.AlignRight)
 
         self._table = QTableWidget(0, 7)
-        self._table.setHorizontalHeaderLabels(["Date", "Type", "Doc no.", "Counterparty", "Due", "Amount", "Status"])
+        self._table.setHorizontalHeaderLabels(
+            [tr(f"depot.treasury.col.{c}") for c in ("date", "type", "doc_no", "counterparty", "due", "amount", "status")]
+        )
         self._table.verticalHeader().setVisible(False)
         self._table.setEditTriggers(QTableWidget.NoEditTriggers)
         self._table.setSelectionMode(QTableWidget.NoSelection)
@@ -223,7 +233,7 @@ class TreasuryPanel(QWidget):
         outer.addWidget(self._message)
 
         footer = QHBoxLayout()
-        footer_caption = QLabel(f"OPEN NET POSITION · {site} · SHOWN ROWS")
+        footer_caption = QLabel(tr("depot.treasury.net_footer").format(site=site))
         footer_caption.setTextFormat(Qt.PlainText)
         footer_caption.setStyleSheet(f"font-size: 13px; letter-spacing: 1px; color: {p['text_secondary']};")
         self._net_label = QLabel()
@@ -253,7 +263,7 @@ class TreasuryPanel(QWidget):
         except (ValueError, *DATABASE_ERRORS) as exc:
             # Keep what's showing (a transient lock shouldn't blank the
             # portal) but say it may be out of date.
-            self._message.setText(f"Couldn't refresh the ledger - showing the last data. ({exc})")
+            self._message.setText(tr("depot.treasury.refresh_failed").format(error=exc))
             return
         # Newest document first, like the mockup's ledger.
         self._entries.sort(key=lambda e: (e.issue_date, e.id or 0), reverse=True)
@@ -264,15 +274,15 @@ class TreasuryPanel(QWidget):
             open_out = sum(1 for e in items if e.is_open and e.direction == "out")
             label = type_caption(key, items)
             cell = self._cells[key]
-            cell.caption.setText(f"{label.upper()} · {len(items)}")
+            cell.caption.setText(f"{upper(label)} · {len(items)}")
             cell.total.setText(cell_total_text(items, today))
             if key == "invoice":
-                parts = ([f"{open_in} open to collect"] if open_in or not open_out else []) + (
-                    [f"{open_out} open to pay"] if open_out else []
+                parts = ([tr("depot.treasury.open_to_collect").format(n=open_in)] if open_in or not open_out else []) + (
+                    [tr("depot.treasury.open_to_pay").format(n=open_out)] if open_out else []
                 )
                 cell.sub.setText(" · ".join(parts))
             else:
-                cell.sub.setText(f"{open_in + open_out} not yet settled")
+                cell.sub.setText(tr("depot.treasury.not_settled").format(n=open_in + open_out))
             self._filter_buttons[key].setText(label)
         self._render()
 
@@ -302,7 +312,7 @@ class TreasuryPanel(QWidget):
                 entry.counterparty,
                 _short_date(entry.due_date),
                 signed_text(entry),
-                status,
+                enum_label("ledger_display", status),
             ]
             for column, value in enumerate(values):
                 item = QTableWidgetItem(value)
@@ -357,11 +367,14 @@ class TreasuryPanel(QWidget):
                     raise UserError("err.ledger_actor_required")
                 saved = ledger_repository.create(dialog.result_entry(), actor)
             except (ValueError, *DATABASE_ERRORS) as exc:
-                dialog.show_error(f"Couldn't save: {exc}")
+                dialog.show_error(tr("depot.treasury.save_failed").format(error=exc))
                 continue
             self.reload()
             self._message.setText(
-                f"Recorded {depot_type_label(saved.direction, saved.doc_type).lower()} {saved.doc_no} · {signed_text(saved)}. "
-                f"It's settled from Admin > Treasury & Ledger."
+                tr("depot.treasury.recorded").format(
+                    type=depot_type_label(saved.direction, saved.doc_type).lower(),
+                    doc_no=saved.doc_no,
+                    amount=signed_text(saved),
+                )
             )
             return

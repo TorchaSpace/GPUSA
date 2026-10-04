@@ -38,6 +38,8 @@ from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared import current_session
 from shared.auth import PORTAL_AUTO_LOCK_SECONDS
 from shared.gui_kit.icon_kit import svg_to_icon
+from shared.i18n import tr
+from shared.textcase import upper
 
 _LOCK_SECONDS = PORTAL_AUTO_LOCK_SECONDS
 
@@ -48,7 +50,7 @@ class ManagerPortalDialog(QDialog):
         purchase orders and ledger documents are stamped with."""
         super().__init__(parent)
         p = INDUSTRY_PALETTE
-        self.setWindowTitle("Manager Portal")
+        self.setWindowTitle(tr("depot.portal.window_title"))
         self.resize(1080, 820)
         self.setStyleSheet(f"QDialog {{ background-color: {p['background']}; }}")
 
@@ -80,7 +82,7 @@ class ManagerPortalDialog(QDialog):
         purchasing_scroll.setWidgetResizable(True)
         purchasing_scroll.setFrameShape(QScrollArea.NoFrame)
         purchasing_scroll.setWidget(purchasing_inner)
-        tabs.addTab(purchasing_scroll, "01  Purchasing Operations")
+        tabs.addTab(purchasing_scroll, tr("depot.portal.tab_purchasing"))
 
         self._treasury_panel = TreasuryPanel(site)
         treasury_inner = QWidget()
@@ -91,7 +93,7 @@ class ManagerPortalDialog(QDialog):
         treasury_scroll.setWidgetResizable(True)
         treasury_scroll.setFrameShape(QScrollArea.NoFrame)
         treasury_scroll.setWidget(treasury_inner)
-        tabs.addTab(treasury_scroll, "02  Local Treasury && Ledger")
+        tabs.addTab(treasury_scroll, tr("depot.portal.tab_treasury"))
 
         layout.addWidget(tabs, stretch=1)
 
@@ -135,7 +137,7 @@ class ManagerPortalDialog(QDialog):
         icon.setPixmap(svg_to_icon(icons.SHIELD, p["accent_900"], size=14).pixmap(14, 14))
         layout.addWidget(icon)
 
-        text = QLabel("Secure session · Financial data · Not visible on floor terminals")
+        text = QLabel(tr("depot.portal.secure_session"))
         text.setStyleSheet(f"font-size: 11px; color: {p['accent_900']};")
         layout.addWidget(text)
         layout.addStretch(1)
@@ -155,7 +157,7 @@ class ManagerPortalDialog(QDialog):
         self._kicker_label = kicker
         kicker.setStyleSheet(f"font-size: 11px; letter-spacing: 1px; color: {p['text_secondary']};")
         titles.addWidget(kicker)
-        title = QLabel("MANAGER PORTAL")
+        title = QLabel(upper(tr("depot.portal.window_title")))
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
             f"font-size: 24px; color: {p['text_primary']};"
@@ -169,7 +171,7 @@ class ManagerPortalDialog(QDialog):
         titles_widget.setLayout(titles)
         header.addWidget(titles_widget, stretch=1)
 
-        lock_exit = IndustryButton("Lock && exit", variant="ghost")
+        lock_exit = IndustryButton(tr("depot.portal.lock_exit"), variant="ghost")
         lock_exit.clicked.connect(self.close)
         header.addWidget(lock_exit, alignment=Qt.AlignTop)
 
@@ -183,9 +185,11 @@ class ManagerPortalDialog(QDialog):
         from datetime import datetime
 
         session = current_session.get()
-        who = f"{session.name} · {session.role_label}" if session else "Not signed in"
-        self._kicker_label.setText(f"İDARİ GİRİŞ · {session.role_label.upper()}" if session else "İDARİ GİRİŞ")
-        self._subtext_label.setText(f"{who} · unlocked {datetime.now().strftime('%H:%M')}")
+        who = f"{session.name} · {session.role_label}" if session else tr("depot.portal.not_signed_in")
+        self._kicker_label.setText(f"İDARİ GİRİŞ · {upper(session.role_label)}" if session else "İDARİ GİRİŞ")
+        self._subtext_label.setText(
+            tr("depot.portal.unlocked").format(who=who, time=datetime.now().strftime("%H:%M"))
+        )
 
     def _tick_lock(self) -> None:
         self._remaining_seconds -= 1
@@ -197,4 +201,4 @@ class ManagerPortalDialog(QDialog):
 
     def _update_lock_label(self) -> None:
         minutes, seconds = divmod(self._remaining_seconds, 60)
-        self._lock_label.setText(f"Auto-lock in {minutes}:{seconds:02d}")
+        self._lock_label.setText(tr("depot.portal.auto_lock").format(minutes=minutes, seconds=f"{seconds:02d}"))

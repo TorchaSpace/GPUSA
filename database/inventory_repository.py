@@ -17,7 +17,8 @@ from shared.models import UNASSIGNED, StockLocation
 
 
 def receive_stock(barcode: str, quantity: int, note: str | None = None,
-                  location: StockLocation = UNASSIGNED, actor: Actor | None = None) -> None:
+                  location: StockLocation = UNASSIGNED, actor: Actor | None = None,
+                  reference: str | None = None, bin_code: str | None = None) -> None:
     """Record newly received inventory at `location`.
 
     Raises ProductNotFoundError if `barcode` doesn't exist - depot staff
@@ -26,11 +27,12 @@ def receive_stock(barcode: str, quantity: int, note: str | None = None,
     ValueError for a non-positive quantity, UnknownLocationError for a
     location that doesn't exist.
     """
-    stock_repository.receive(location, barcode, quantity, note, actor=actor)
+    stock_repository.receive(location, barcode, quantity, note, actor=actor, reference=reference, bin_code=bin_code)
 
 
 def dispatch_stock(barcode: str, quantity: int, note: str | None = None,
-                   location: StockLocation = UNASSIGNED, actor: Actor | None = None) -> None:
+                   location: StockLocation = UNASSIGNED, actor: Actor | None = None,
+                   reference: str | None = None, bin_code: str | None = None) -> None:
     """Record goods leaving the company from `location` (damaged/returned -
     not a sale, and not a shipment to a dealership).
 
@@ -39,7 +41,7 @@ def dispatch_stock(barcode: str, quantity: int, note: str | None = None,
     regardless of which app is removing it. Raises ProductNotFoundError
     for an unknown barcode, ValueError for a non-positive quantity.
     """
-    stock_repository.dispatch(location, barcode, quantity, note, actor=actor)
+    stock_repository.dispatch(location, barcode, quantity, note, actor=actor, reference=reference, bin_code=bin_code)
 
 
 def list_recent_movements(limit: int = 50, movement_type: str | None = None,

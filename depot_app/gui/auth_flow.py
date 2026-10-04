@@ -12,6 +12,7 @@ from depot_app.theme import INDUSTRY_PALETTE
 from shared import auth
 from shared.auth import Session
 from shared.gui_kit.sign_in_dialog import SignInDialog
+from shared.i18n import tr
 from shared.models import Warehouse
 
 
@@ -21,8 +22,8 @@ def terminal_name(warehouse: Warehouse) -> str:
 
 def console_sign_in_dialog(warehouse: Warehouse, parent=None) -> SignInDialog:
     return SignInDialog(
-        "İdari Giriş",
-        f"{warehouse.site_label} · Manager Console. Depot managers and administrators only.",
+        tr("depot.auth.console_title"),
+        tr("depot.auth.console_sub").format(site=warehouse.site_label),
         lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_DEPOT_CONSOLE, terminal_name(warehouse)),
         palette=INDUSTRY_PALETTE,
         parent=parent,
@@ -35,8 +36,8 @@ def portal_unlock_dialog(session: Session, parent=None) -> SignInDialog:
         return session
 
     return SignInDialog(
-        "Manager Portal",
-        f"Purchasing and treasury. Confirm it's you, {session.first_name} - enter your PIN.",
+        tr("depot.auth.portal_title"),
+        tr("depot.auth.portal_sub").format(name=session.first_name),
         confirm,
         palette=INDUSTRY_PALETTE,
         fixed_badge=session.badge_id,

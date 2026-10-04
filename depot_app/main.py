@@ -4,8 +4,10 @@ import sys
 
 from PySide6.QtWidgets import QApplication
 
+from database import settings_repository
 from depot_app.gui.main_window import MainWindow
 from depot_app.theme import INDUSTRY_PALETTE
+from shared import i18n
 from shared.theme import apply_theme
 from shared.warehouse_bootstrap import register_pending_warehouse
 
@@ -16,6 +18,7 @@ def main() -> int:
     register_pending_warehouse()
     app = QApplication(sys.argv)
     apply_theme(app, palette=INDUSTRY_PALETTE)
+    i18n.set_language(settings_repository.safe_language())  # the language chosen in Admin > Settings
     window = MainWindow()
     window.show()
     return app.exec()

@@ -19,6 +19,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from datetime import date
 
+from shared.i18n import tr
+
 # (column key, label, movement_type, reason)
 KINDS = (
     ("receipts", "Receipts", "receive", "receive"),
@@ -66,7 +68,7 @@ class MovementReport:
 
     @property
     def title(self) -> str:
-        return f"Stock movements · {self.site_label}"
+        return tr("depot.rep.kicker").format(site=self.site_label)
 
     @property
     def period_text(self) -> str:

@@ -57,10 +57,12 @@ from shared.formatting import local_datetime_text, parse_db_timestamp
 from shared.gui_kit.polling import PollingTimer
 from shared.models import UNASSIGNED, Shipment, StockLocation
 from shared import current_session
+from shared.i18n import enum_label, tr
+from shared.textcase import upper
 
 
 def _kicker(text: str) -> QLabel:
-    label = QLabel(text.upper())
+    label = QLabel(upper(text))
     label.setStyleSheet(f"font-size: 12px; letter-spacing: 1px; color: {INDUSTRY_PALETTE['text_secondary']};")
     return label
 
@@ -126,15 +128,15 @@ class ShipmentsPage(QWidget):
         outer.addWidget(scroll)
 
         title_row = QHBoxLayout()
-        title_row.addWidget(_kicker(f"From {origin} to dealerships"), stretch=1)  # page name is in the Console header
-        refresh = IndustryButton("Refresh", variant="ghost")
+        title_row.addWidget(_kicker(tr("depot.ship.kicker_from").format(origin=origin)), stretch=1)  # page name is in the Console header
+        refresh = IndustryButton(tr("depot.ship.refresh"), variant="ghost")
         refresh.clicked.connect(self.reload)
         title_row.addWidget(refresh, alignment=Qt.AlignTop)
         layout.addLayout(title_row)
 
         layout.addWidget(self._build_form())
-        layout.addWidget(_kicker(f"Shipments · {origin}"))
-        self._table = _table(["No.", "Destination", "Carrier", "Items", "Departed", "ETA", "Status", "Late"])
+        layout.addWidget(_kicker(tr("depot.ship.kicker_list").format(origin=origin)))
+        self._table = _table([tr(f"depot.ship.col_{k}") for k in ("no", "dest", "carrier", "items", "departed", "eta", "status", "late")])
         header = self._table.horizontalHeader()
         for column in range(8):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
@@ -173,41 +175,41 @@ class ShipmentsPage(QWidget):
         grid.setHorizontalSpacing(14)
         grid.setVerticalSpacing(6)
 
-        grid.addWidget(_kicker("New shipment"), 0, 0, 1, 4)
+        grid.addWidget(_kicker(tr("depot.ship.new")), 0, 0, 1, 4)
         self._dest_input = QComboBox()
         self._carrier_input = QLineEdit()
-        self._carrier_input.setPlaceholderText("e.g. Ridgeline Freight")
+        self._carrier_input.setPlaceholderText(tr("depot.ship.carrier_ph"))
         self._driver_input = QLineEdit()
-        self._driver_input.setPlaceholderText("Optional")
+        self._driver_input.setPlaceholderText(tr("depot.ship.optional"))
         self._eta_input = QDateTimeEdit()
         self._eta_input.setCalendarPopup(True)
         self._eta_input.setDisplayFormat("dd.MM.yyyy HH:mm")
         for column, (caption, widget) in enumerate(
-            (("Destination", self._dest_input), ("Carrier", self._carrier_input),
-             ("Driver", self._driver_input), ("ETA", self._eta_input))
+            ((tr("depot.ship.f_dest"), self._dest_input), (tr("depot.ship.f_carrier"), self._carrier_input),
+             (tr("depot.ship.f_driver"), self._driver_input), (tr("depot.ship.f_eta"), self._eta_input))
         ):
             widget.setStyleSheet(_input_style())
             grid.addWidget(_kicker(caption), 1, column)
             grid.addWidget(widget, 2, column)
 
-        grid.addWidget(_kicker("Add product"), 3, 0, 1, 4)
+        grid.addWidget(_kicker(tr("depot.ship.add_product")), 3, 0, 1, 4)
         self._product_input = QComboBox()
         self._product_input.setStyleSheet(_input_style())
         self._qty_input = QSpinBox()
         self._qty_input.setRange(1, 1_000_000)
         self._qty_input.setStyleSheet(_input_style())
-        add = IndustryButton("Add line", variant="ghost")
+        add = IndustryButton(tr("depot.ship.add_line"), variant="ghost")
         add.clicked.connect(self._add_line)
         grid.addWidget(self._product_input, 4, 0, 1, 2)
         grid.addWidget(self._qty_input, 4, 2)
         grid.addWidget(add, 4, 3)
 
-        self._lines_table = _table(["Product", "Qty"])
+        self._lines_table = _table([tr("depot.ship.col_product"), tr("depot.ship.col_qty")])
         self._lines_table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self._lines_table.horizontalHeader().setSectionResizeMode(1, QHeaderView.ResizeToContents)
         self._lines_table.setMaximumHeight(150)
         grid.addWidget(self._lines_table, 5, 0, 1, 3)
-        remove = IndustryButton("Remove line", variant="ghost")
+        remove = IndustryButton(tr("depot.ship.remove_line"), variant="ghost")
         remove.clicked.connect(self._remove_line)
         grid.addWidget(remove, 5, 3, alignment=Qt.AlignTop)
 
@@ -220,11 +222,11 @@ class ShipmentsPage(QWidget):
         grid.addWidget(self._form_error, 6, 0, 1, 4)
 
         bottom = QHBoxLayout()
-        self._dispatch_now = QCheckBox("Truck is leaving now (dispatch immediately)")
+        self._dispatch_now = QCheckBox(tr("depot.ship.dispatch_now"))
         self._dispatch_now.setStyleSheet(f"font-size: 13px; color: {p['text_primary']};")
         bottom.addWidget(self._dispatch_now)
         bottom.addStretch(1)
-        self._create_button = IndustryButton("Create shipment", variant="accent")
+        self._create_button = IndustryButton(tr("depot.ship.create"), variant="accent")
         self._create_button.clicked.connect(self._create)
         bottom.addWidget(self._create_button)
         grid.addLayout(bottom, 7, 0, 1, 4)
@@ -249,7 +251,8 @@ class ShipmentsPage(QWidget):
             self._dest_input.addItem(f"{dealership.code} · {dealership.name} ({dealership.city})", dealership.code)
         self._product_input.clear()
         for product in products:
-            self._product_input.addItem(f"{product.barcode} · {product.name} · {product.stock_quantity} here", product.barcode)
+            self._product_input.addItem(
+                tr("depot.ship.here").format(barcode=product.barcode, name=product.name, qty=product.stock_quantity), product.barcode)
         for combo, value in ((self._dest_input, current_dest), (self._product_input, current_product)):
             index = combo.findData(value) if value is not None else -1
             if index >= 0:
@@ -261,7 +264,7 @@ class ShipmentsPage(QWidget):
             self._eta_input.setDateTime(_to_qdatetime(datetime.now() + timedelta(hours=4)))
         self._create_button.setEnabled(bool(dealerships and products))
         if not dealerships:
-            self._show_form_error("No active dealerships yet - add one in Admin > Dealerships (or open Admin from the setup folder).")
+            self._show_form_error(tr("depot.ship.no_dealerships"))
 
     def _add_line(self) -> None:
         barcode = self._product_input.currentData()
@@ -298,7 +301,7 @@ class ShipmentsPage(QWidget):
         self._form_error.hide()
         code = self._dest_input.currentData()
         if code is None:
-            self._show_form_error("Pick a destination dealership.")
+            self._show_form_error(tr("depot.ship.pick_dest"))
             return
         try:
             shipment = shipment_repository.create(
@@ -318,18 +321,18 @@ class ShipmentsPage(QWidget):
             try:
                 shipment = shipment_repository.dispatch(shipment.id, actor=current_session.actor())
             except InsufficientStockError as exc:
-                dispatch_problem = (f" Not dispatched: only {exc.available} of {exc.barcode} on hand here "
-                                    f"({exc.requested} needed) - it stays scheduled.")
+                dispatch_problem = tr("depot.ship.not_dispatched_stock").format(
+                    available=exc.available, barcode=exc.barcode, requested=exc.requested)
             except (ValueError, *DATABASE_ERRORS) as exc:
-                dispatch_problem = f" Not dispatched: {exc}"
+                dispatch_problem = tr("depot.ship.not_dispatched").format(error=exc)
         self._draft_lines = []
         self._render_draft()
         self._driver_input.clear()
         self._dispatch_now.setChecked(False)
         self.reload()
         self.select(shipment.id)
-        self._set_message(f"{shipment.number} created for {shipment.dealership_name}"
-                          + (" and dispatched." if shipment.status == "in_transit" else ".")
+        self._set_message(tr("depot.ship.created").format(number=shipment.number, dealer=shipment.dealership_name)
+                          + (tr("depot.ship.and_dispatched") if shipment.status == "in_transit" else ".")
                           + (dispatch_problem or ""))
         self.reload_choices()  # on-hand counts changed
 
@@ -343,29 +346,29 @@ class ShipmentsPage(QWidget):
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(18, 14, 18, 16)
         layout.setSpacing(8)
-        self._detail_title = QLabel("SELECT A SHIPMENT")
+        self._detail_title = QLabel(tr("depot.ship.select_title"))
         self._detail_title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 20px; color: {p['text_primary']};")
         layout.addWidget(self._detail_title)
         self._detail_meta = QLabel()
         self._detail_meta.setWordWrap(True)
         self._detail_meta.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         layout.addWidget(self._detail_meta)
-        self._detail_lines = _table(["Product", "Shipped", "Received", "Difference"])
+        self._detail_lines = _table([tr("depot.ship.col_product"), tr("depot.ship.col_shipped"), tr("depot.ship.col_received"), tr("depot.ship.col_diff")])
         self._detail_lines.horizontalHeader().setSectionResizeMode(0, QHeaderView.Stretch)
         self._detail_lines.setSelectionMode(QAbstractItemView.NoSelection)
         self._detail_lines.setMaximumHeight(180)
         layout.addWidget(self._detail_lines)
 
         actions = QHBoxLayout()
-        self._dispatch_button = IndustryButton("Dispatch", variant="primary")
+        self._dispatch_button = IndustryButton(tr("depot.ship.dispatch"), variant="primary")
         self._dispatch_button.clicked.connect(lambda: self._act("dispatch"))
         self._new_eta_input = QDateTimeEdit()
         self._new_eta_input.setCalendarPopup(True)
         self._new_eta_input.setDisplayFormat("dd.MM.yyyy HH:mm")
         self._new_eta_input.setStyleSheet(_input_style())
-        self._eta_button = IndustryButton("Update ETA", variant="ghost")
+        self._eta_button = IndustryButton(tr("depot.ship.update_eta"), variant="ghost")
         self._eta_button.clicked.connect(lambda: self._act("eta"))
-        self._cancel_button = IndustryButton("Cancel shipment", variant="ghost")
+        self._cancel_button = IndustryButton(tr("depot.ship.cancel"), variant="ghost")
         self._cancel_button.clicked.connect(lambda: self._act("cancel"))
         for widget in (self._dispatch_button, self._new_eta_input, self._eta_button, self._cancel_button):
             actions.addWidget(widget)
@@ -422,7 +425,7 @@ class ShipmentsPage(QWidget):
                 str(shipment.item_count),
                 local_datetime_text(shipment.departed_at),
                 eta_text(shipment),
-                status + (" · report" if shipment.discrepancies else ""),
+                enum_label("ship_status", status) + (tr("depot.ship.report_tag") if shipment.discrepancies else ""),
                 duration_text(late) if late.total_seconds() >= 60 else "",
             ]
             for column, value in enumerate(values):
@@ -466,23 +469,23 @@ class ShipmentsPage(QWidget):
             button.setEnabled(False)
         self._new_eta_input.setEnabled(False)
         if shipment is None:
-            self._detail_title.setText("SELECT A SHIPMENT")
-            self._detail_meta.setText("Pick a row above to see its lines and move it along.")
+            self._detail_title.setText(tr("depot.ship.select_title"))
+            self._detail_meta.setText(tr("depot.ship.select_hint"))
             self._detail_lines.setRowCount(0)
             return
         status = live_status(shipment)
-        self._detail_title.setText(f"{shipment.number} · {status.upper()}")
+        self._detail_title.setText(upper(f"{shipment.number} · {enum_label('ship_status', status)}"))
         planned = parse_db_timestamp(shipment.planned_eta)
         meta = [
-            f"To {shipment.dealership_code} · {shipment.dealership_name}",
-            f"{shipment.carrier}" + (f" · Driver {shipment.driver}" if shipment.driver else ""),
-            f"Promised {planned.astimezone().strftime('%d.%m.%Y %H:%M')}",
+            tr("depot.ship.meta_to").format(code=shipment.dealership_code, name=shipment.dealership_name),
+            f"{shipment.carrier}" + (tr("depot.ship.meta_driver").format(driver=shipment.driver) if shipment.driver else ""),
+            tr("depot.ship.meta_promised").format(when=planned.astimezone().strftime("%d.%m.%Y %H:%M")),
         ]
         late = lateness(shipment)
         if late.total_seconds() >= 60:
-            meta.append(f"late {duration_text(late)}")
+            meta.append(tr("depot.ship.meta_late").format(duration=duration_text(late)))
         if shipment.receipt_note:
-            meta.append(f"Dealership note: “{shipment.receipt_note}”")
+            meta.append(tr("depot.ship.meta_note").format(note=shipment.receipt_note))
         self._detail_meta.setText(" · ".join(meta))
 
         self._detail_lines.setRowCount(len(shipment.lines))
@@ -515,19 +518,20 @@ class ShipmentsPage(QWidget):
         try:
             if action == "dispatch":
                 updated = shipment_repository.dispatch(shipment.id, actor=current_session.actor())
-                message = f"{updated.number} dispatched."
+                message = tr("depot.ship.dispatched").format(number=updated.number)
             elif action == "eta":
                 updated = shipment_repository.update_eta(shipment.id, _from_qdatetime(self._new_eta_input.dateTime()))
-                message = f"{updated.number} now due {eta_text(updated)}."
+                message = tr("depot.ship.now_due").format(number=updated.number, eta=eta_text(updated))
             else:
                 updated = shipment_repository.cancel(shipment.id, actor=current_session.actor())
-                message = f"{updated.number} cancelled."
+                message = tr("depot.ship.cancelled").format(number=updated.number)
         except InsufficientStockError as exc:
-            message = (f"Couldn't dispatch {shipment.number}: only {exc.available} of {exc.barcode} "
-                       f"on hand at {exc.location or 'this warehouse'} ({exc.requested} needed).")
+            message = tr("depot.ship.dispatch_short").format(
+                number=shipment.number, available=exc.available, barcode=exc.barcode,
+                location=exc.location or tr("depot.ship.this_warehouse"), requested=exc.requested)
             updated = shipment
         except (ValueError, *DATABASE_ERRORS) as exc:  # e.g. an ETA before the departure, a vanished location
-            message = f"Couldn't update: {exc}"
+            message = tr("depot.ship.update_failed").format(error=exc)
             updated = shipment
         self.reload()
         if action in ("dispatch", "cancel"):
