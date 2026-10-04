@@ -186,14 +186,18 @@ def test_clicking_the_floor_login_button_does_not_pass_a_bool_as_the_session(flo
     """QPushButton.clicked sends `checked` (False). It once landed in _open_console's
     `session` parameter, which skipped the sign-in and opened a console that read
     "Not signed in" with dead buttons."""
-    from PySide6.QtWidgets import QPushButton
+    from PySide6.QtWidgets import QAbstractButton
 
     from depot_app.gui import main_window as mw
+    from shared.i18n import tr
 
     window = floor
     seen = []
     monkeypatch.setattr(mw.MainWindow, "_open_console", lambda self, session=None: seen.append(session))
-    button = next(b for b in window.findChildren(QPushButton) if "İDARİ" in b.text().upper() or "ADMIN" in b.text().upper())
+    from shared.textcase import upper
+
+    wanted = upper(tr("depot.floor.admin_login"))
+    button = next(b for b in window.findChildren(QAbstractButton) if b.text() == wanted)
     button.click()
     assert seen == [None]
 
