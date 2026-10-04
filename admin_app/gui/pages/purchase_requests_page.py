@@ -39,7 +39,8 @@ from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import product_repository, purchase_order_repository
 from database.exceptions import DATABASE_ERRORS, PurchaseOrderAlreadyDecidedError
-from shared.formatting import format_amount, local_datetime_text
+from shared.formatting import local_datetime_text
+from shared.currency import format_money
 from shared.models import PriceRange, Product, PurchaseOrder
 from shared import current_session
 
@@ -238,11 +239,11 @@ class PurchaseRequestsPage(AdminPage):
         self._queue.set_orders(pending)
         held_value = round(sum(o.total for o in pending), 2)
         self._held_total_label.setText(
-            tr("admin.purchase.held").format(amount=format_amount(held_value)) if pending else ""
+            tr("admin.purchase.held").format(amount=format_money(held_value)) if pending else ""
         )
 
         self._pending_card.set_value(str(len(pending)))
-        self._pending_value_item.layout().itemAt(1).widget().setText(format_amount(held_value))
+        self._pending_value_item.layout().itemAt(1).widget().setText(format_money(held_value))
         self._sent_card.set_value(str(len(sent)))
         self._sent_direct_item.layout().itemAt(1).widget().setText(str(sum(1 for o in sent if not o.was_approved)))
         self._sent_approved_item.layout().itemAt(1).widget().setText(str(sum(1 for o in sent if o.was_approved)))
@@ -303,8 +304,8 @@ class PurchaseRequestsPage(AdminPage):
         for row, band in enumerate(self._ranges):
             name = names.get(band.product_barcode, "")
             self._ranges_table.setItem(row, 0, cell(f"{band.product_barcode} · {name}"))
-            self._ranges_table.setItem(row, 1, cell(format_amount(band.min_unit_price), right=True))
-            self._ranges_table.setItem(row, 2, cell(format_amount(band.max_unit_price), right=True))
+            self._ranges_table.setItem(row, 1, cell(format_money(band.min_unit_price), right=True))
+            self._ranges_table.setItem(row, 2, cell(format_money(band.max_unit_price), right=True))
             self._ranges_table.setItem(row, 3, cell(band.default_supplier or "—"))
 
     def _render_orders(self) -> None:
@@ -315,7 +316,7 @@ class PurchaseRequestsPage(AdminPage):
         self._orders_table.setRowCount(len(rows))
         for row, order in enumerate(rows):
             band = (
-                f"{format_amount(order.range_min)}–{format_amount(order.range_max)}"
+                f"{format_money(order.range_min)}–{format_money(order.range_max)}"
                 if order.range_min is not None and order.range_max is not None
                 else tr("admin.purchase.band_none")
             )
@@ -326,8 +327,8 @@ class PurchaseRequestsPage(AdminPage):
                 cell(f"{order.product_barcode} · {order.product_name}"),
                 cell(order.supplier),
                 cell(str(order.quantity), right=True),
-                cell(format_amount(order.unit_price), right=True),
-                cell(format_amount(order.total), right=True),
+                cell(format_money(order.unit_price), right=True),
+                cell(format_money(order.total), right=True),
                 cell(band),
                 cell(order_status_label(order), color=_status_color(order)),
             ]
@@ -383,8 +384,8 @@ class PurchaseRequestsPage(AdminPage):
             text = tr("admin.purchase.approve_q_plain").format(id=f"{order_id:05d}")
         else:
             text = tr("admin.purchase.approve_q").format(
-                number=order.number, supplier=order.supplier, total=format_amount(order.total),
-                qty=order.quantity, unit=format_amount(order.unit_price),
+                number=order.number, supplier=order.supplier, total=format_money(order.total),
+                qty=order.quantity, unit=format_money(order.unit_price),
             )
         answer = QMessageBox.question(self, tr("admin.purchase.approve_title"), text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
         return answer == QMessageBox.Yes
@@ -408,11 +409,11 @@ class PurchaseRequestsPage(AdminPage):
             if approve:
                 order = purchase_order_repository.approve(order_id, note, decided_by=current_session.actor())
                 message = tr("admin.purchase.msg_approved").format(
-                    number=order.number, total=format_amount(order.total), supplier=order.supplier
+                    number=order.number, total=format_money(order.total), supplier=order.supplier
                 )
             else:
                 order = purchase_order_repository.reject(order_id, note, decided_by=current_session.actor())
-                message = tr("admin.purchase.msg_rejected").format(number=order.number, total=format_amount(order.total))
+                message = tr("admin.purchase.msg_rejected").format(number=order.number, total=format_money(order.total))
         except PurchaseOrderAlreadyDecidedError as exc:
             message = tr("admin.purchase.msg_decided").format(error=exc)
         except (ValueError, *DATABASE_ERRORS) as exc:
@@ -433,7 +434,7 @@ class PurchaseRequestsPage(AdminPage):
             )
         else:
             text = tr("admin.purchase.cancel_q").format(
-                number=order.number, supplier=order.supplier, qty=order.quantity, unit=format_amount(order.unit_price),
+                number=order.number, supplier=order.supplier, qty=order.quantity, unit=format_money(order.unit_price),
             )
         answer = QMessageBox.question(
             self, tr("admin.purchase.cancel_title"), text, QMessageBox.Yes | QMessageBox.No, QMessageBox.No
@@ -446,7 +447,7 @@ class PurchaseRequestsPage(AdminPage):
             return
         try:
             done = purchase_order_repository.cancel_order(order_id, current_session.actor())
-            message = tr("admin.purchase.msg_cancelled").format(number=done.number, total=format_amount(done.total))
+            message = tr("admin.purchase.msg_cancelled").format(number=done.number, total=format_money(done.total))
         except (ValueError, *DATABASE_ERRORS) as exc:
             message = tr("admin.purchase.msg_cancel_failed").format(error=exc)
         self.reload()

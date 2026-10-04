@@ -52,20 +52,22 @@ from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import eta_text, live_status
 from shared.formatting import parse_db_timestamp
 from shared.gui_kit.polling import PollingTimer
+from shared.i18n import plural, tr
 from shared.models import Shipment
 from shared import current_session
+from shared.textcase import upper
 from shared.warehousing import tr_or
 
 _YELLOW = "#f2c230"
 _RED_TEXT = "#9a2a1d"
 _RECENT = timedelta(hours=24)  # keep a received shipment on the list this long
 
-_TAGS = {  # live status -> (tag text, background, text colour)
-    "Arriving": ("Arriving", "#f3d9c6", "#7a3d15"),
-    "Delayed": ("Delayed", _YELLOW, "#3a2a05"),
-    "In Transit": ("On the way", "#e3dccb", "#4a4336"),
-    "Scheduled": ("Scheduled", "#e3dccb", "#4a4336"),
-    "Delivered": ("Received", "#dfe6d3", "#3d472b"),
+_TAGS = {  # live status -> (tag text KEY - tr() at render time, background, text colour)
+    "Arriving": ("pos.receive.tag.arriving", "#f3d9c6", "#7a3d15"),
+    "Delayed": ("pos.receive.tag.delayed", _YELLOW, "#3a2a05"),
+    "In Transit": ("pos.receive.tag.in_transit", "#e3dccb", "#4a4336"),
+    "Scheduled": ("pos.receive.tag.scheduled", "#e3dccb", "#4a4336"),
+    "Delivered": ("pos.receive.tag.delivered", "#dfe6d3", "#3d472b"),
 }
 
 
@@ -96,15 +98,15 @@ class _ShipmentCard(QPushButton):
         number.setStyleSheet(f"font-weight: 700; font-size: 17px; color: {p['text_primary']};")
         top.addWidget(number)
         top.addStretch(1)
-        text, bg, fg = _TAGS.get(live_status(shipment), _TAGS["Scheduled"])
-        self.tag = QLabel(text)
+        text_key, bg, fg = _TAGS.get(live_status(shipment), _TAGS["Scheduled"])
+        self.tag = QLabel(tr(text_key))
         self.tag.setStyleSheet(
             f"background-color: {bg}; color: {fg}; border-radius: 12px; padding: 4px 10px; font-size: 13px; font-weight: 700;"
         )
         top.addWidget(self.tag)
         layout.addLayout(top)
         origin = QLabel(shipment.origin)
-        eta = QLabel(f"{eta_text(shipment)} · {len(shipment.lines)} lines")
+        eta = QLabel(tr("pos.receive.card_lines").format(eta=eta_text(shipment), n=len(shipment.lines)))
         for label in (origin, eta):
             label.setStyleSheet(f"font-size: 15px; color: {p['text_secondary']};")
             layout.addWidget(label)
@@ -143,7 +145,7 @@ class ReceivePage(QWidget):
 
         left = QVBoxLayout()
         left.setSpacing(12)
-        heading = QLabel("Incoming")
+        heading = QLabel(tr("pos.receive.incoming"))
         heading.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 34px; color: {p['text_primary']};")
         left.addWidget(heading)
         self._scope_note = QLabel()
@@ -216,9 +218,9 @@ class ReceivePage(QWidget):
         pill_layout = QHBoxLayout(pill)
         pill_layout.setContentsMargins(6, 6, 6, 6)
         pill_layout.setSpacing(6)
-        self._accept_button = QPushButton("✓  Accept All")
+        self._accept_button = QPushButton("✓  " + tr("pos.receive.accept_all"))
         self._accept_button.clicked.connect(self._accept_all)
-        self._report_button = QPushButton("⚠  Report Discrepancy")
+        self._report_button = QPushButton("⚠  " + tr("pos.receive.report"))
         self._report_button.clicked.connect(self._toggle_report)
         for button in (self._accept_button, self._report_button):
             button.setCursor(Qt.PointingHandCursor)
@@ -229,9 +231,9 @@ class ReceivePage(QWidget):
 
         columns = QHBoxLayout()
         columns.setContentsMargins(28, 0, 40, 10)
-        for text, width, align in (("", 64, Qt.AlignLeft), ("Product", 0, Qt.AlignLeft),
-                                   ("Expected", 110, Qt.AlignRight), ("Received", 190, Qt.AlignRight)):
-            label = QLabel(text.upper())
+        for column, width, align in (("", 64, Qt.AlignLeft), ("product", 0, Qt.AlignLeft),
+                                     ("expected", 110, Qt.AlignRight), ("received", 190, Qt.AlignRight)):
+            label = QLabel(upper(tr(f"pos.receive.col_{column}")) if column else "")
             label.setStyleSheet(f"font-size: 13px; font-weight: 700; letter-spacing: 1px; color: {p['text_secondary']};")
             label.setAlignment(align)
             if width:
@@ -256,7 +258,7 @@ class ReceivePage(QWidget):
         layout.addWidget(rows_scroll, stretch=1)
 
         self._note_input = QLineEdit()
-        self._note_input.setPlaceholderText("What happened? (optional - the warehouse sees this)")
+        self._note_input.setPlaceholderText(tr("pos.receive.note_placeholder"))
         self._note_input.setStyleSheet(
             f"background-color: {p['background']}; color: {p['text_primary']}; border: none; border-radius: 20px; "
             f"padding: 10px 16px; font-size: 15px; margin: 8px 28px;"
@@ -315,11 +317,9 @@ class ReceivePage(QWidget):
         if self._selected_id not in ids:
             self._selected_id = self._shipments[0].id if self._shipments else None
         if self._code is None:
-            self._scope_note.setText(
-                "This terminal isn't linked to a dealership (no setup file), so every incoming shipment is listed."
-            )
+            self._scope_note.setText(tr("pos.receive.scope_unlinked"))
         else:
-            self._scope_note.setText(f"Shipments to {self._dealer_name or self._code}")
+            self._scope_note.setText(tr("pos.receive.scope_linked").format(name=self._dealer_name or self._code))
         self._render()
         self.incoming_changed.emit()
 
@@ -396,13 +396,13 @@ class ReceivePage(QWidget):
         try:
             done = shipment_repository.complete_receipt(shipment.id, received, note, actor=current_session.actor())
         except (ValueError, *DATABASE_ERRORS) as exc:
-            self._message.setText(f"Couldn't complete: {exc}")
+            self._message.setText(tr("pos.receive.failed").format(error=exc))
             self.reload()
             return
         self._note_input.clear()
         issues = len(done.discrepancies)
         self._message.setText(
-            f"{done.number} received · report sent to the warehouse" if issues else f"{done.number} received into stock"
+            tr("pos.receive.done_report" if issues else "pos.receive.done").format(number=done.number)
         )
         self.reload()
         self.stock_changed.emit()  # every receipt fills this shelf
@@ -443,8 +443,8 @@ class ReceivePage(QWidget):
         shipment = self.selected()
         if shipment is None:
             self._from_label.setText("")
-            name = self._dealer_name or "this dealership"
-            self._title_label.setText(f"Nothing on its way to {name}")
+            name = self._dealer_name or tr("pos.receive.this_dealership")
+            self._title_label.setText(tr("pos.receive.nothing_coming").format(name=name))
             self._count_label.setText("")
             for widget in (self._accept_button, self._report_button, self._complete_button, self._note_input):
                 widget.hide()
@@ -460,9 +460,9 @@ class ReceivePage(QWidget):
             and self._checked.get(shipment.id) == {l.product_barcode for l in shipment.lines}
             and all(self._received_for(shipment, l.product_barcode) == l.expected_qty for l in shipment.lines)
         )
-        self._from_label.setText(f"{shipment.origin}" + (f" · Driver {shipment.driver}" if shipment.driver else "") +
+        self._from_label.setText(f"{shipment.origin}" + (" · " + tr("pos.receive.driver").format(driver=shipment.driver) if shipment.driver else "") +
                                  f" · {shipment.carrier}")
-        self._title_label.setText(f"Shipment {shipment.number}")
+        self._title_label.setText(tr("pos.receive.shipment").format(number=shipment.number))
         self._accept_button.setStyleSheet(self._pill_style(accepted, p["accent_2"], "white", "#3d472b"))
         self._report_button.setStyleSheet(self._pill_style(report, _YELLOW, "#3a2a05", "#8a5a00"))
         self._accept_button.setEnabled(not delivered and not waiting)
@@ -474,15 +474,16 @@ class ReceivePage(QWidget):
 
         checked = sum(1 for l in shipment.lines if self._is_checked(shipment, l.product_barcode))
         issues = sum(1 for l in shipment.lines if self._received_for(shipment, l.product_barcode) != l.expected_qty)
-        issue_note = f" · {issues} discrepanc{'ies' if issues != 1 else 'y'}" if issues else ""
+        issue_note = f" · {plural('pos.receive.discrepancy', issues)}" if issues else ""
         self._count_label.setText(
-            f"<b>{checked} of {len(shipment.lines)}</b> checked<span style='color:{_RED_TEXT};font-weight:700'>{issue_note}</span>"
+            tr("pos.receive.checked").format(checked=checked, total=len(shipment.lines))
+            + f"<span style='color:{_RED_TEXT};font-weight:700'>{issue_note}</span>"
         )
         ready = self._can_receive(shipment) and checked == len(shipment.lines)
         self._complete_button.setText(  # "&&": a lone "&" is a keyboard-mnemonic marker
-            "Receipt completed" if delivered
+            tr("pos.receive.completed") if delivered
             else tr_or("pos.receive_waiting", "Not dispatched yet") if waiting
-            else ("Send report && receive" if issues else "Complete receipt")
+            else (tr("pos.receive.send_report") if issues else tr("pos.receive.complete"))
         )
         self._complete_button.setEnabled(ready)
         self._complete_button.setStyleSheet(

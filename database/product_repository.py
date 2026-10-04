@@ -32,6 +32,7 @@ from database.exceptions import (
 )
 from database.stock_repository import level_in, log_movement
 from shared.costing import clean_cost
+from shared.currency import format_money
 from shared.models import UNASSIGNED, Product, StockLocation
 from shared.warehousing import clean_price, normalise_barcode, whole_number
 
@@ -326,7 +327,7 @@ def cart_issues(lines: list[tuple[str, float, int]], current: dict[str, Product 
                                     f"{name} is no longer sold - it was removed or deactivated."))
         elif round(float(now.price), 2) != round(float(price), 2):
             issues.append(CartIssue("price", barcode, now.name, price, float(now.price), now.stock_quantity,
-                                    f"The price of {now.name} changed from ${price:,.2f} to ${now.price:,.2f}."))
+                                    f"The price of {now.name} changed from {format_money(price, '$')} to {format_money(now.price, '$')}."))
         elif wanted[barcode] > now.stock_quantity:
             issues.append(CartIssue("stock", barcode, now.name, price, float(now.price), now.stock_quantity,
                                     f"Only {now.stock_quantity} of {now.name} left on this shelf."))

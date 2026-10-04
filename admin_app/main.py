@@ -14,7 +14,7 @@ from shared.dealership_bootstrap import register_sidecars_beside_this_exe
 from shared.warehouse_bootstrap import register_warehouse_sidecars_beside_this_exe
 from database import settings_repository
 from database.exceptions import DataAccessError
-from shared import i18n
+from shared import currency, i18n
 from shared.theme import apply_theme
 
 
@@ -33,6 +33,7 @@ def main() -> int:
     app.setStyleSheet(app.styleSheet() + admin_extra_qss(CLASSICAL_PALETTE))
     install_dialog_fade(app)
     i18n.set_language(settings_repository.safe_language())
+    currency.set_currency(settings_repository.safe_currency())
     # Nobody sees Admin without signing in (see admin_app/gui/auth_flow.py):
     # the first administrator is created here on a fresh system.
     try:

@@ -8,6 +8,7 @@ from __future__ import annotations
 from database import account_repository, dealership_repository
 from database.exceptions import DATABASE_ERRORS, DealershipInactiveError, DealershipNotFoundError
 from shared import auth
+from shared.i18n import tr
 from shared.gui_kit.sign_in_dialog import SignInDialog
 from pos_app.theme import ORGANIC_PALETTE
 
@@ -48,21 +49,21 @@ def _authenticate_at_till(dealership_code: str | None, badge: str, pin: str):
 
 
 def till_sign_in_dialog(dealership_code: str | None, dealership_name: str, parent=None,
-                        cancel_text: str = "Close till") -> SignInDialog:
-    subtitle = f"{dealership_name} · sign in with your badge and PIN to open the till."
+                        cancel_text: str | None = None) -> SignInDialog:
+    subtitle = tr("pos.auth.subtitle").format(name=dealership_name)
     try:
         if not account_repository.list_accounts():
-            subtitle += " No accounts exist yet - an administrator adds them in Admin > Settings."
+            subtitle += " " + tr("pos.auth.no_accounts")
     except Exception:
         pass
     closed = till_dealership_problem(dealership_code)
     if closed:
         subtitle += " " + closed
     return SignInDialog(
-        "Who's on the till?",
+        tr("pos.auth.title"),
         subtitle,
         lambda badge, pin: _authenticate_at_till(dealership_code, badge, pin),
         palette=ORGANIC_PALETTE,
-        cancel_text=cancel_text,
+        cancel_text=cancel_text or tr("pos.auth.close_till"),
         parent=parent,
     )

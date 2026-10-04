@@ -63,7 +63,8 @@ from database import (
 )
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics, overview
-from shared.formatting import format_amount, format_int, local_time_text, month_abbr
+from shared.formatting import format_int, local_time_text, month_abbr
+from shared.currency import format_money
 
 _FILTER_KEYS = (
     (overview.FILTER_ALL, "all"),
@@ -236,7 +237,7 @@ class OverviewPage(AdminPage):
         revenue = analytics.revenue_between(sales, period.start, period.end)
         _, _, change = analytics.period_comparison(period, sales, previous)
         direction = analytics.change_direction(change)  # decided on the rounded figure; 0 = neutral
-        self._revenue_card.set_value(format_amount(revenue))
+        self._revenue_card.set_value(format_money(revenue))
         self._revenue_card.set_trend(
             analytics.change_text(change) if change is not None else "",
             None if not direction else direction > 0,
@@ -252,7 +253,7 @@ class OverviewPage(AdminPage):
         # were sold, and says how much of the revenue that leaves out.
         profit = analytics.profit_between(sales, period.start, period.end)
         if profit.has_profit:
-            footer.addWidget(stat_breakdown_item(tr("admin.overview.gross_profit"), format_amount(profit.profit)))
+            footer.addWidget(stat_breakdown_item(tr("admin.overview.gross_profit"), format_money(profit.profit)))
             footer.addWidget(stat_breakdown_item(tr("admin.overview.margin"), analytics.margin_display(profit.margin)))
         if profit.revenue_cents > 0 and profit.unknown_revenue_cents > 0:
             footer.addWidget(stat_breakdown_item(

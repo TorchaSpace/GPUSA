@@ -22,7 +22,8 @@ from PySide6.QtGui import QColor
 from PySide6.QtWidgets import QAbstractItemView, QHeaderView, QTableView
 
 from shared.costing import unit_margin_percent
-from shared.formatting import format_amount, format_number
+from shared.formatting import format_number
+from shared.currency import format_money
 from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.models import Product
@@ -45,9 +46,9 @@ def status_for(product: Product) -> tuple[str, str]:
     return enum_label("stock_status", "In stock"), p["alert_success"]
 
 
-def cost_text(product: Product) -> str:
+def cost_text(product: Product, legacy: str = "") -> str:
     """The unit cost, or "—" while it isn't known (0 = not set)."""
-    return format_amount(product.cost_price) if product.cost_price > 0 else "—"
+    return format_money(product.cost_price, legacy) if product.cost_price > 0 else "—"
 
 
 def margin_text(product: Product) -> str:

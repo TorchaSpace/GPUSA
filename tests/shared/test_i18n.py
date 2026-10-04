@@ -302,3 +302,41 @@ def test_repository_validation_messages_are_translated_but_english_by_default(tu
 def test_every_depot_text_has_a_turkish_translation():
     missing = [key for key in EN if key.startswith("depot.") and key not in TR_TABLE]
     assert not missing, missing[:20]
+
+
+# --- POS app ---------------------------------------------------------------------
+
+
+def test_every_pos_text_has_a_turkish_translation_with_the_same_placeholders():
+    from shared.i18n_pos import EN_POS, TR_POS
+
+    assert set(EN_POS) == set(TR_POS)
+    for key, text in EN_POS.items():
+        assert EN[key] == text and TR_TABLE[key] == TR_POS[key], key
+        assert sorted(re.findall(r"\{\w+\}", TR_POS[key])) == sorted(re.findall(r"\{\w+\}", text)), key
+    assert all(k in TR_TABLE for k in EN if k.startswith("pos."))
+
+
+def test_pos_screens_read_turkish_at_render_time(turkish):
+    from shared.i18n import plural, tr
+
+    assert tr("pos.nav.sale") == "Yeni satış" and tr("pos.nav.stock") == "Stoğum"
+    assert tr("pos.sale.cash") == "Nakit" and tr("pos.sale.card") == "Kart"
+    assert plural("pos.sale.items", 3) == "3 ürün"
+    assert tr("pos.home.badge_arriving").format(n=2) == "2 yolda"
+    i18n.set_language("en")
+    assert plural("pos.sale.items", 1) == "1 item" and plural("pos.sale.items", 0) == "0 items"
+    assert plural("pos.receive.discrepancy", 2) == "2 discrepancies"
+
+
+def test_depot_parts_are_imported_statically():
+    """A packaged build only bundles modules named in an import statement; a
+    dynamic importlib lookup once left the installed Depot with raw keys."""
+    import ast
+    import pathlib
+
+    tree = ast.parse(pathlib.Path("shared/i18n_depot.py").read_text(encoding="utf-8"))
+    imported = {alias.name for node in ast.walk(tree) if isinstance(node, ast.ImportFrom) for alias in node.names}
+    parts = {p.stem for p in pathlib.Path("shared").glob("i18n_depot_*.py")}
+    assert parts <= imported
+    assert "importlib" not in {a.name for n in ast.walk(tree) if isinstance(n, ast.Import) for a in n.names}

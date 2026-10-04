@@ -50,6 +50,24 @@ def save_store_profile(profile: ss.StoreProfile) -> None:
     set_many(ss.profile_to_values(profile))
 
 
+def save_general(profile: ss.StoreProfile, language: str, currency: str | None = None) -> None:
+    """Store profile, interface language and (optionally) currency in ONE transaction.
+    Raises ValueError for an unknown language or currency code."""
+    from shared.currency import CODES
+
+    if currency is not None and currency not in CODES:
+        raise ValueError(f"Unknown currency {currency!r}")
+    code = (language or "").strip().lower()
+    known = [known_code for known_code, _name in i18n.available_languages()]
+    if code not in known:
+        raise ValueError(f"Unknown language {language!r}")
+    values = ss.profile_to_values(profile)
+    values[ss.KEY_LANGUAGE] = code
+    if currency is not None:
+        values[ss.KEY_CURRENCY] = currency
+    set_many(values)
+
+
 def save_profile_and_language(profile: ss.StoreProfile, language: str) -> None:
     """Store profile and interface language together, in ONE transaction -
     either both are saved or neither. Raises ValueError for an unknown
@@ -93,6 +111,22 @@ def safe_language() -> str:
         return ss.language_from(get_all())
     except (DataAccessError, sqlite3.Error):
         return ss.DEFAULT_LANGUAGE
+
+
+def safe_currency() -> str | None:
+    """The saved currency code; None if never chosen or unreadable."""
+    try:
+        return ss.currency_from(get_all())
+    except (DataAccessError, sqlite3.Error):
+        return None
+
+
+def save_currency(code: str) -> None:
+    from shared.currency import CODES
+
+    if code not in CODES:
+        raise ValueError(f"Unknown currency {code!r}")
+    set_many({ss.KEY_CURRENCY: code})
 
 
 def save_language(code: str) -> None:

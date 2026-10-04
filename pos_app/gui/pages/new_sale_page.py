@@ -59,10 +59,14 @@ from pos_app.gui.components.action_button import ActionButton
 from pos_app.gui.product_status import stock_status
 from pos_app.services.checkout_service import complete_sale
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
+from shared.currency import format_money
+from shared.i18n import plural, tr
 from shared.models import UNASSIGNED, LineItem, Product, StockLocation, Transaction
 from shared import current_session
+from shared.textcase import upper
 from shared.warehousing import tr_or
 
+_PAYMENT_KEYS = {"Card": "pos.sale.card", "Cash": "pos.sale.cash"}  # payment code -> label key
 _STATUS_COLORS = {"out": ("#d8412f", "white"), "low": ("#f2c230", "#3a2a05")}
 
 
@@ -111,7 +115,7 @@ class NewSalePage(QWidget):
         search_layout.setContentsMargins(22, 0, 22, 0)
         search_row.setFixedHeight(60)
         self._search_input = QLineEdit()
-        self._search_input.setPlaceholderText("Search products or scan barcode")
+        self._search_input.setPlaceholderText(tr("pos.sale.search_placeholder"))
         self._search_input.setStyleSheet(
             f"border: none; background: transparent; font-family: {p['font_family_css']}; font-size: 19px; color: {p['text_primary']};"
         )
@@ -183,7 +187,7 @@ class NewSalePage(QWidget):
         layout.setSpacing(10)
 
         top_row = QHBoxLayout()
-        initial = QLabel(product.name[:1].upper())
+        initial = QLabel(upper(product.name[:1]))
         initial.setFixedSize(56, 56)
         initial.setAlignment(Qt.AlignCenter)
         initial.setStyleSheet(
@@ -194,7 +198,7 @@ class NewSalePage(QWidget):
         top_row.addStretch(1)
 
         badge_bg, badge_fg = _STATUS_COLORS.get(status, ("#eee7db", p["text_secondary"]))
-        badge_text = "Out" if status == "out" else f"{product.stock_quantity} left"
+        badge_text = tr("pos.sale.tile_out") if status == "out" else tr("pos.sale.tile_left").format(n=product.stock_quantity)
         badge = QLabel(badge_text)
         badge.setStyleSheet(
             f"background-color: {badge_bg}; color: {badge_fg}; border-radius: 999px; "
@@ -209,7 +213,7 @@ class NewSalePage(QWidget):
         layout.addWidget(name_label)
         layout.addStretch(1)
 
-        price_label = QLabel(f"${product.price:,.2f}")
+        price_label = QLabel(format_money(product.price, "$"))
         price_label.setStyleSheet(f"font-weight: 700; font-size: 19px; color: {p['text_primary']};")
         layout.addWidget(price_label)
 
@@ -228,11 +232,11 @@ class NewSalePage(QWidget):
 
         header = QHBoxLayout()
         header.setContentsMargins(24, 22, 24, 12)
-        title = QLabel("Current sale")
+        title = QLabel(tr("pos.sale.current_sale"))
         title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 28px; color: {p['text_primary']};")
         header.addWidget(title)
         header.addStretch(1)
-        clear_button = QPushButton("Clear")
+        clear_button = QPushButton(tr("pos.sale.clear"))
         clear_button.setCursor(Qt.PointingHandCursor)
         clear_button.setStyleSheet(f"border: none; background: none; font-weight: 600; font-size: 15px; color: #b2622d;")
         clear_button.clicked.connect(self._clear_cart)
@@ -268,14 +272,14 @@ class NewSalePage(QWidget):
         footer_layout.setContentsMargins(24, 18, 24, 24)
         footer_layout.setSpacing(14)
 
-        self._item_count_label = QLabel("0 items")
+        self._item_count_label = QLabel(plural("pos.sale.items", 0))
         self._item_count_label.setStyleSheet(f"font-size: 15px; color: {p['text_secondary']};")
         footer_layout.addWidget(self._item_count_label)
 
         total_row = QHBoxLayout()
-        total_caption = QLabel("Total")
+        total_caption = QLabel(tr("common.total"))
         total_caption.setStyleSheet(f"font-size: 18px; font-weight: 600; color: {p['text_primary']};")
-        self._total_label = QLabel("$0.00")
+        self._total_label = QLabel(format_money(0, "$"))
         self._total_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: {p['text_primary']};")
         total_row.addWidget(total_caption)
         total_row.addStretch(1)
@@ -283,9 +287,9 @@ class NewSalePage(QWidget):
         footer_layout.addLayout(total_row)
 
         buttons_row = QHBoxLayout()
-        card_button = ActionButton("Card", variant="accent")
+        card_button = ActionButton(tr("pos.sale.card"), variant="accent")
         card_button.clicked.connect(lambda: self._checkout("Card"))
-        cash_button = ActionButton("Cash", variant="dark")
+        cash_button = ActionButton(tr("pos.sale.cash"), variant="dark")
         cash_button.clicked.connect(lambda: self._checkout("Cash"))
         buttons_row.addWidget(card_button)
         buttons_row.addWidget(cash_button)
@@ -302,7 +306,7 @@ class NewSalePage(QWidget):
 
         p = ORGANIC_PALETTE
         if not self._cart:
-            empty = QLabel("Tap a product to add it")
+            empty = QLabel(tr("pos.sale.tap_to_add"))
             empty.setAlignment(Qt.AlignCenter)
             empty.setStyleSheet(
                 f"background-color: {p['surface']}; color: {p['text_secondary']}; "
@@ -315,8 +319,8 @@ class NewSalePage(QWidget):
 
         item_count = sum(line.quantity for line in self._cart.values())
         total = round(sum(line.line_total for line in self._cart.values()), 2)
-        self._item_count_label.setText(f"{item_count} item{'s' if item_count != 1 else ''}")
-        self._total_label.setText(f"${total:,.2f}")
+        self._item_count_label.setText(plural("pos.sale.items", item_count))
+        self._total_label.setText(format_money(total, "$"))
 
     def _build_cart_row(self, line: _CartLine) -> QWidget:
         p = ORGANIC_PALETTE
@@ -329,7 +333,7 @@ class NewSalePage(QWidget):
         names.setSpacing(0)
         name_label = QLabel(line.name)
         name_label.setStyleSheet(f"font-weight: 700; font-size: 16px; color: {p['text_primary']};")
-        unit_label = QLabel(f"${line.unit_price:,.2f} each")
+        unit_label = QLabel(tr("pos.sale.each").format(price=format_money(line.unit_price, "$")))
         unit_label.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
         names.addWidget(name_label)
         names.addWidget(unit_label)
@@ -362,7 +366,7 @@ class NewSalePage(QWidget):
         stepper_widget.setStyleSheet(f"background-color: {p['surface']}; border-radius: 999px;")
         layout.addWidget(stepper_widget)
 
-        line_total_label = QLabel(f"${line.line_total:,.2f}")
+        line_total_label = QLabel(format_money(line.line_total, "$"))
         line_total_label.setFixedWidth(70)
         line_total_label.setAlignment(Qt.AlignRight)
         line_total_label.setStyleSheet(f"font-weight: 700; font-size: 16px; color: {p['text_primary']};")
@@ -493,7 +497,7 @@ class NewSalePage(QWidget):
 
     def _checkout(self, payment_label: str) -> None:
         if not self._cart:
-            QMessageBox.information(self, "Cart is empty", "Add a product before completing a sale.")
+            QMessageBox.information(self, tr("pos.cart_empty"), tr("pos.sale.empty_body"))
             return
 
         # Re-read prices and availability NOW: the till may have been open for a while, and an admin
@@ -501,7 +505,7 @@ class NewSalePage(QWidget):
         try:
             issues = product_repository.check_cart(self._location, self._cart_triples())
         except DATABASE_ERRORS as exc:
-            QMessageBox.warning(self, "Sale failed", str(exc))
+            QMessageBox.warning(self, tr("pos.sale.failed_title"), str(exc))
             return
         if issues:
             self._apply_issues(issues)
@@ -555,7 +559,7 @@ class NewSalePage(QWidget):
             QMessageBox.warning(self, tr_or("pos.till_off_title", "Till switched off"), str(exc))
             return
         except DATABASE_ERRORS as exc:
-            QMessageBox.warning(self, "Sale failed", str(exc))
+            QMessageBox.warning(self, tr("pos.sale.failed_title"), str(exc))
             return
 
         self._cart.clear()
@@ -563,6 +567,10 @@ class NewSalePage(QWidget):
         self.reload()
         QMessageBox.information(
             self,
-            "Sale complete",
-            f"{payment_label} sale #{finalized.id} - total ${finalized.total:,.2f}",
+            tr("pos.sale.complete_title"),
+            tr("pos.sale.complete_body").format(
+                payment=tr(_PAYMENT_KEYS[payment_label]) if payment_label in _PAYMENT_KEYS else payment_label,
+                id=finalized.id,
+                total=format_money(finalized.total, "$"),
+            ),
         )

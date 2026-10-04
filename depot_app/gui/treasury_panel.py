@@ -51,7 +51,7 @@ from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.ledger_entry_dialog import LedgerEntryDialog, depot_type_label
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared import current_session
-from shared.formatting import format_amount
+from shared.currency import format_money
 from shared.i18n import UserError, enum_label, tr
 from shared.models import LedgerEntry
 from shared.textcase import upper
@@ -73,13 +73,13 @@ def _short_date(value: date) -> str:
 
 
 def signed_text(entry: LedgerEntry) -> str:
-    return ("+" if entry.direction == "in" else "−") + format_amount(entry.amount)
+    return ("+" if entry.direction == "in" else "−") + format_money(entry.amount)
 
 
 def signed_net_text(net: float) -> str:
     """A signed position: "+1,200.00", "−30.00", "0.00" - the sign is the
     direction, the number is never abs() of a mixed-sign sum."""
-    return ("+" if net > 0 else "−" if net < 0 else "") + format_amount(abs(net))
+    return ("+" if net > 0 else "−" if net < 0 else "") + format_money(abs(net))
 
 
 def type_caption(doc_type: str, entries: list[LedgerEntry]) -> str:
@@ -111,10 +111,10 @@ def cell_total_text(entries: list[LedgerEntry], today: date) -> str:
     summary = summarize(entries, today)
     parts = []
     if summary.receivables_total:
-        parts.append(f"+{format_amount(summary.receivables_total)}")
+        parts.append(f"+{format_money(summary.receivables_total)}")
     if summary.payables_total:
-        parts.append(f"−{format_amount(summary.payables_total)}")
-    return " / ".join(parts) or format_amount(0)
+        parts.append(f"−{format_money(summary.payables_total)}")
+    return " / ".join(parts) or format_money(0)
 
 
 class _TypeCell(QPushButton):

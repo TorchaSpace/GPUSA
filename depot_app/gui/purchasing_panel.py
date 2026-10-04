@@ -71,7 +71,8 @@ from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.components.receive_delivery_dialog import ReceiveDeliveryDialog
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
-from shared.formatting import format_amount, format_int, local_datetime_text, local_time_text, parse_amount, round_money
+from shared.formatting import format_int, local_datetime_text, local_time_text, parse_amount, round_money
+from shared.currency import format_money
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
@@ -221,7 +222,7 @@ class PriceBandBar(QWidget):
             marker_pen.setWidth(2)
             painter.setPen(marker_pen)
             painter.drawLine(QPointF(mx, track.top() - 6), QPointF(mx, track.bottom() + 8))
-            text = format_amount(self._price)
+            text = format_money(self._price)
             font = QFont(self.font())
             font.setBold(True)
             painter.setFont(font)
@@ -650,11 +651,11 @@ class PurchasingPanel(QWidget):
         price = self._typed_price()
         quantity = self._typed_quantity()
 
-        self._total_label.setText(format_amount(_order_total(price or 0, quantity or 0)))
-        self._band_min.setText(format_amount(price_range.min_unit_price) if price_range else "—")
-        self._band_max.setText(format_amount(price_range.max_unit_price) if price_range else "—")
+        self._total_label.setText(format_money(_order_total(price or 0, quantity or 0)))
+        self._band_min.setText(format_money(price_range.min_unit_price) if price_range else "—")
+        self._band_max.setText(format_money(price_range.max_unit_price) if price_range else "—")
         self._band_bar.set_state(price_range, price)
-        self._scale_label.setText(format_amount(self._band_bar.scale_max()) if price_range else "")
+        self._scale_label.setText(format_money(self._band_bar.scale_max()) if price_range else "")
 
         has_product = self._selected_barcode() is not None
         reason = hold_reason_for(price_range, price) if (price and price > 0) else None
@@ -677,15 +678,15 @@ class PurchasingPanel(QWidget):
             self._set_verdict(
                 tr("depot.purchasing.v_above_title"),
                 tr("depot.purchasing.v_above").format(
-                    price=format_amount(price), over=format_amount(over), pct=pct,
-                    ceiling=format_amount(price_range.max_unit_price)),
+                    price=format_money(price), over=format_money(over), pct=pct,
+                    ceiling=format_money(price_range.max_unit_price)),
                 warning=True,
             )
         elif reason == "below_range":
             self._set_verdict(
                 tr("depot.purchasing.v_below_title"),
                 tr("depot.purchasing.v_below").format(
-                    price=format_amount(price), floor=format_amount(price_range.min_unit_price)),
+                    price=format_money(price), floor=format_money(price_range.min_unit_price)),
                 warning=True,
             )
         elif reason == "no_range":
@@ -776,16 +777,16 @@ class PurchasingPanel(QWidget):
             self._sent_banner.hide()
             self._awaiting_number.setText(order.number)
             band = (
-                f"{format_amount(order.range_min)} – {format_amount(order.range_max)}"
+                f"{format_money(order.range_min)} – {format_money(order.range_max)}"
                 if order.range_min is not None
                 else tr("depot.purchasing.band_not_set")
             )
             self._awaiting_values["Item"].setText(
                 tr("depot.purchasing.awaiting_item").format(sku=order.product_barcode, quantity=order.quantity)
             )
-            self._awaiting_values["Unit price"].setText(format_amount(order.unit_price))
+            self._awaiting_values["Unit price"].setText(format_money(order.unit_price))
             self._awaiting_values["Safe band"].setText(band)
-            self._awaiting_values["Order total"].setText(format_amount(order.total))
+            self._awaiting_values["Order total"].setText(format_money(order.total))
             self._awaiting_message.setText(
                 tr("depot.purchasing.awaiting_msg").format(
                     supplier=order.supplier, time=local_time_text(order.created_at))
@@ -824,7 +825,7 @@ class PurchasingPanel(QWidget):
             self._set_notice(
                 tr("depot.purchasing.banner_sent").format(
                     number=html.escape(order.number), approved=approved, quantity=order.quantity,
-                    sku=html.escape(order.product_barcode), price=format_amount(order.unit_price),
+                    sku=html.escape(order.product_barcode), price=format_money(order.unit_price),
                     supplier=html.escape(order.supplier)),
                 positive=True,
             )
@@ -876,8 +877,8 @@ class PurchasingPanel(QWidget):
                 f"{order.product_barcode} · {order.product_name}",
                 order.supplier,
                 str(order.quantity),
-                format_amount(order.unit_price),
-                format_amount(order.total),
+                format_money(order.unit_price),
+                format_money(order.total),
                 status_text(order),
                 order.decision_note or "",
             ]

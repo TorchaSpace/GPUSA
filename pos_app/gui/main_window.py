@@ -40,8 +40,8 @@ from shared.i18n import tr
 from shared.models import UNASSIGNED, StockLocation
 
 DEALERSHIP_NAME = "GPUSA"
-LOCATION_LINE = "Main Floor · Register 01"
-CASHIER_NAME = "Cashier"
+LOCATION_LINE = "Main Floor · Register 01"  # English reference; the window shows tr("pos.main.location_line")
+CASHIER_NAME = "Cashier"  # English reference; the window shows tr("pos.main.cashier")
 
 
 class MainWindow(QMainWindow):
@@ -60,17 +60,17 @@ class MainWindow(QMainWindow):
 
         identity = load_dealership_identity()
         dealership_name = identity["name"] if identity else DEALERSHIP_NAME
-        location_line = identity["location_line"] if identity else LOCATION_LINE
+        location_line = identity["location_line"] if identity else tr("pos.main.location_line")
 
         self._dealership_name = dealership_name
-        self._header = PosHeader(dealership_name, location_line, session.name if session else CASHIER_NAME)
+        self._header = PosHeader(dealership_name, location_line, session.name if session else tr("pos.main.cashier"))
         self._header.switch_cashier.connect(self.switch_cashier)
         layout.addWidget(self._header)
 
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
 
-        cashier_first_name = session.first_name if session else CASHIER_NAME.split()[0]
+        cashier_first_name = session.first_name if session else tr("pos.main.cashier").split()[0]
         # The dealership this terminal was set up as (None in a dev run /
         # a POS with no setup file) - scopes Receive Inventory and its badge.
         dealership_code = identity["code"] if identity else None

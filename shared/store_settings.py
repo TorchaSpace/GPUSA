@@ -22,6 +22,7 @@ KEY_LOW_STOCK_ALERTS = "alerts.low_stock"
 KEY_PENDING_BADGE = "alerts.pending_approvals"
 KEY_LANGUAGE = "ui.language"
 DEFAULT_LANGUAGE = "en"
+KEY_CURRENCY = "ui.currency"
 
 
 @dataclass(frozen=True)
@@ -92,3 +93,11 @@ def language_from(values: dict[str, str], known: list[str] | tuple[str, ...] = (
     """The saved interface language, or English when unset or unknown."""
     code = (values.get(KEY_LANGUAGE) or "").strip().lower()
     return code if code in known else DEFAULT_LANGUAGE
+
+
+def currency_from(values: dict[str, str]) -> str | None:
+    """The saved currency code, or None when none was ever chosen (or it is unknown)."""
+    from shared.currency import CODES
+
+    code = (values.get(KEY_CURRENCY) or "").strip().upper()
+    return code if code in CODES else None

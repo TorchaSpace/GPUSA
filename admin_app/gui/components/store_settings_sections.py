@@ -21,6 +21,7 @@ from admin_app.theme import CLASSICAL_PALETTE
 from database import connection, settings_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import i18n, paths
+from shared import currency
 from shared import store_settings as ss
 from shared.constants import DATABASE_FILENAME
 from shared.i18n import tr
@@ -66,8 +67,14 @@ class GeneralSection(Section):
         for code, name in i18n.available_languages():
             self._language_input.addItem(name, code)
         form.addRow(tr("settings.language"), self._language_input)
+        self._currency_input = QComboBox()
+        self._currency_input.addItem(tr("settings.currency_unset"), None)
+        for code, sym in currency.CURRENCIES:
+            self._currency_input.addItem(f"{sym}  {code}" if sym else tr("settings.currency_none"), code)
+        form.addRow(tr("settings.currency"), self._currency_input)
         form.addRow(_note(tr("settings.store_note")))
         form.addRow(_note(tr("settings.language_note")))
+        form.addRow(_note(tr("settings.currency_note")))
         self._error = QLabel("")
         self._error.setWordWrap(True)
         self._error.setStyleSheet(f"font-size: 12px; color: {CLASSICAL_PALETTE['alert_critical']};")
@@ -78,11 +85,14 @@ class GeneralSection(Section):
         save = CompactButton(tr("common.save"), variant="primary")
         save.clicked.connect(self.save)
         self.add_header_control(save)
-        self._baseline: tuple[str, str, object] = ("", "", None)
+        self._baseline: tuple = ("", "", None, None)
         self.reload()
 
-    def _current(self) -> tuple[str, str, object]:
-        return (self._name_input.text(), self._address_input.toPlainText(), self._language_input.currentData())
+    def _current(self) -> tuple:
+        return (
+            self._name_input.text(), self._address_input.toPlainText(), self._language_input.currentData(),
+            self._currency_input.currentData(),
+        )
 
     def is_dirty(self) -> bool:
         """True when the fields differ from what was last loaded or saved
@@ -95,6 +105,8 @@ class GeneralSection(Section):
         self._address_input.setPlainText("\n".join(profile.address_lines))
         index = self._language_input.findData(settings_repository.safe_language())
         self._language_input.setCurrentIndex(max(0, index))
+        saved_currency = settings_repository.safe_currency()
+        self._currency_input.setCurrentIndex(max(0, self._currency_input.findData(saved_currency)))
         self._error.setText("")
         self._status.setText("")
         self._baseline = self._current()
@@ -103,7 +115,9 @@ class GeneralSection(Section):
         try:
             profile = ss.validate_profile(self._name_input.text(), self._address_input.toPlainText())
             # Name, address and language in ONE transaction: all saved or none.
-            settings_repository.save_profile_and_language(profile, self._language_input.currentData())
+            settings_repository.save_general(
+                profile, self._language_input.currentData(), self._currency_input.currentData()
+            )
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._error.setText(str(exc))
             return False
@@ -113,7 +127,11 @@ class GeneralSection(Section):
         self._name_input.setText(profile.name)
         self._baseline = self._current()
         self.saved.emit()
-        if self._language_input.currentData() != i18n.current_language():
+        chosen_currency = self._currency_input.currentData()
+        currency_changed = chosen_currency is not None and chosen_currency != currency.current_currency()
+        if chosen_currency is not None:
+            currency.set_currency(chosen_currency)
+        if self._language_input.currentData() != i18n.current_language() or currency_changed:
             self._offer_restart()
         return True
 

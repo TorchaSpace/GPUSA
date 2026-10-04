@@ -71,7 +71,8 @@ from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import ledger_repository, purchase_order_repository
 from database.exceptions import DATABASE_ERRORS, LedgerEntryStateError
-from shared.formatting import format_amount, month_abbr
+from shared.formatting import month_abbr
+from shared.currency import format_money
 from shared.models import LedgerAuditRecord, LedgerEntry
 from shared.treasury import (
     compact_amount,
@@ -579,14 +580,14 @@ class TreasuryPage(AdminPage):
                 cell(entry.site or tr("admin.treasury.company")),
                 cell(long_date(entry.issue_date)),
                 cell(f"{long_date(entry.due_date)} · {due_relative_text(entry, today)}", color=due_color),
-                cell(format_amount(entry.amount), right=True),
+                cell(format_money(entry.amount), right=True),
                 cell(enum_label("ledger_display", status), color=_status_color(status)),
             ]
             for column, item in enumerate(values):
                 self._table.setItem(index, column, item)
         total = round(sum(e.amount for e in rows), 2)
         self._footer_label.setText(
-            tr("admin.treasury.footer").format(n=plural("admin.treasury.documents", len(rows)), total=format_amount(total))
+            tr("admin.treasury.footer").format(n=plural("admin.treasury.documents", len(rows)), total=format_money(total))
         )
         self._update_actions()
 

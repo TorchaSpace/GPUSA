@@ -29,14 +29,18 @@ from database import stock_repository
 from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.product_status import stock_status
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
+from shared.i18n import tr
 from shared.models import UNASSIGNED, Product, StockLocation
+from shared.textcase import upper
 from shared.warehousing import tr_or
 
+_FILTER_KEYS = {"All": "pos.stock.filter_all", "Low": "pos.stock.filter_low", "Out": "pos.stock.filter_out"}
+
 _STATUS_META = {
-    # status -> (dot color, badge bg, badge fg, badge text, qty color, bar color)
-    "out": ("#d8412f", "#d8412f", "white", "Out of stock", "#d8412f", "#d8412f"),
-    "low": ("#f2c230", "#f2c230", "#3a2a05", "Low stock", "#c67139", "#f2c230"),
-    "ok": ("#7a8a5e", "#e1eecc", "#3d472b", "In stock", None, "#7a8a5e"),
+    # status -> (dot color, badge bg, badge fg, badge text KEY - tr() at render time, qty color, bar color)
+    "out": ("#d8412f", "#d8412f", "white", "pos.stock.status_out", "#d8412f", "#d8412f"),
+    "low": ("#f2c230", "#f2c230", "#3a2a05", "pos.stock.status_low", "#c67139", "#f2c230"),
+    "ok": ("#7a8a5e", "#e1eecc", "#3d472b", "pos.stock.status_ok", None, "#7a8a5e"),
 }
 
 
@@ -89,7 +93,7 @@ class MyStockPage(QWidget):
         self._subtitle_label = QLabel()
         self._subtitle_label.setStyleSheet(f"font-size: 15px; color: {p['text_secondary']};")
         titles.addWidget(self._subtitle_label)
-        title = QLabel("My Local Stock")
+        title = QLabel(tr("pos.stock.title"))
         title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 400; font-size: 40px; color: {p['text_primary']};")
         titles.addWidget(title)
         titles_widget = QWidget()
@@ -122,10 +126,10 @@ class MyStockPage(QWidget):
         p = ORGANIC_PALETTE
         row = QHBoxLayout()
         row.setContentsMargins(20, 0, 20, 0)
-        for text, stretch in (("", 0), ("Product", 3), ("SKU", 1), ("On hand", 1), ("Level", 2), ("Status", 2)):
-            label = QLabel(text.upper())
+        for column, stretch in (("", 0), ("product", 3), ("sku", 1), ("on_hand", 1), ("level", 2), ("status", 2)):
+            label = QLabel(upper(tr(f"pos.stock.col_{column}")) if column else "")
             label.setStyleSheet(f"font-size: 13px; font-weight: 700; letter-spacing: 1px; color: {p['text_secondary']};")
-            if text == "On hand":
+            if column == "on_hand":
                 label.setAlignment(Qt.AlignRight)
             row.addWidget(label, stretch=stretch if stretch else 0, alignment=Qt.Alignment())
         container = QWidget()
@@ -146,7 +150,7 @@ class MyStockPage(QWidget):
         # "My stock" is what this shelf carries: products it holds or has held. The rest of the
         # catalogue isn't "out of stock" here - it was never stocked - and would swamp the Out count.
         self._all_products = [p for p in here if p.stocked_here or p.stock_quantity > 0]
-        self._subtitle_label.setText(f"counted {datetime.now().strftime('%H:%M')} today")
+        self._subtitle_label.setText(tr("pos.stock.counted").format(time=datetime.now().strftime("%H:%M")))
         self._render_filter_labels()
         self._render_rows()
 
@@ -162,7 +166,7 @@ class MyStockPage(QWidget):
 
         dots = {"All": p["accent_2"], "Low": "#f2c230", "Out": "#d8412f"}
         for key, button in self._filter_buttons.items():
-            button.setText(f"  {key}  {counts[key]}")
+            button.setText(f"  {tr(_FILTER_KEYS[key])}  {counts[key]}")
             button.setStyleSheet(
                 f"""
                 QPushButton {{
@@ -198,7 +202,7 @@ class MyStockPage(QWidget):
     def _build_row(self, product: Product) -> QWidget:
         p = ORGANIC_PALETTE
         status = stock_status(product)
-        dot_color, badge_bg, badge_fg, badge_text, qty_color, bar_color = _STATUS_META[status]
+        dot_color, badge_bg, badge_fg, badge_key, qty_color, bar_color = _STATUS_META[status]
 
         row = QWidget()
         row.setStyleSheet(f"background-color: {p['surface_raised']}; border-radius: 26px;")
@@ -206,7 +210,7 @@ class MyStockPage(QWidget):
         layout.setContentsMargins(20, 12, 20, 12)
         layout.setSpacing(16)
 
-        avatar = QLabel(product.name[:1].upper())
+        avatar = QLabel(upper(product.name[:1]))
         avatar.setFixedSize(52, 52)
         avatar.setAlignment(Qt.AlignCenter)
         avatar.setStyleSheet(f"background-color: {p['surface']}; border-radius: 26px; font-family: {FONT_HEADING_CSS}; font-size: 22px;")
@@ -216,7 +220,7 @@ class MyStockPage(QWidget):
         names.setSpacing(0)
         name_label = QLabel(product.name if product.is_active else f"{product.name} ({tr_or('admin.inactive_badge', 'inactive')})")
         name_label.setStyleSheet(f"font-weight: 700; font-size: 18px; color: {p['text_primary'] if product.is_active else p['text_secondary']};")
-        reorder_label = QLabel(f"reorder at {product.critical_stock_level}" if product.critical_stock_level else "no reorder level")
+        reorder_label = QLabel(tr("pos.stock.reorder_at").format(n=product.critical_stock_level) if product.critical_stock_level else tr("pos.stock.no_reorder"))
         reorder_label.setStyleSheet(f"font-size: 14px; color: {p['text_secondary']};")
         names.addWidget(name_label)
         names.addWidget(reorder_label)
@@ -247,7 +251,7 @@ class MyStockPage(QWidget):
         )
         layout.addWidget(bar_track, stretch=2)
 
-        badge = QLabel(badge_text)
+        badge = QLabel(tr(badge_key))
         badge.setAlignment(Qt.AlignCenter)
         badge.setStyleSheet(
             f"background-color: {badge_bg}; color: {badge_fg}; border-radius: 999px; "

@@ -51,7 +51,8 @@ from admin_app.gui.components.inventory_table import (
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
 from shared.costing import unit_margin_percent
-from shared.formatting import format_amount, format_int
+from shared.formatting import format_int
+from shared.currency import format_money
 from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import product_repository, stock_repository
@@ -277,10 +278,10 @@ class InventoryPage(AdminPage):
         self._detail_sku.setText(product.barcode)
 
         status_label, status_color = status_for(product)
-        self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.base_price"), f"${format_amount(product.price)}"))
+        self._detail_rows_container.addWidget(self._detail_row(tr("admin.inventory.base_price"), format_money(product.price, "$")))
         self._detail_rows_container.addWidget(self._detail_row(
             tr("admin.inventory.unit_cost"),
-            f"${cost_text(product)}" if product.cost_known else tr("admin.inventory.cost_unknown")))
+            cost_text(product, "$") if product.cost_known else tr("admin.inventory.cost_unknown")))
         self._detail_rows_container.addWidget(
             self._detail_row(tr("admin.inventory.margin"), margin_text(product), color=margin_color(product)))
         self._detail_rows_container.addWidget(
@@ -319,7 +320,7 @@ class InventoryPage(AdminPage):
         self._sku_count_label.setText(str(len(active)))
         self._units_label.setText(format_int(sum(p.stock_quantity for p in self._all_products)))
         self._value_label.setText(
-            f"${format_amount(sum(p.stock_quantity * p.price for p in self._all_products))}"
+            format_money(sum(p.stock_quantity * p.price for p in self._all_products), "$")
         )
 
     def _apply_filter(self) -> None:

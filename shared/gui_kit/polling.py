@@ -17,9 +17,15 @@ and not what to do with the result (that's the callback/signal handler).
 
 from __future__ import annotations
 
+import logging
+import sqlite3
 from typing import Callable
 
 from PySide6.QtCore import QObject, QTimer, Signal
+
+from database.exceptions import DataAccessError
+
+logger = logging.getLogger(__name__)
 
 
 class PollingTimer(QObject):
@@ -36,6 +42,7 @@ class PollingTimer(QObject):
     """
 
     result_ready = Signal(object)
+    poll_failed = Signal(str)  # a tick was skipped (database busy); the next one retries
 
     def __init__(self, callback: Callable[[], object], interval_ms: int, parent: QObject | None = None):
         super().__init__(parent)
@@ -55,9 +62,13 @@ class PollingTimer(QObject):
         self._timer.setInterval(interval_ms)
 
     def _tick(self) -> None:
-        # TODO (next slice): decide error handling - a transient DB lock
-        # (WAL busy_timeout exhausted under heavy contention) shouldn't
-        # crash the poller; likely swallow-and-retry-next-tick with a
-        # logged warning, once logging is wired up.
-        result = self._callback()
+        # A transient DB lock (WAL busy_timeout used up under heavy contention)
+        # must not crash the poller: keep the last result on screen, log it,
+        # and try again on the next tick.
+        try:
+            result = self._callback()
+        except (sqlite3.Error, DataAccessError) as error:
+            logger.warning("Polling skipped a tick: %s", error)
+            self.poll_failed.emit(str(error))
+            return
         self.result_ready.emit(result)

@@ -147,9 +147,9 @@ def test_saving_clears_the_dirty_flag(settings):
 
 def test_general_save_writes_profile_and_language_in_one_call(settings, monkeypatch):
     calls = []
-    real = settings_repository.save_profile_and_language
-    monkeypatch.setattr(settings_repository, "save_profile_and_language",
-                        lambda profile, language: (calls.append((profile.name, language)), real(profile, language))[1])
+    real = settings_repository.save_general
+    monkeypatch.setattr(settings_repository, "save_general",
+                        lambda profile, language, currency=None: (calls.append((profile.name, language)), real(profile, language, currency))[1])
     forbidden = lambda *a, **k: pytest.fail("profile and language must not be saved separately")  # noqa: E731
     monkeypatch.setattr(settings_repository, "save_store_profile", forbidden)
     monkeypatch.setattr(settings_repository, "save_language", forbidden)

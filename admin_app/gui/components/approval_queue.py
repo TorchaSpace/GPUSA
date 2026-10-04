@@ -31,7 +31,8 @@ from PySide6.QtWidgets import QFrame, QGridLayout, QHBoxLayout, QLabel, QPushBut
 from shared.i18n import tr
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
-from shared.formatting import age_text, format_amount
+from shared.formatting import age_text
+from shared.currency import format_money
 from shared.models import PurchaseOrder
 
 
@@ -50,7 +51,7 @@ def deviation_text(order: PurchaseOrder) -> str:
 def band_text(order: PurchaseOrder) -> str:
     if order.range_min is None or order.range_max is None:
         return tr("admin.purchase.band_unset")
-    return tr("admin.purchase.band_line").format(min=format_amount(order.range_min), max=format_amount(order.range_max))
+    return tr("admin.purchase.band_line").format(min=format_money(order.range_min), max=format_money(order.range_max))
 
 
 class _PrimaryButton(QPushButton):
@@ -102,7 +103,7 @@ class ApprovalCard(QFrame):
         item.setMinimumHeight(20)
         item.setStyleSheet(f"font-size: 14px; color: {p['text_primary']};")
         left.addWidget(item)
-        detail = QLabel(tr("admin.purchase.card_detail").format(unit=format_amount(order.unit_price), supplier=order.supplier))
+        detail = QLabel(tr("admin.purchase.card_detail").format(unit=format_money(order.unit_price), supplier=order.supplier))
         detail.setTextFormat(Qt.PlainText)
         detail.setWordWrap(True)
         detail.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")
@@ -111,7 +112,7 @@ class ApprovalCard(QFrame):
 
         right = QVBoxLayout()
         right.setSpacing(0)
-        amount = QLabel(format_amount(order.total))
+        amount = QLabel(format_money(order.total))
         amount.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
         band = QLabel(band_text(order))
         band.setStyleSheet(f"font-size: 11px; color: {p['text_secondary']};")

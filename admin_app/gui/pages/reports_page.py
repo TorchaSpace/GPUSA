@@ -60,7 +60,8 @@ from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import dealership_repository, sale_cost_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics
-from shared.formatting import day_month_text, format_amount, format_number
+from shared.formatting import day_month_text, format_number
+from shared.currency import format_money
 
 _SEGMENT_COLORS = [CLASSICAL_PALETTE["accent"], "#9b9797", "#d7d3d3", "#605d5d", "#7d7979", "#b0acac"]
 _MODES = ("cumulative", "daily")
@@ -285,7 +286,7 @@ class ReportsPage(AdminPage):
                 end=f"{day_month_text(period.end)} {period.end.year}",
             )
         )
-        self._headline.setText(format_amount(view.revenue))
+        self._headline.setText(format_money(view.revenue))
         # The change compares equal day counts; when the previous period is
         # shorter (31 Mar vs February) say which days were compared.
         compared = tr("admin.reports.compared_days").format(n=period.comparable_days) if period.is_clamped else ""
@@ -298,9 +299,9 @@ class ReportsPage(AdminPage):
         )
         parts = [plural("admin.reports.sales", view.sale_count)]
         if view.previous_revenue > 0:
-            parts.append(tr("admin.reports.prev_note").format(amount=format_amount(view.previous_revenue)))
+            parts.append(tr("admin.reports.prev_note").format(amount=format_money(view.previous_revenue)))
         if view.projected_total is not None:
-            parts.append(tr("admin.reports.proj_note").format(amount=format_amount(view.projected_total)))
+            parts.append(tr("admin.reports.proj_note").format(amount=format_money(view.projected_total)))
         self._note.setText(" · ".join(parts))
         self._profit_note.setText(self._profit_text(view))
         self._readout.setText(" ")
@@ -314,7 +315,7 @@ class ReportsPage(AdminPage):
         parts = []
         if profit.has_profit:
             parts.append(tr("admin.reports.profit_note").format(
-                profit=format_amount(profit.profit), margin=analytics.margin_display(profit.margin)))
+                profit=format_money(profit.profit), margin=analytics.margin_display(profit.margin)))
         if profit.unknown_revenue_cents > 0:
             parts.append(tr("admin.reports.cost_unknown").format(percent=profit.unknown_percent))
         return " · ".join(parts)
@@ -327,11 +328,11 @@ class ReportsPage(AdminPage):
         text = label
         if current is not None:
             text += "  ·  " + (
-                tr("admin.reports.readout_projected").format(amount=format_amount(current)) if projected
-                else format_amount(current)
+                tr("admin.reports.readout_projected").format(amount=format_money(current)) if projected
+                else format_money(current)
             )
         if previous is not None:
-            text += "  ·  " + tr("admin.reports.readout_previous").format(amount=format_amount(previous))
+            text += "  ·  " + tr("admin.reports.readout_previous").format(amount=format_money(previous))
         self._readout.setText(text)
 
     def _render_breakdown(self, view: analytics.ReportView) -> None:
@@ -356,7 +357,7 @@ class ReportsPage(AdminPage):
             line = QLabel(
                 f"<span style='color:{color}'>●</span>&nbsp; {region}"
                 f"<span style='color:{p['text_secondary']}'> &nbsp;{format_number(share, 1)}%</span>"
-                f"<br><span style='font-size:13px'>{format_amount(value)}</span>"
+                f"<br><span style='font-size:13px'>{format_money(value)}</span>"
             )
             line.setStyleSheet(f"color: {p['text_primary']}; font-size: 13px;")
             self._legend_layout.addWidget(line)
@@ -392,11 +393,11 @@ class ReportsPage(AdminPage):
             profit_line = (
                 "<br><span style='color:%s; font-size:11px'>%s</span>" % (p["text_secondary"], html.escape(
                     tr("admin.reports.top_profit").format(
-                        profit=format_amount(entry.profit.profit), margin=analytics.margin_display(entry.profit.margin))))
+                        profit=format_money(entry.profit.profit), margin=analytics.margin_display(entry.profit.margin))))
                 if entry.profit.has_profit else ""
             )
             figures = QLabel(
-                f"{format_amount(entry.revenue)}<br>"
+                f"{format_money(entry.revenue)}<br>"
                 f"<span style='color:{trend_color}; font-size:11px'>{analytics.change_text(entry.trend)}</span>"
                 f"{profit_line}"
             )

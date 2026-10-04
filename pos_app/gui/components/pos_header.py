@@ -19,8 +19,11 @@ from PySide6.QtCore import QTime, Qt, QTimer, Signal
 from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
+from shared.i18n import tr
+from shared.textcase import upper
 
-NAV_ITEMS = [("home", "Home"), ("sale", "New Sale"), ("receive", "Receive"), ("stock", "My Stock")]
+# (page key, string key): labels are looked up when the header is built, not at import.
+NAV_ITEMS = [("home", "pos.nav.home"), ("sale", "pos.nav.sale"), ("receive", "pos.nav.receive"), ("stock", "pos.nav.stock")]
 
 HEADER_HEIGHT_PX = 76
 
@@ -57,7 +60,7 @@ class PosHeader(QWidget):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(12)
 
-        avatar = QLabel(dealership_name[:1].upper() if dealership_name else "?")
+        avatar = QLabel(upper(dealership_name[:1]) if dealership_name else "?")
         avatar.setFixedSize(40, 40)
         avatar.setAlignment(Qt.AlignCenter)
         avatar.setStyleSheet(
@@ -92,8 +95,8 @@ class PosHeader(QWidget):
         self._nav_group.setExclusive(True)
         self._nav_buttons: dict[str, QPushButton] = {}
 
-        for key, label in NAV_ITEMS:
-            button = QPushButton(label)
+        for key, label_key in NAV_ITEMS:
+            button = QPushButton(tr(label_key))
             button.setCheckable(True)
             button.setCursor(Qt.PointingHandCursor)
             button.setFixedHeight(48)
@@ -144,10 +147,10 @@ class PosHeader(QWidget):
         clock_row = QHBoxLayout()
         clock_row.setSpacing(8)
         clock_row.addStretch(1)
-        self.switch_button = QPushButton("Switch")
+        self.switch_button = QPushButton(tr("pos.header.switch"))
         self.switch_button.setCursor(Qt.PointingHandCursor)
         self.switch_button.setFlat(True)
-        self.switch_button.setToolTip("Sign out and let the next cashier sign in")
+        self.switch_button.setToolTip(tr("pos.header.switch_tip"))
         self.switch_button.setStyleSheet(
             f"QPushButton {{ border: none; background: transparent; color: {p['accent']}; font-size: 13px; "
             f"font-weight: 600; padding: 0; }}"
@@ -160,7 +163,7 @@ class PosHeader(QWidget):
         names_widget.setLayout(names)
         row.addWidget(names_widget)
 
-        initials = "".join(part[0] for part in cashier_name.split()[:2]).upper() or "?"
+        initials = upper("".join(part[0] for part in cashier_name.split()[:2])) or "?"
         avatar = QLabel(initials)
         self._avatar_label = avatar
         avatar.setFixedSize(44, 44)
@@ -177,7 +180,7 @@ class PosHeader(QWidget):
 
     def set_cashier(self, cashier_name: str) -> None:
         self._cashier_label.setText(cashier_name)
-        self._avatar_label.setText("".join(part[0] for part in cashier_name.split()[:2]).upper() or "?")
+        self._avatar_label.setText(upper("".join(part[0] for part in cashier_name.split()[:2])) or "?")
 
     def _tick_clock(self) -> None:
         self._clock_label.setText(QTime.currentTime().toString("HH:mm"))

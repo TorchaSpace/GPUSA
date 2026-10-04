@@ -381,7 +381,7 @@ GPUSA/
 │   │   ├── main_window.py         # PosHeader + QStackedWidget of 4 screens - UPDATED
 │   │   ├── components/ (pos_header, action_button)
 │   │   ├── product_status.py      # shared out/low/ok classification - NEW
-│   │   └── pages/ (home_page, new_sale_page, my_stock_page, receive_page - NEW, placeholder_page)
+│   │   └── pages/ (home_page, new_sale_page, my_stock_page, receive_page - NEW)
 │   ├── export/receipt_printer.py  # working (QPrinter, swallows print failures) - UPDATED
 │   ├── services/checkout_service.py
 │   ├── pos_app.spec               # PyInstaller build spec

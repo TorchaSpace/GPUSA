@@ -25,6 +25,7 @@ from database import shipment_repository, stock_repository
 from database.exceptions import DataAccessError
 from pos_app.gui.product_status import stock_status
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
+from shared.i18n import tr
 from shared.models import UNASSIGNED, StockLocation
 
 
@@ -101,10 +102,14 @@ class HomePage(QWidget):
 
     def _set_greeting(self, cashier_first_name: str) -> None:
         now = datetime.now()
-        self._date_label.setText(now.strftime("%A, %d %B"))
+        self._date_label.setText(tr("pos.home.date").format(
+            weekday=tr(f"format.weekday_long.{now.weekday()}"),
+            day=now.strftime("%d"),
+            month=tr(f"pos.home.month_long.{now.month}"),
+        ))
         hour = now.hour
         part_of_day = "morning" if hour < 12 else "afternoon" if hour < 18 else "evening"
-        self._greeting_label.setText(f"Good {part_of_day}, {cashier_first_name}")
+        self._greeting_label.setText(tr(f"pos.home.greeting_{part_of_day}").format(name=cashier_first_name))
 
     def _build_sale_tile(self) -> QWidget:
         p = ORGANIC_PALETTE
@@ -122,10 +127,10 @@ class HomePage(QWidget):
         layout.addWidget(icon)
         layout.addStretch(1)
 
-        title = QLabel("New Sale")
+        title = QLabel(tr("pos.home.sale_title"))
         title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 52px; color: white;")
         layout.addWidget(title)
-        subtitle = QLabel("Scan or tap products, take payment")
+        subtitle = QLabel(tr("pos.home.sale_subtitle"))
         subtitle.setStyleSheet("font-size: 18px; color: #fff2eb;")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -157,10 +162,10 @@ class HomePage(QWidget):
         layout.addLayout(top_row)
         layout.addStretch(1)
 
-        title = QLabel("Receive Inventory")
+        title = QLabel(tr("pos.home.receive_title"))
         title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: white;")
         layout.addWidget(title)
-        subtitle = QLabel("Check in warehouse shipments")
+        subtitle = QLabel(tr("pos.home.receive_subtitle"))
         subtitle.setStyleSheet("font-size: 16px; color: #f0fae1;")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -200,10 +205,10 @@ class HomePage(QWidget):
         layout.addLayout(top_row)
         layout.addStretch(1)
 
-        title = QLabel("My Local Stock")
+        title = QLabel(tr("pos.home.stock_title"))
         title.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 40px; color: {p['text_primary']};")
         layout.addWidget(title)
-        subtitle = QLabel("See what's on the shelf and what's missing")
+        subtitle = QLabel(tr("pos.home.stock_subtitle"))
         subtitle.setStyleSheet(f"font-size: 16px; color: {p['text_secondary']};")
         subtitle.setWordWrap(True)
         layout.addWidget(subtitle)
@@ -217,10 +222,10 @@ class HomePage(QWidget):
             products = []
         out_count = sum(1 for product in products if stock_status(product) == "out")
         low_count = sum(1 for product in products if stock_status(product) == "low")
-        self._out_badge.setText(f"{out_count} out")
-        self._low_badge.setText(f"{low_count} low")
+        self._out_badge.setText(tr("pos.home.badge_out").format(n=out_count))
+        self._low_badge.setText(tr("pos.home.badge_low").format(n=low_count))
         try:
             arriving = shipment_repository.count_incoming(self._dealership_code)
         except DataAccessError:
             arriving = 0
-        self._receive_badge.setText(f"{arriving} arriving")
+        self._receive_badge.setText(tr("pos.home.badge_arriving").format(n=arriving))

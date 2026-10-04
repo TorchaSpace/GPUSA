@@ -174,8 +174,9 @@ def get_db_path() -> Path:
 def set_db_path(new_path: Path) -> None:
     """Repoint this installation at a different shared_backend.db location.
 
-    TODO: wire this up to Admin's future Data Location setting
-    (admin_app/gui - not yet built). Takes effect on the next launch of
+    Deliberately has no screen yet: moving a live shared database needs a
+    copy-and-verify step and every app closed, so for now it is a support
+    tool (call it, then restart). Takes effect on the next launch of
     each app, not the currently running one - the existing sqlite3
     connection doesn't move. Writes to whichever config.json
     _config_path() currently resolves to (exe-adjacent if present).
