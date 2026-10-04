@@ -215,10 +215,10 @@ def test_preview_total_and_band_use_the_cent_rounded_price(panel, qapp):
 def test_a_failed_catalog_refresh_keeps_the_products_and_says_so(panel, qapp, monkeypatch):
     import sqlite3
 
-    def boom():
+    def boom(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(product_repository, "list_all", boom)
+    monkeypatch.setattr(product_repository, "list_active", boom)
     panel.reload_catalog()
 
     assert panel._item_input.count() == 2

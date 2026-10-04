@@ -55,7 +55,7 @@ def test_kpis_tabs_and_overdue(page):
     _add(direction="out", doc_type="transfer", doc_no="WIR-1", due=date(2026, 9, 30), amount=186400)
     page.reload()
 
-    assert page._recv_card._value_label.text() == "130.9k"  # 84,200 + 46,750
+    assert page._recv_card._value_label.text() == "131k"  # 84,200 + 46,750 = 130,950 -> rounds half-up to 131.0k
     assert page._pay_card._value_label.text() == "186.4k"
     assert page._due_card._value_label.text() == "2"  # CHK-1 and WIR-1; the overdue one isn't "due soon"
     assert _texts(page, 6) == ["Overdue", "Pending"]
@@ -184,7 +184,7 @@ def test_a_database_error_shows_an_error_state_not_an_empty_ledger(page, monkeyp
         raise sqlite3.OperationalError("database is locked")
 
     real = ledger.list_entries
-    monkeypatch.setattr(ledger, "list_entries", boom)
+    monkeypatch.setattr(ledger_repository, "list_entries", boom)
     page.reload()
 
     assert "locked" in page.load_error()
@@ -193,7 +193,7 @@ def test_a_database_error_shows_an_error_state_not_an_empty_ledger(page, monkeyp
     assert "Couldn't load the ledger" in page._footer_label.text()
     assert "0 documents" not in page._footer_label.text()
 
-    monkeypatch.setattr(ledger, "list_entries", real)
+    monkeypatch.setattr(ledger_repository, "list_entries", real)
     page.reload()
     assert page.load_error() is None and page._table.rowCount() == 1
     assert "1 document" in page._footer_label.text()
@@ -268,10 +268,10 @@ def test_a_raw_sqlite_error_while_saving_is_shown_in_the_popup_not_raised(page, 
     popup._counterparty_input.setText("Harbor")
     popup._amount_input.setValue(5)
 
-    def boom(entry):
+    def boom(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(ledger, "create", boom)
+    monkeypatch.setattr(ledger_repository, "create", boom)
     page._save_popup()
 
     assert "locked" in popup._error.text()

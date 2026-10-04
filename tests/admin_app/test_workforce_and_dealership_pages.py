@@ -88,7 +88,7 @@ def test_employee_popup_rejects_empty_name_and_keeps_the_typed_data(workforce, q
     pump(qapp)
     assert popup.isVisible() and popup._error.isVisible() and popup._error.text()
     assert popup._badge_input.text() == "B-2" and popup._location_name_input.currentText() == "Merkez Depo"
-    assert [e.badge_id for e in employee_repository.list_all()] == ["B-1"]
+    assert sorted(e.badge_id for e in employee_repository.list_all()) == ["A-1", "B-1"]  # the signed-in admin is an employee too
 
 
 def test_employee_popup_rejects_empty_badge_and_huge_names(workforce, qapp):
@@ -100,7 +100,7 @@ def test_employee_popup_rejects_empty_badge_and_huge_names(workforce, qapp):
     _fill_employee(popup, name="x" * 10_000)
     popup.accept()
     assert popup.isVisible() and popup._error.text()
-    assert len(employee_repository.list_all()) == 1
+    assert len(employee_repository.list_all()) == 2  # B-1 and the signed-in admin A-1
 
 
 def test_employee_location_is_a_pick_list_of_existing_places(workforce, qapp):
@@ -120,7 +120,7 @@ def test_employee_popup_refuses_a_place_that_does_not_exist(workforce, qapp):
     popup.accept()
     assert popup.isVisible() and popup._error.text()
     assert popup._location_name_input.currentText() == "Atlantis"  # typed text kept
-    assert len(employee_repository.list_all()) == 1
+    assert len(employee_repository.list_all()) == 2  # B-1 and the signed-in admin A-1
 
 
 def test_employee_popup_saves_a_valid_entry_and_normalises_the_badge(workforce, qapp):
@@ -192,7 +192,7 @@ def test_delete_confirmation_warns_the_account_goes_too(workforce, monkeypatch, 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     workforce._delete_selected()
     pump(qapp)
-    assert employee_repository.list_all() == []
+    assert [e.badge_id for e in employee_repository.list_all()] == ["A-1"]  # only the signed-in admin is left
     assert workforce._detail_name.text() == "No employee selected"
 
 

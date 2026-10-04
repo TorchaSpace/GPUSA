@@ -206,7 +206,9 @@ def _pdf(report, store=TURKISH):
             data = path.read_bytes()
             text = ""
             if shutil.which("pdftotext"):
-                text = subprocess.run(["pdftotext", "-layout", str(path), "-"], capture_output=True, text=True).stdout
+                text = subprocess.run(
+                    ["pdftotext", "-enc", "UTF-8", "-layout", str(path), "-"], capture_output=True
+                ).stdout.decode("utf-8", errors="replace")
     return data, text
 
 

@@ -25,6 +25,11 @@ def _isolated_db(tmp_path, monkeypatch):
 def _sale(day_iso: str, amount: float, dealership_code: str | None = None) -> None:
     """One sale of `amount`, dated `day_iso` (the checkout stamps 'now'; the
     row is then moved to the day under test)."""
+    # The checkout refuses a price that differs from the catalogue, so make
+    # the catalogue price the amount under test first.
+    with connection_scope() as conn:
+        conn.execute("UPDATE products SET price = ? WHERE barcode = ?", (amount, "P1"))
+        conn.commit()
     saved = transaction_repository.finalize_transaction(
         Transaction(items=[LineItem(product_barcode="P1", product_name_at_sale="Widget", unit_price_at_sale=amount, quantity=1)])
     )

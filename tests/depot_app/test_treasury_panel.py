@@ -269,7 +269,7 @@ def test_a_failed_refresh_says_so_and_keeps_the_last_rows(panel, monkeypatch):
     def boom(*a, **k):
         raise sqlite3.OperationalError("database is locked")
 
-    monkeypatch.setattr(ledger, "list_entries", boom)
+    monkeypatch.setattr(ledger_repository, "list_entries", boom)
     panel.reload()
 
     assert "Couldn't refresh" in panel._message.text() and "locked" in panel._message.text()
@@ -291,10 +291,10 @@ def test_a_raw_sqlite_error_on_save_is_shown_in_the_dialog_not_raised(panel, mon
         dialog.amount_input.setValue(5)
         return True
 
-    def boom(entry):
+    def boom(*args, **kwargs):
         raise sqlite3.OperationalError("database is locked")
 
     monkeypatch.setattr(panel, "_run_dialog", fake_run)
-    monkeypatch.setattr(ledger, "create", boom)
+    monkeypatch.setattr(ledger_repository, "create", boom)
     panel._record()
     assert len(attempts) == 2
