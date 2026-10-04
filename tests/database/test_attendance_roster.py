@@ -133,3 +133,14 @@ def test_clock_text_is_local_time_and_shows_the_date_for_other_days():
     assert local_clock_text(stamp, now=datetime(2026, 3, 10, 23, 0).astimezone()) == "22:15"
     assert local_clock_text(stamp, now=datetime(2026, 3, 11, 9, 0).astimezone()) == "10.03.2026 22:15"
     assert local_clock_text(None) == "—" and local_clock_text("garbage") == "—"
+
+
+def test_list_punches_gives_todays_events_newest_first(person):
+    attendance_repository.check_in("B-1")
+    attendance_repository.check_out("B-1")
+    attendance_repository.check_in("B-1")
+    punches = attendance_repository.list_punches()
+    assert [p["action"] for p in punches] == ["IN", "OUT", "IN"]
+    assert {p["name"] for p in punches} == {"Elena Varga"}
+    assert attendance_repository.list_punches(limit=2) == punches[:2]
+    assert attendance_repository.list_punches(for_date="2001-01-01") == []

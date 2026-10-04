@@ -145,6 +145,30 @@ def list_open() -> list[dict]:
     return [dict(row) for row in rows]
 
 
+def list_punches(for_date: str | None = None, limit: int = 12) -> list[dict]:
+    """The check-in and check-out EVENTS of the LOCAL day `for_date` (default
+    today), newest first, for the Floor's "Today's punches" list. Each is a
+    dict: at (the stamp), name, badge_id, action ("IN" or "OUT")."""
+    day = _date.fromisoformat(for_date) if for_date else _date.today()
+    start, end = _day_window(day)
+    low, high = to_db_timestamp(start), to_db_timestamp(end)
+    with connection_scope() as conn:
+        rows = conn.execute(
+            "SELECT e.badge_id, e.name, a.check_in_at, a.check_out_at "
+            "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
+            "WHERE (a.check_in_at >= ? AND a.check_in_at < ?) OR (a.check_out_at >= ? AND a.check_out_at < ?)",
+            (low, high, low, high),
+        ).fetchall()
+    events = []
+    for row in rows:
+        if low <= row["check_in_at"] < high:
+            events.append({"at": row["check_in_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "IN"})
+        if row["check_out_at"] and low <= row["check_out_at"] < high:
+            events.append({"at": row["check_out_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "OUT"})
+    events.sort(key=lambda e: e["at"], reverse=True)
+    return events[: max(0, limit)]
+
+
 def _day_window(day: _date) -> tuple[datetime, datetime]:
     """[start, end) of the LOCAL calendar day `day`, as aware UTC datetimes."""
     start = datetime.combine(day, time.min).astimezone()  # a naive datetime is read as local time

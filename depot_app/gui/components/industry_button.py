@@ -15,6 +15,7 @@ from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QPushButton
 
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.gui_kit.motion import HoverTween, blend
 
 MIN_HEIGHT_PX = 44
 
@@ -26,12 +27,12 @@ _VARIANT_STYLES = {
 
 
 class IndustryButton(QPushButton):
-    def __init__(self, label: str, variant: str = "primary", parent=None):
+    def __init__(self, label: str, variant: str = "primary", parent=None, height: int = MIN_HEIGHT_PX, font_px: int = 13):
         super().__init__(label.upper(), parent)
         if variant not in _VARIANT_STYLES:
             raise ValueError(f"Unknown IndustryButton variant {variant!r}")
         p = INDUSTRY_PALETTE
-        self.setMinimumHeight(MIN_HEIGHT_PX)
+        self.setMinimumHeight(height)
         self.setCursor(Qt.PointingHandCursor)
 
         fg_template, bg_template, border_template = _VARIANT_STYLES[variant]
@@ -45,23 +46,33 @@ class IndustryButton(QPushButton):
             border = border_template.format(**p)
 
         hover_bg = p["accent_900"] if variant == "primary" else p["accent"] if variant == "accent" else p["surface"]
+        self._look = (bg, hover_bg, fg, border, font_px)
+        self._level = -1.0
+        self._paint_level(0.0)
+        # The fill glides to its hover colour instead of snapping.
+        self._tween = HoverTween(self, self._paint_level)
 
+    def _paint_level(self, level: float) -> None:
+        if abs(level - self._level) < 0.03 and level not in (0.0, 1.0):
+            return
+        self._level = level
+        p = INDUSTRY_PALETTE
+        bg, hover_bg, fg, border, font_px = self._look
+        fill = bg if bg == "transparent" and level == 0.0 else blend(p["background"] if bg == "transparent" else bg, hover_bg, level)
         self.setStyleSheet(
             f"""
             QPushButton {{
-                background-color: {bg};
+                background-color: {fill};
                 color: {fg};
                 border: {border};
                 border-radius: 0;
                 padding: 0 20px;
                 font-family: {FONT_HEADING_CSS};
                 font-weight: 600;
-                font-size: 13px;
+                font-size: {font_px}px;
                 letter-spacing: 1px;
             }}
-            QPushButton:hover {{
-                background-color: {hover_bg};
-            }}
+            QPushButton:pressed {{ background-color: {blend(hover_bg, p['text_primary'], 0.25)}; }}
             QPushButton:disabled {{
                 background-color: {p['surface']};
                 color: {p['text_secondary']};

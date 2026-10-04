@@ -10,6 +10,7 @@ from PySide6.QtGui import QColor
 
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.gui_kit.motion import count_up
 
 AMBER = "#f4b400"
 
@@ -25,6 +26,7 @@ def industry_table(headers: list[str], selectable: bool = False) -> QTableWidget
     table = QTableWidget(0, len(headers))
     table.setHorizontalHeaderLabels(headers)
     table.verticalHeader().setVisible(False)
+    table.verticalHeader().setDefaultSectionSize(36)
     table.setEditTriggers(QAbstractItemView.NoEditTriggers)
     if selectable:
         table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -36,7 +38,8 @@ def industry_table(headers: list[str], selectable: bool = False) -> QTableWidget
         QTableWidget {{ background-color: {p['background']}; color: {p['text_primary']};
             border: 1px solid {p['border']}; gridline-color: {p['border']}; font-size: 13px; }}
         QHeaderView::section {{ background-color: {p['surface']}; color: {p['text_secondary']};
-            border: none; border-bottom: 1px solid {p['border']}; padding: 4px; font-size: 11px; }}
+            border: none; border-bottom: 2px solid {p['text_primary']}; padding: 6px 8px; font-size: 11px;
+            letter-spacing: 1px; font-weight: 600; }}
         QTableWidget::item:selected {{ background-color: {p['accent_100']}; color: {p['text_primary']}; }}
         """
     )
@@ -77,7 +80,7 @@ class StatCell(BlueprintFrame):
 
     def set(self, value: str, note: str = "", warn: bool = False) -> None:
         p = INDUSTRY_PALETTE
-        self.value_label.setText(value)
+        count_up(self.value_label, value)
         self.value_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; "
                                        f"color: {'#b07f00' if warn else p['text_primary']};")
         self.note_label.setText(note)

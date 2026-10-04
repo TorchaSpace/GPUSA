@@ -25,6 +25,7 @@ from __future__ import annotations
 from PySide6.QtCore import QTimer, Qt
 from PySide6.QtWidgets import (
     QFrame,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QMainWindow,
@@ -34,11 +35,12 @@ from PySide6.QtWidgets import (
 
 import depot_app.gui.icons as icons
 from depot_app.gui.components.industry_button import IndustryButton
-from depot_app.gui.components.placeholder_panel import PlaceholderPanel
+from depot_app.gui.checkin_panel import CheckInPanel
 from depot_app.gui.low_stock_banner import LowStockBanner
 from depot_app.gui.movement_panel import MovementPanel
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
+from shared.gui_kit.motion import fade_in
 from depot_app.gui.auth_flow import console_sign_in_dialog
 from shared import current_session
 from shared.auth import Session
@@ -62,6 +64,9 @@ class MainWindow(QMainWindow):
         self._console_window = None  # lazily created, kept alive here (see _open_console)
 
         central = QWidget()
+        central.setObjectName("floorCentral")
+        central.setAttribute(Qt.WA_StyledBackground, True)
+        central.setStyleSheet(f"#floorCentral {{ background-color: {p['background']}; }}")
         outer = QVBoxLayout(central)
         outer.setContentsMargins(24, 16, 24, 20)
         outer.setSpacing(16)
@@ -73,13 +78,9 @@ class MainWindow(QMainWindow):
         body = QHBoxLayout()
         body.setSpacing(16)
 
-        aside = PlaceholderPanel(
-            "Check-in Log",
-            "Badge check-in/out and the floor roster aren't modeled in the database yet - "
-            "this panel will come alive once staff records exist.",
-        )
-        aside.setFixedWidth(260)
-        body.addWidget(aside)
+        self._checkin_panel = CheckInPanel()
+        self._checkin_panel.setFixedWidth(330)
+        body.addWidget(self._checkin_panel)
 
         panels = QHBoxLayout()
         panels.setSpacing(16)
@@ -99,7 +100,15 @@ class MainWindow(QMainWindow):
         body_widget.setLayout(body)
         outer.addWidget(body_widget, stretch=1)
 
-        self.setCentralWidget(central)
+        # Small screens scroll instead of squeezing the kiosk's big controls.
+        scroller = QScrollArea()
+        scroller.setWidgetResizable(True)
+        scroller.setFrameShape(QScrollArea.NoFrame)
+        scroller.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        central.setMinimumSize(1100, 760)
+        scroller.setWidget(central)
+        self.setCentralWidget(scroller)
+        fade_in(scroller, 260)
 
     def _build_header(self) -> QWidget:
         p = INDUSTRY_PALETTE
@@ -110,7 +119,7 @@ class MainWindow(QMainWindow):
         header.setAttribute(Qt.WA_StyledBackground, True)
         header.setStyleSheet(f"#floorHeader {{ border-bottom: 1px solid {p['border']}; }}")
         layout = QHBoxLayout(header)
-        layout.setContentsMargins(0, 0, 0, 14)
+        layout.setContentsMargins(0, 0, 0, 12)
         layout.setSpacing(12)
 
         logo = QLabel()
@@ -120,26 +129,26 @@ class MainWindow(QMainWindow):
         wordmark = QLabel("DOCKLINE FLOOR")
         wordmark.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1.5px; "
-            f"font-size: 20px; color: {p['text_primary']};"
+            f"font-size: 26px; color: {p['text_primary']};"
         )
         layout.addWidget(wordmark)
 
         tag = QLabel(self.warehouse.site_label)
         tag.setStyleSheet(
             f"background-color: {p['accent_100']}; color: {p['accent_900']}; border: 1px solid {p['accent']}; "
-            f"padding: 4px 10px; font-size: 12px; font-weight: 600;"
+            f"padding: 5px 12px; font-size: 13px; font-weight: 600;"
         )
         layout.addWidget(tag)
 
         layout.addStretch(1)
 
-        shift = QLabel(SHIFT_LABEL)
-        shift.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
+        shift = QLabel(SHIFT_LABEL.upper())
+        shift.setStyleSheet(f"font-size: 12px; letter-spacing: 1.2px; color: {p['text_secondary']};")
         layout.addWidget(shift)
 
         self._clock_label = QLabel()
         self._clock_label.setStyleSheet(
-            f"font-family: {FONT_HEADING_CSS}; font-size: 16px; color: {p['text_primary']};"
+            f"font-family: {FONT_HEADING_CSS}; font-weight: 600; font-size: 28px; color: {p['text_primary']};"
         )
         layout.addWidget(self._clock_label)
         self._clock_timer = QTimer(self)
@@ -148,7 +157,7 @@ class MainWindow(QMainWindow):
         self._clock_timer.start()
         self._tick_clock()
 
-        admin_login = IndustryButton("İdari Giriş", variant="primary")
+        admin_login = IndustryButton("İdari Giriş", variant="primary", height=48, font_px=17)
         admin_login.setIcon(svg_to_icon(icons.LOCK, "#ffffff", size=14))
         admin_login.clicked.connect(self._open_console)
         layout.addWidget(admin_login)

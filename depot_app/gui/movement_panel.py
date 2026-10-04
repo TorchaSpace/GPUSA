@@ -21,10 +21,11 @@ scope, not invented here.
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QEasingCurve, QVariantAnimation, Qt, Signal
+from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
+    QGridLayout,
     QHBoxLayout,
-    QHeaderView,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -39,9 +40,11 @@ from database.inventory_repository import list_recent_movements
 from shared.models import UNASSIGNED, StockLocation
 from shared.warehousing import tr_or
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
+from depot_app.gui.components.floor_style import floor_table, input_style, labelled, notice_style
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.services import dispatch_service, receiving_service
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.gui_kit.motion import animations_enabled, blend, fade_in, toast
 
 _DIRECTIONS = {
     "receive": {
@@ -49,6 +52,8 @@ _DIRECTIONS = {
         "title": "Inbound",
         "unit_noun": "receipts",
         "ref_label": "PO / ASN ref",
+        "ref_col": "Ref",
+        "loc_col": "Bin",
         "ref_placeholder": "PO-20931",
         "loc_label": "Put-away bin",
         "loc_placeholder": "A-03",
@@ -60,6 +65,8 @@ _DIRECTIONS = {
         "title": "Outbound",
         "unit_noun": "picks",
         "ref_label": "Order #",
+        "ref_col": "Order",
+        "loc_col": "Dock",
         "ref_placeholder": "SO-58812",
         "loc_label": "Dock door",
         "loc_placeholder": "D-07",
@@ -90,35 +97,35 @@ class MovementPanel(QWidget):
         outer.setSpacing(10)
 
         card = BlueprintFrame(tick_color=p["text_primary"])
-        card.setStyleSheet(f"background-color: {p['surface']}; border: 1px solid {p['border']};")
+        card.setObjectName("movementCard")
+        bar = p["accent"] if direction == "receive" else p["text_primary"]
+        card.setStyleSheet(
+            f"#movementCard {{ background-color: {p['surface']}; border: 1px solid {p['border']}; "
+            f"border-top: 4px solid {bar}; }}"
+        )
         card_layout = QVBoxLayout(card)
-        card_layout.setContentsMargins(18, 16, 18, 16)
-        card_layout.setSpacing(12)
+        card_layout.setContentsMargins(20, 18, 20, 18)
+        card_layout.setSpacing(14)
 
         header = QHBoxLayout()
+        header.setSpacing(12)
         glyph = QLabel(self._spec["glyph"])
-        glyph.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; font-weight: 600; color: {p['accent']};")
+        glyph.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 30px; font-weight: 600; color: {bar};")
         header.addWidget(glyph)
         title = QLabel(self._spec["title"].upper())
         title.setStyleSheet(
             f"font-family: {FONT_HEADING_CSS}; font-weight: 600; letter-spacing: 1px; "
-            f"font-size: 16px; color: {p['text_primary']};"
+            f"font-size: 28px; color: {p['text_primary']};"
         )
         header.addWidget(title)
         header.addStretch(1)
         self._summary_label = QLabel()
-        self._summary_label.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
+        self._summary_label.setTextFormat(Qt.RichText)
+        self._summary_label.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         header.addWidget(self._summary_label)
         card_layout.addLayout(header)
 
-        card_layout.addWidget(self._build_form())
-
-        self._error_label = QLabel()
-        self._error_label.setStyleSheet(f"color: {p['text_primary']}; background-color: #fff6d6; "
-                                         f"border: 1px solid #f4b400; padding: 6px 10px; font-size: 12px;")
-        self._error_label.setWordWrap(True)
-        self._error_label.hide()
-        card_layout.addWidget(self._error_label)
+        card_layout.addWidget(self._build_form(), stretch=0)
 
         self._table = self._build_table()
         card_layout.addWidget(self._table, stretch=1)
@@ -127,64 +134,60 @@ class MovementPanel(QWidget):
         self.reload()
 
     def _build_form(self) -> QWidget:
-        p = INDUSTRY_PALETTE
-        form = QHBoxLayout()
-        form.setSpacing(8)
-
-        input_style = (
-            f"QLineEdit, QSpinBox {{ background-color: {p['background']}; color: {p['text_primary']}; "
-            f"border: 1px solid {p['border']}; border-radius: 0; padding: 6px 8px; }}"
-        )
+        grid = QGridLayout()
+        grid.setHorizontalSpacing(12)
+        grid.setVerticalSpacing(10)
+        grid.setColumnStretch(0, 2)
+        grid.setColumnStretch(1, 1)
 
         self._sku_input = QLineEdit()
-        self._sku_input.setPlaceholderText("Scan SKU")
-        self._sku_input.setStyleSheet(input_style)
-        form.addWidget(self._sku_input, stretch=2)
+        self._sku_input.setPlaceholderText("Scan or type")
+        self._sku_input.setMinimumHeight(58)
+        self._sku_input.setStyleSheet(input_style(24))
+        grid.addWidget(labelled("SKU / barcode", self._sku_input), 0, 0)
 
         self._qty_input = QSpinBox()
         self._qty_input.setRange(1, 100_000)
         self._qty_input.setValue(1)
-        self._qty_input.setStyleSheet(input_style)
-        form.addWidget(self._qty_input, stretch=1)
+        self._qty_input.setMinimumHeight(58)
+        self._qty_input.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        self._qty_input.setStyleSheet(input_style(24))
+        grid.addWidget(labelled("Qty", self._qty_input), 0, 1)
 
         self._ref_input = QLineEdit()
         self._ref_input.setPlaceholderText(self._spec["ref_placeholder"])
-        self._ref_input.setStyleSheet(input_style)
-        form.addWidget(self._ref_input, stretch=1)
+        self._ref_input.setMinimumHeight(48)
+        self._ref_input.setStyleSheet(input_style(18))
+        grid.addWidget(labelled(self._spec["ref_label"], self._ref_input), 1, 0)
 
         self._loc_input = QLineEdit()
         self._loc_input.setPlaceholderText(self._spec["loc_placeholder"])
-        self._loc_input.setStyleSheet(input_style)
-        form.addWidget(self._loc_input, stretch=1)
+        self._loc_input.setMinimumHeight(48)
+        self._loc_input.setStyleSheet(input_style(18))
+        grid.addWidget(labelled(self._spec["loc_label"], self._loc_input), 1, 1)
 
-        submit = IndustryButton(f"{self._spec['submit_label']} ⏎", variant="primary")
+        self._error_label = QLabel()
+        self._error_label.setStyleSheet(notice_style())
+        self._error_label.setWordWrap(True)
+        self._error_label.hide()
+        grid.addWidget(self._error_label, 2, 0, 1, 2)
+
+        submit = IndustryButton(f"{self._spec['submit_label']} \u23ce", variant="primary", height=60, font_px=20)
         submit.clicked.connect(self._on_submit)
+        self._submit_button = submit
         self._sku_input.returnPressed.connect(self._on_submit)
         self._ref_input.returnPressed.connect(self._on_submit)
         self._loc_input.returnPressed.connect(self._on_submit)
-        form.addWidget(submit)
+        grid.addWidget(submit, 3, 0, 1, 2)
 
         widget = QWidget()
-        widget.setLayout(form)
+        widget.setStyleSheet("background: transparent;")
+        widget.setLayout(grid)
         return widget
 
     def _build_table(self) -> QTableWidget:
-        p = INDUSTRY_PALETTE
-        table = QTableWidget(0, 4)
-        table.setHorizontalHeaderLabels(["Time", "SKU", "Qty", "Ref / bin"])
-        table.verticalHeader().setVisible(False)
-        table.setEditTriggers(QTableWidget.NoEditTriggers)
-        table.setSelectionMode(QTableWidget.NoSelection)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(3, QHeaderView.Stretch)
-        table.setStyleSheet(
-            f"""
-            QTableWidget {{ background-color: {p['background']}; color: {p['text_primary']};
-                border: 1px solid {p['border']}; gridline-color: {p['border']}; }}
-            QHeaderView::section {{ background-color: {p['surface']}; color: {p['text_secondary']};
-                border: none; border-bottom: 1px solid {p['border']}; padding: 4px; font-size: 11px; }}
-            """
-        )
+        table = floor_table(["Time", "SKU", "Qty", self._spec["ref_col"], self._spec["loc_col"]], stretch=(1,))
+        table.setMinimumHeight(200)
         return table
 
     def _on_submit(self) -> None:
@@ -222,11 +225,47 @@ class MovementPanel(QWidget):
         self._qty_input.setValue(1)
         self._sku_input.setFocus()
         self.reload()
+        self._flash_newest_row()
+        toast(self, f"{self._spec['submit_label']}: {quantity} \u00d7 {barcode}")
         self.movement_logged.emit()
 
     def _show_error(self, message: str) -> None:
         self._error_label.setText(message)
         self._error_label.show()
+        fade_in(self._error_label)
+
+    def _flash_newest_row(self) -> None:
+        """The row just logged lights up in steel-blue and settles back."""
+        if not animations_enabled() or self._table.rowCount() == 0:
+            return
+        p = INDUSTRY_PALETTE
+        table = self._table
+        start, end = p["accent_100"], p["surface"]
+        animation = QVariantAnimation(table)
+        animation.setDuration(1100)
+        animation.setStartValue(1.0)
+        animation.setEndValue(0.0)
+        animation.setEasingCurve(QEasingCurve.OutCubic)
+
+        def paint(level) -> None:
+            if table.rowCount() == 0:
+                return
+            brush = QBrush(QColor(blend(end, start, float(level))))
+            for column in range(table.columnCount()):
+                cell = table.item(0, column)
+                if cell is not None:
+                    cell.setBackground(brush)
+
+        def done() -> None:
+            for column in range(table.columnCount()):
+                cell = table.item(0, column) if table.rowCount() else None
+                if cell is not None:
+                    cell.setBackground(QBrush())
+
+        animation.valueChanged.connect(paint)
+        animation.finished.connect(done)
+        table._flash = animation
+        animation.start()
 
     def reload(self) -> None:
         # This warehouse's own Floor log only - not shipment loading,
@@ -240,13 +279,37 @@ class MovementPanel(QWidget):
             self._show_error(f"Couldn't load the log: {exc}")
             return
         total_units = sum(m["quantity"] for m in movements)
-        self._summary_label.setText(f"{total_units} units · {len(movements)} {self._spec['unit_noun']}")
+        p = INDUSTRY_PALETTE
+        self._summary_label.setText(
+            f"<b style='font-size:18px; color:{p['text_primary']}'>{total_units}</b> units \u00b7 "
+            f"{len(movements)} {self._spec['unit_noun']}"
+        )
 
         self._table.setRowCount(len(movements))
+        sign = "+" if self._direction == "receive" else "\u2212"
+        qty_color = QColor(p["accent_900"] if self._direction == "receive" else p["text_primary"])
         for row, movement in enumerate(movements):
             time_text = movement["created_at"].split("T")[-1][:8] if "T" in movement["created_at"] else movement["created_at"]
-            self._table.setItem(row, 0, QTableWidgetItem(time_text))
-            self._table.setItem(row, 1, QTableWidgetItem(f"{movement['barcode']} · {movement['product_name']}"))
-            sign = "+" if movement["movement_type"] == "receive" else "−"
-            self._table.setItem(row, 2, QTableWidgetItem(f"{sign}{movement['quantity']}"))
-            self._table.setItem(row, 3, QTableWidgetItem(movement["note"] or ""))
+            when = QTableWidgetItem(time_text)
+            when.setForeground(QColor(p["text_secondary"]))
+            self._table.setItem(row, 0, when)
+            sku = QTableWidgetItem(f"{movement['barcode']}  \u00b7  {movement['product_name']}")
+            sku.setFont(self._bold())
+            self._table.setItem(row, 1, sku)
+            qty = QTableWidgetItem(f"{sign}{movement['quantity']}")
+            qty.setTextAlignment(Qt.AlignRight | Qt.AlignVCenter)
+            qty.setForeground(qty_color)
+            big = self._bold(19)
+            qty.setFont(big)
+            self._table.setItem(row, 2, qty)
+            parts = (movement["note"] or "").split(" \u00b7 ", 1)
+            self._table.setItem(row, 3, QTableWidgetItem(parts[0]))
+            self._table.setItem(row, 4, QTableWidgetItem(parts[1] if len(parts) > 1 else ""))
+
+    @staticmethod
+    def _bold(size: int | None = None) -> QFont:
+        font = QFont()
+        font.setBold(True)
+        if size:
+            font.setPixelSize(size)
+        return font

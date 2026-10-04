@@ -13,9 +13,11 @@ rather than a plain QFrame.
 
 from __future__ import annotations
 
-from PySide6.QtCore import QPointF, Qt
+from PySide6.QtCore import QEvent, QPointF, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QFrame
+
+from shared.gui_kit.motion import Level
 
 _TICK_ARM_PX = 9
 _TICK_INSET_PX = 5
@@ -33,19 +35,32 @@ class BlueprintFrame(QFrame):
         color = QColor(tick_color)
         color.setAlpha(140)  # ~55% of 255
         self._tick_color = color
+        # On hover the marks open outwards a little, like a viewfinder locking on.
+        self._lock = Level(self, lambda _v: self.update(), 160)
+        self.setAttribute(Qt.WA_Hover, True)
+
+    def event(self, event) -> bool:
+        if event.type() in (QEvent.Enter, QEvent.HoverEnter):
+            self._lock.go(1.0)
+        elif event.type() in (QEvent.Leave, QEvent.HoverLeave):
+            self._lock.go(0.0)
+        return super().event(event)
 
     def paintEvent(self, event) -> None:
         super().paintEvent(event)
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, False)
-        pen = QPen(self._tick_color)
+        tick = QColor(self._tick_color)
+        tick.setAlpha(round(140 + 90 * self._lock.value))
+        pen = QPen(tick)
         pen.setWidthF(1.2)
         painter.setPen(pen)
 
         w = self.width()
         h = self.height()
-        i = _TICK_INSET_PX
-        a = _TICK_ARM_PX
+        grow = self._lock.value
+        i = _TICK_INSET_PX - 2 * grow
+        a = _TICK_ARM_PX + 4 * grow
 
         corners = [
             # (corner point, horizontal arm end, vertical arm end)

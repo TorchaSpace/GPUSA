@@ -56,6 +56,8 @@ import depot_app.gui.icons as icons
 from database import account_repository, stock_repository, warehouse_repository
 from database.exceptions import DataAccessError
 from depot_app.gui.attendance_panel import AttendancePanel
+from depot_app.gui.components.console_nav_button import ConsoleNavButton
+from shared.gui_kit.motion import fade_in
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.dashboard_page import DashboardPage
 from depot_app.gui.inventory_page import InventoryPage
@@ -131,7 +133,11 @@ class ConsoleWindow(QMainWindow):
         p = INDUSTRY_PALETTE
         sidebar = QFrame()
         sidebar.setFixedWidth(SIDEBAR_WIDTH_PX)
-        sidebar.setStyleSheet(f"background-color: {p['surface']}; border-right: 1px solid {p['border']};")
+        sidebar.setObjectName("consoleSidebar")
+        sidebar.setAttribute(Qt.WA_StyledBackground, True)
+        sidebar.setStyleSheet(
+            f"#consoleSidebar {{ background-color: {p['surface']}; border-right: 1px solid {p['border']}; }}"
+        )
         layout = QVBoxLayout(sidebar)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
@@ -159,24 +165,8 @@ class ConsoleWindow(QMainWindow):
         self._button_group.setExclusive(True)
         self._nav_buttons: dict[str, QPushButton] = {}
         for key in _NAV_ITEMS:
-            button = QPushButton(key)
-            button.setCheckable(True)
-            button.setCursor(Qt.PointingHandCursor)
-            button.setFlat(True)
+            button = ConsoleNavButton(key)
             button.clicked.connect(lambda checked, k=key: self._navigate(k))
-            button.setStyleSheet(
-                f"""
-                QPushButton {{
-                    text-align: left; padding: 9px 10px; border: none; border-radius: 0;
-                    color: {p['text_secondary']}; background: transparent;
-                    font-family: {p['font_family_css']}; font-size: 13px;
-                }}
-                QPushButton:checked {{
-                    color: {p['accent_900']}; background-color: {p['accent_100']};
-                    border-left: 2px solid {p['accent']}; padding-left: 8px;
-                }}
-                """
-            )
             nav_layout.addWidget(button)
             self._button_group.addButton(button)
             self._nav_buttons[key] = button
@@ -201,7 +191,10 @@ class ConsoleWindow(QMainWindow):
         return sidebar
 
     def _navigate(self, key: str) -> None:
+        changed = self._stack.currentWidget() is not self._pages[key]
         self._stack.setCurrentWidget(self._pages[key])
+        if changed:
+            fade_in(self._pages[key])
         self._nav_buttons[key].setChecked(True)
         # The header used to say WAREHOUSES whichever page was open.
         if hasattr(self, "_title_label"):
@@ -370,6 +363,7 @@ class ConsoleWindow(QMainWindow):
         attendance_layout.addWidget(self._attendance_panel)
         tabs.addTab(attendance_tab, "Workforce Attendance")
 
+        tabs.currentChanged.connect(lambda _i: fade_in(tabs.currentWidget()))
         layout.addWidget(tabs, stretch=1)
         return page
 
