@@ -118,7 +118,10 @@ class WorkforceTable(QTableView):
         self.setEditTriggers(QAbstractItemView.NoEditTriggers)
         self.setAlternatingRowColors(True)
         self.horizontalHeader().setStretchLastSection(True)
-        self.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        header = self.horizontalHeader()
+        header.setSectionResizeMode(QHeaderView.ResizeToContents)  # a title is never cut off
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.verticalHeader().setVisible(False)
 
         p = CLASSICAL_PALETTE

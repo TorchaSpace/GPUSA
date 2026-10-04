@@ -53,7 +53,7 @@ TR = {
     "settings.address_hint": "Her sat\u0131ra bir sat\u0131r, en fazla 4 (cadde, \u015fehir, telefon ...)",
     "settings.store_note": "Her tezg\u00e2h fi\u015finin ve d\u0131\u015fa aktar\u0131lan her raporun \u00fcst\u00fcne yaz\u0131l\u0131r.",
     "settings.language": "Dil",
-    "settings.language_note": "Dil, Admin bir sonraki a\u00e7\u0131l\u0131\u015fta de\u011fi\u015fir.",
+    "settings.language_note": "Yeni dil i\u00e7in Admin yeniden ba\u015flat\u0131l\u0131r; kaydedince sorulur.",
     "settings.alerts.kicker": "Uyar\u0131lar",
     "settings.notifications": "Bildirimler",
     "settings.low_stock_alerts": "Depo zemininde d\u00fc\u015f\u00fck stok uyar\u0131 band\u0131n\u0131 g\u00f6ster",

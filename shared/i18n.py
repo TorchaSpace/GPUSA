@@ -126,7 +126,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "settings.address_hint": "One line per row, up to 4 (street, city, phone ...)",
         "settings.store_note": "Printed at the top of every till receipt and every exported report.",
         "settings.language": "Language",
-        "settings.language_note": "The language changes the next time Admin opens.",
+        "settings.language_note": "Admin restarts to apply a new language - you will be asked after saving.",
         "settings.alerts.kicker": "Alerts",
         "settings.notifications": "Notifications",
         "settings.low_stock_alerts": "Show the low-stock alert banner on the depot floor",
