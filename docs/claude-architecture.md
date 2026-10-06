@@ -145,7 +145,10 @@ exit 1.
 - When a business rule changes (checkout, ledger actor), test helpers must follow —
   commit `c61fefb` was exactly that kind of fix.
 - CI (`.github/workflows/build.yml`): tests on Ubuntu/Windows/macOS, Python 3.12;
-  tag `v*` or manual run builds Windows zip + macOS dmg/zip.
+  tag `v*` or manual run builds Windows zip + macOS dmg/zip + Linux tar.gz
+  (`plan` job picks the matrix; manual run has a `platform` input: all/linux/windows/macos).
+  Linux is built on `ubuntu-22.04` on purpose (old glibc → runs on Arch etc.);
+  the tarball has `install.sh` for per-user `.desktop` entries.
 
 ## Recent history (newest first, 2026-10-03 → 10-04)
 

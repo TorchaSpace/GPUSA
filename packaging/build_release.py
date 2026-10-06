@@ -4,7 +4,7 @@
     python packaging/build_release.py            # -> release/
 
 PyInstaller cannot cross-compile: a Windows build has to be made on
-Windows and a Mac build on a Mac. The GitHub Actions workflow
+Windows, a Mac build on a Mac and a Linux build on Linux. The GitHub Actions workflow
 (.github/workflows/build.yml) runs this once on each, so nobody has to own
 both machines; run it by hand to make a build for the machine you're on.
 
@@ -14,6 +14,9 @@ links keep working release after release):
     Windows   GPUSA-Windows-x64.zip       three app folders + INSTALL.txt
     macOS     GPUSA-macOS-<arch>.dmg      three .app bundles to drag into Applications
               GPUSA-macOS-<arch>.zip      the same, for anyone who prefers a zip
+    Linux     GPUSA-Linux-<arch>.tar.gz   three app folders + install.sh + INSTALL.txt
+                                          (built on an older glibc so it runs on Arch,
+                                          Ubuntu, Fedora, ... - see build.yml)
 
 Each app is built with its own onedir .spec (pos_app/pos_app.spec etc. -
 the same files build_exe.bat uses), so what ships here is exactly what the
@@ -62,7 +65,8 @@ def run(cmd: list[str], **kwargs) -> None:
 
 def build_app(app: App) -> Path:
     """Run PyInstaller on the app's spec and return what it produced: the
-    folder holding the .exe (Windows) or the .app bundle (macOS)."""
+    folder holding the .exe (Windows) or the executable (Linux), or the
+    .app bundle (macOS)."""
     dist = BUILD_ROOT / app.key / "dist"
     work = BUILD_ROOT / app.key / "work"
     run(
@@ -118,6 +122,84 @@ is expected, and the app is not damaged. Either:
 """
 
 
+INSTALL_LINUX = """GPUSA - Linux
+
+1. Unpack this archive anywhere you like, e.g. into ~/Apps:
+       tar -xzf GPUSA-Linux-x64.tar.gz -C ~/Apps
+2. Optional: run ./install.sh once from the unpacked GPUSA folder. It adds
+   GPUSA Admin, GPUSA POS and GPUSA Depot to your application menu (only for
+   your user - nothing is written outside your home folder). Move the folder
+   first if you want it somewhere else; the menu entries point at where it is
+   when you run install.sh. ./install.sh --remove takes the entries out again.
+3. Open GPUSA Admin first ("GPUSA Admin/AdminDashboard"). On a new system it
+   asks you to create the first administrator. Then GPUSA POS/BranchPOS at a
+   till and GPUSA Depot/DepotApp in the warehouse.
+
+All three apps run by the same user share one database, kept in
+~/.local/share/POSInventorySystem (or $XDG_DATA_HOME/POSInventorySystem).
+To point apps on several computers at one shared database, put a config.json
+next to each app's executable:
+    {"db_path": "/mnt/share/shared_backend.db"}
+
+If an app doesn't start, run it from a terminal to see why. The usual cause
+is a missing system library that Qt needs; on Arch Linux:
+    sudo pacman -S --needed xcb-util-cursor xcb-util-wm xcb-util-keysyms \\
+        xcb-util-image xcb-util-renderutil libxkbcommon-x11 fontconfig
+On Wayland the apps run through XWayland by default; QT_QPA_PLATFORM=wayland
+also works if qt6-wayland's libraries are present.
+"""
+
+# Adds/removes per-user menu entries for the three apps. Written next to them
+# in the archive; resolves its own folder so the archive can live anywhere.
+INSTALL_SH = """#!/bin/sh
+# GPUSA - add (or with --remove, take out) the three apps in your application menu.
+set -eu
+HERE=$(cd "$(dirname "$0")" && pwd)
+APPS_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/applications"
+mkdir -p "$APPS_DIR"
+for entry in "admin|GPUSA Admin|AdminDashboard|Manager dashboard" \\
+             "pos|GPUSA POS|BranchPOS|Branch point of sale" \\
+             "depot|GPUSA Depot|DepotApp|Warehouse floor and console"; do
+    key=${entry%%|*}; rest=${entry#*|}
+    name=${rest%%|*}; rest=${rest#*|}
+    exe=${rest%%|*}; comment=${rest#*|}
+    file="$APPS_DIR/gpusa-$key.desktop"
+    if [ "${1:-}" = "--remove" ]; then
+        rm -f "$file"; echo "removed $file"; continue
+    fi
+    cat > "$file" <<EOF
+[Desktop Entry]
+Type=Application
+Name=$name
+Comment=$comment
+Exec="$HERE/$name/$exe"
+Path=$HERE/$name
+Terminal=false
+Categories=Office;Finance;
+EOF
+    chmod +x "$file"
+    echo "added $file"
+done
+command -v update-desktop-database >/dev/null 2>&1 && update-desktop-database "$APPS_DIR" || true
+"""
+
+
+def package_linux(built: dict[App, Path]) -> list[Path]:
+    stage = BUILD_ROOT / "stage" / "GPUSA"
+    shutil.rmtree(stage.parent, ignore_errors=True)
+    for app, folder in built.items():
+        # symlinks=True: keep PyInstaller's library symlinks as symlinks.
+        shutil.copytree(folder, stage / app.display, symlinks=True)
+    (stage / "INSTALL.txt").write_text(INSTALL_LINUX, encoding="utf-8")
+    script = stage / "install.sh"
+    script.write_text(INSTALL_SH, encoding="utf-8", newline="\n")
+    script.chmod(0o755)
+    # gztar keeps the executable bits (a zip made here would lose them on most unzippers).
+    archive = RELEASE_DIR / f"GPUSA-Linux-{machine_label()}"
+    shutil.make_archive(str(archive), "gztar", root_dir=stage.parent, base_dir=stage.name)
+    return [Path(str(archive) + ".tar.gz")]
+
+
 def package_windows(built: dict[App, Path]) -> list[Path]:
     stage = BUILD_ROOT / "stage" / "GPUSA"
     shutil.rmtree(stage.parent, ignore_errors=True)
@@ -164,15 +246,20 @@ def package_macos(built: dict[App, Path]) -> list[Path]:
 
 
 def main() -> int:
-    if sys.platform not in ("win32", "darwin"):
-        print("This builds the Windows or macOS release; run it on one of those (or let CI do it).")
+    if not (sys.platform in ("win32", "darwin") or sys.platform.startswith("linux")):
+        print("This builds the Windows, macOS or Linux release; run it on one of those (or let CI do it).")
         return 1
     if os.environ.get("QT_QPA_PLATFORM") == "offscreen":
         os.environ.pop("QT_QPA_PLATFORM")  # a leftover from running tests must not reach PyInstaller's hooks
     shutil.rmtree(BUILD_ROOT, ignore_errors=True)
     RELEASE_DIR.mkdir(exist_ok=True)
     built = {app: build_app(app) for app in APPS}
-    files = package_windows(built) if sys.platform == "win32" else package_macos(built)
+    if sys.platform == "win32":
+        files = package_windows(built)
+    elif sys.platform == "darwin":
+        files = package_macos(built)
+    else:
+        files = package_linux(built)
     print("\nBuilt:")
     for path in files:
         print(f"  {path}  ({path.stat().st_size / 1_048_576:.1f} MB)")

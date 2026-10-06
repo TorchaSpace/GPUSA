@@ -50,9 +50,9 @@ pytest
 GUI tests use `pytest-qt` and skip cleanly with no display available.
 Tests never touch the real `shared_backend.db` - see `tests/conftest.py`.
 
-## Downloads (Windows and macOS)
+## Downloads (Windows, macOS and Linux)
 
-Pushing a version tag builds both downloads on GitHub and publishes them
+Pushing a version tag builds every download on GitHub and publishes them
 on the repo's Releases page - nothing to build by hand:
 
 ```
@@ -65,12 +65,14 @@ git push --tags
 | `GPUSA-macOS-arm64.dmg` / `.zip` | Macs with Apple Silicon (M1 and newer) |
 | `GPUSA-macOS-x64.dmg` / `.zip` | Intel Macs |
 | `GPUSA-Windows-x64.zip` | Windows 10/11 |
+| `GPUSA-Linux-x64.tar.gz` | 64-bit Linux: Arch, Ubuntu 22.04+, Fedora, Debian 12+ … (unpack, optionally run `install.sh` for menu entries) |
 
 `docs/index.html` is a download page that picks the right one for the
 visitor's computer (turn on GitHub Pages for the `docs/` folder to publish
 it; it needs a public repo, or just link people to the Releases page). The
-actions can also be run by hand from the Actions tab ("Run workflow") -
-the files are then attached to that run instead of a release.
+actions can also be run by hand from the Actions tab ("Run workflow",
+choosing all platforms or just one, e.g. `linux`) - the files are then
+attached to that run instead of a release.
 
 To build one yourself on the machine you're on (PyInstaller can't build for
 the other OS): `pip install -r requirements.txt`, then
@@ -80,7 +82,8 @@ The apps aren't code-signed yet, so the first launch needs one
 confirmation on each OS (the steps are in `INSTALL.txt` inside every
 download). Where the shared database lives by default: Windows
 `C:\ProgramData\POSInventorySystem`, macOS
-`~/Library/Application Support/POSInventorySystem`.
+`~/Library/Application Support/POSInventorySystem`, Linux
+`~/.local/share/POSInventorySystem`.
 
 ## Building a Windows .exe + installer (Windows only)
 
