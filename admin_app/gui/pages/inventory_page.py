@@ -50,9 +50,11 @@ from admin_app.gui.components.inventory_table import (
 )
 from admin_app.gui.components.product_form_popup import ProductFormPopup
 from admin_app.gui.components.section import Section
+from shared import current_session
 from shared.costing import unit_margin_percent
 from shared.formatting import format_int
 from shared.currency import format_money
+from shared.spreadsheet_safety import safe_cell
 from shared.i18n import enum_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import product_repository, stock_repository
@@ -388,7 +390,7 @@ class InventoryPage(AdminPage):
             return
 
         try:
-            product_repository.delete(product.barcode)
+            product_repository.delete(product.barcode, current_session.actor())
         except (ValueError, *DATABASE_ERRORS) as exc:
             # e.g. ProductInUseError: it has stock or history - the message says to deactivate instead.
             QMessageBox.warning(self, tr("admin.inventory.delete_failed"), str(exc))
@@ -409,7 +411,7 @@ class InventoryPage(AdminPage):
                 for product in self._all_products:
                     margin = unit_margin_percent(product.price, product.cost_price)
                     writer.writerow(
-                        [product.barcode, product.name, f"{product.price:.2f}", product.stock_quantity,
+                        [safe_cell(product.barcode), safe_cell(product.name), f"{product.price:.2f}", product.stock_quantity,
                          product.critical_stock_level,
                          f"{product.cost_price:.2f}" if product.cost_known else "",
                          f"{margin:.1f}" if margin is not None else ""]

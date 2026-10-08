@@ -548,7 +548,7 @@ class WarehousesPage(AdminPage):
         if confirm != QMessageBox.Yes:
             return
         try:
-            warehouse_repository.delete(warehouse.code)
+            warehouse_repository.delete(warehouse.code, current_session.actor())
         except (ValueError, *DATABASE_ERRORS) as exc:
             # LocationHasStockError / LocationInUseError: the message says what to do (move stock, or deactivate).
             QMessageBox.warning(self, tr("admin.warehouses.delete_failed"), str(exc))

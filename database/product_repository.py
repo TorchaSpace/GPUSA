@@ -22,7 +22,9 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from shared.auth import Actor
 from shared.i18n import UserError
+from database import audit_repository
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBarcodeError,
@@ -252,13 +254,14 @@ def set_active(barcode: str, active: bool) -> None:
         )
 
 
-def delete(barcode: str) -> None:
+def delete(barcode: str, by: Actor | None = None) -> None:
     """Remove a product that has never been used. Raises
     ProductNotFoundError if it doesn't exist and ProductInUseError if it
     still has stock anywhere (shelves, warehouses, a truck) or any history
     (stock movements, sales, shipment lines) - deleting would destroy stock
     without a movement or break the records that point at it. Deactivate
-    such a product instead (set_active)."""
+    such a product instead (set_active). `by` (who deleted it) goes to the
+    audit trail in the same transaction."""
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -282,6 +285,7 @@ def delete(barcode: str) -> None:
                     raise ProductInUseError(code, what, what_key)
             conn.execute("DELETE FROM stock_levels WHERE product_barcode = ?", (code,))
             conn.execute("DELETE FROM products WHERE barcode = ?", (code,))
+            audit_repository.record(conn, by, "deleted", "product", code, row["name"])
         except Exception:
             conn.execute("ROLLBACK")
             raise

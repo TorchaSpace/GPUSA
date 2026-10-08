@@ -19,7 +19,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from shared.auth import Actor
 from shared.i18n import UserError
+from database import audit_repository
 from database.connection import connection_scope
 from database.exceptions import DealershipNotFoundError, DuplicateDealershipCodeError, LocationHasStockError
 from shared.models import DEALERSHIP_REGIONS, Dealership
@@ -169,7 +171,7 @@ def update(dealership: Dealership) -> None:
         )
 
 
-def delete(code: str) -> None:
+def delete(code: str, by: Actor | None = None) -> None:
     """Remove a dealership. Raises DealershipNotFoundError if it doesn't
     exist, LocationHasStockError if stock is still on its shelves (the
     units would be lost track of - move or count them out first),
@@ -191,10 +193,13 @@ def delete(code: str) -> None:
             open_shipments = active_count_for(conn, dealership_code=code)
             if open_shipments:
                 raise LocationInUseError("dealership", code, open_shipments)
+            found = conn.execute("SELECT name FROM dealerships WHERE code = ?", (code,)).fetchone()
+            name = found["name"] if found else None
             cursor = conn.execute("DELETE FROM dealerships WHERE code = ?", (code,))
             if cursor.rowcount == 0:
                 raise DealershipNotFoundError(code)
             conn.execute("DELETE FROM stock_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,))
+            audit_repository.record(conn, by, "deleted", "dealership", code, name)
         except Exception:
             conn.execute("ROLLBACK")
             raise

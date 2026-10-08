@@ -7,6 +7,7 @@ to live.
 from __future__ import annotations
 import dataclasses
 import sqlite3
+import uuid
 from datetime import datetime
 
 from database import account_repository, product_repository
@@ -60,6 +61,11 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     "the other checkout committed first, stock ran out" failure here, not
     a partially-applied write if two checkouts land at once.
 
+    `transaction.client_uuid` (made here when the till did not send one) is
+    the sale's key: a sale whose key is already stored is NOT sold again -
+    the stored sale is returned, nothing is written (a retry after a lost
+    answer, or an offline till uploading twice, can never double a sale).
+
     `transaction.payment_method` ("card" / "cash", see
     shared.models.PAYMENT_METHODS) is stored as given; anything else is a
     ValueError before the database is touched.
@@ -71,6 +77,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     if transaction.payment_method is not None and transaction.payment_method not in PAYMENT_METHODS:
         raise ValueError(f"Unknown payment method: {transaction.payment_method!r}")
 
+    client_uuid = (transaction.client_uuid or "").strip() or uuid.uuid4().hex
     wanted: dict[str, int] = {}
     for item in transaction.items:
         wanted[item.product_barcode] = wanted.get(item.product_barcode, 0) + item.quantity
@@ -78,6 +85,10 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            already = conn.execute("SELECT id FROM transactions WHERE client_uuid = ?", (client_uuid,)).fetchone()
+            if already is not None:
+                conn.execute("ROLLBACK")
+                return get_by_id(already["id"])
             require_location(conn, location)
             if location.kind == "dealership":
                 shop = conn.execute("SELECT name, is_active FROM dealerships WHERE code = ?", (location.code,)).fetchone()
@@ -110,9 +121,10 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
                     raise InsufficientStockError(barcode, quantity, available, location.label)
 
             cursor = conn.execute(
-                "INSERT INTO transactions (total, dealership_code, cashier, payment_method) VALUES (?, ?, ?, ?)",
+                "INSERT INTO transactions (total, dealership_code, cashier, payment_method, client_uuid) "
+                "VALUES (?, ?, ?, ?, ?)",
                 (transaction.total, None if location.is_unassigned else location.code, actor_label(cashier),
-                 transaction.payment_method),
+                 transaction.payment_method, client_uuid),
             )
             transaction_id = cursor.lastrowid
 
@@ -157,6 +169,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
         dealership_code=None if location.is_unassigned else location.code,
         cashier=actor_label(cashier),
         payment_method=transaction.payment_method,
+        client_uuid=client_uuid,
     )
 
 
@@ -174,7 +187,7 @@ def get_by_id(transaction_id: int) -> Transaction:
     """
     with connection_scope() as conn:
         header = conn.execute(
-            "SELECT id, created_at, dealership_code, cashier, payment_method FROM transactions WHERE id = ?", (transaction_id,)
+            "SELECT id, created_at, dealership_code, cashier, payment_method, client_uuid FROM transactions WHERE id = ?", (transaction_id,)
         ).fetchone()
         if header is None:
             raise TransactionNotFoundError(transaction_id)
@@ -198,7 +211,7 @@ def get_by_id(transaction_id: int) -> Transaction:
     ]
     return Transaction(id=header["id"], created_at=_parse_timestamp(header["created_at"]), items=items,
                        dealership_code=header["dealership_code"], cashier=header["cashier"],
-                       payment_method=header["payment_method"])
+                       payment_method=header["payment_method"], client_uuid=header["client_uuid"])
 
 
 def _parse_timestamp(value: str) -> datetime:

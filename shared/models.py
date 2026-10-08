@@ -81,6 +81,10 @@ class Transaction:
     dealership_code: str | None = None  # whose shelf it came off (None: unassigned stock)
     cashier: str | None = None  # "name · badge" of the signed-in cashier
     payment_method: str | None = None  # one of PAYMENT_METHODS; None on sales from before v7
+    # A key the till makes once per sale (migration v9): sending the same sale
+    # again - a retry after a dropped connection, a re-upload from an offline
+    # till - returns the sale already stored instead of selling twice.
+    client_uuid: str | None = None
 
     @property
     def total(self) -> float:

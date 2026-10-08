@@ -44,7 +44,10 @@ CREATE TABLE IF NOT EXISTS transactions (
     cashier         TEXT,
     -- How the customer paid (migration v7). NULL: a sale from before the
     -- till recorded it.
-    payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash'))
+    payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash')),
+    -- One key per sale, made by the till (migration v9): the same sale sent
+    -- twice is stored once. NULL on sales from before v9.
+    client_uuid     TEXT
 );
 
 -- Line items are stored separately from `transactions` (rather than as a
@@ -508,3 +511,25 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_requests_one_open
     ON stock_requests(dealership_code, product_barcode COLLATE NOCASE) WHERE status = 'open';
 CREATE INDEX IF NOT EXISTS idx_stock_requests_status ON stock_requests(status);
 CREATE INDEX IF NOT EXISTS idx_stock_requests_shipment_id ON stock_requests(shipment_id);
+
+-- Append-only trail of administrative actions that have no history table of
+-- their own (migration v9): deleting a product / dealership / warehouse,
+-- later also refunds. Written in the SAME transaction as the action; `target`
+-- and `detail` are text snapshots so the row outlives what it describes.
+CREATE TABLE IF NOT EXISTS admin_audit (
+    id          INTEGER PRIMARY KEY AUTOINCREMENT,
+    at          TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    actor       TEXT,
+    action      TEXT NOT NULL,
+    kind        TEXT NOT NULL,
+    target      TEXT NOT NULL,
+    detail      TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_admin_audit_at ON admin_audit(at);
+
+CREATE TRIGGER IF NOT EXISTS trg_admin_audit_no_update BEFORE UPDATE ON admin_audit
+BEGIN SELECT RAISE(ABORT, 'admin_audit is append-only'); END;
+
+CREATE TRIGGER IF NOT EXISTS trg_admin_audit_no_delete BEFORE DELETE ON admin_audit
+BEGIN SELECT RAISE(ABORT, 'admin_audit is append-only'); END;

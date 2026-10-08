@@ -12,7 +12,9 @@ from __future__ import annotations
 
 import sqlite3
 
+from shared.auth import Actor
 from shared.i18n import UserError
+from database import audit_repository
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityBelowUsageError,
@@ -140,7 +142,7 @@ def update(warehouse: Warehouse) -> None:
             conn.execute("COMMIT")
 
 
-def delete(code: str) -> None:
+def delete(code: str, by: Actor | None = None) -> None:
     """Remove a warehouse that holds no stock and has no open shipments.
     Raises LocationHasStockError if any stock is still there (move it first
     - deleting would lose track of it), LocationInUseError while a
@@ -169,6 +171,7 @@ def delete(code: str) -> None:
             conn.execute(
                 "DELETE FROM stock_levels WHERE location_kind = 'warehouse' AND location_code = ?", (code,)
             )
+            audit_repository.record(conn, by, "deleted", "warehouse", code)
         except Exception:
             conn.execute("ROLLBACK")
             raise

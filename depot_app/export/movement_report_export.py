@@ -10,6 +10,7 @@ from shared import i18n
 from shared.builders.movement_report_builder import MovementReport
 from shared.i18n import tr
 from shared.formatting import local_datetime_text
+from shared.spreadsheet_safety import safe_cell
 from shared.warehousing import direction_label, reason_label, reference_text
 
 MOVEMENT_HEADERS = ["Time", "Movement", "SKU", "Product", "Qty", "Why", "Reference", "Handled by"]
@@ -55,7 +56,7 @@ def export_excel(report: MovementReport, path: Path) -> None:
     book = Workbook()
     sheet = book.active
     sheet.title = tr("depot.rep.sheet_summary")
-    sheet.append([report.title])
+    sheet.append([safe_cell(report.title)])
     sheet["A1"].font = Font(bold=True, size=14)
     sheet.append([report.period_text])
     sheet.append([])
@@ -63,7 +64,7 @@ def export_excel(report: MovementReport, path: Path) -> None:
     for cell in sheet[4]:
         cell.font = Font(bold=True)
     for row in summary_rows(report):
-        sheet.append(row)
+        sheet.append([safe_cell(v) for v in row])
     for cell in sheet[sheet.max_row]:
         cell.font = Font(bold=True)
     sheet.column_dimensions["A"].width = 14
@@ -74,7 +75,7 @@ def export_excel(report: MovementReport, path: Path) -> None:
     for cell in detail[1]:
         cell.font = Font(bold=True)
     for m in report.movements:
-        detail.append(movement_row(m))
+        detail.append([safe_cell(v) for v in movement_row(m)])
     for column, width in zip("ABCDEFGH", (18, 11, 14, 30, 8, 18, 40, 24)):
         detail.column_dimensions[column].width = width
     book.save(str(path))

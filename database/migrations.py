@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import sqlite3
 
-LATEST_VERSION = 8
+LATEST_VERSION = 9
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -315,7 +315,20 @@ def _to_v8(conn: sqlite3.Connection) -> None:
     startup), so an older database already has them; nothing to backfill."""
 
 
-_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8}
+_V9_COLUMNS = (
+    ("transactions", "client_uuid", "TEXT"),
+)
+
+
+def _to_v9(conn: sqlite3.Connection) -> None:
+    """Version 9 - a sale carries a key from the till so sending it twice
+    stores it once."""
+    _add_columns(conn, _V9_COLUMNS)
+    conn.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_transactions_client_uuid ON transactions(client_uuid) "
+                 "WHERE client_uuid IS NOT NULL")
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

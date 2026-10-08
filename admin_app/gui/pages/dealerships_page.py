@@ -26,6 +26,7 @@ from admin_app.gui.components.dealership_form_popup import DealershipFormPopup
 from admin_app.gui.components.dealership_table import DealershipTable, status_for
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
+from shared import current_session
 from shared.formatting import format_int
 from shared.i18n import plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
@@ -265,7 +266,7 @@ class DealershipsPage(AdminPage):
             return
 
         try:
-            dealership_repository.delete(dealership.code)
+            dealership_repository.delete(dealership.code, current_session.actor())
         except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, tr("admin.dealerships.delete_failed"), str(exc))
             return
