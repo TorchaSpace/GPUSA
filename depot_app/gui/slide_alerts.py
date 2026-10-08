@@ -60,9 +60,11 @@ class _Card(QFrame):
 
 
 class SlideAlerts(QObject):
-    def __init__(self, window: QWidget):
+    def __init__(self, window: QWidget, on_open=None):
+        """`on_open`: called when a card is clicked (the Console jumps to Shipments)."""
         super().__init__(window)
         self._window = window
+        self._on_open = on_open
         self._cursor = 0
         self._cards: list[_Card] = []
         self._waiting: deque[tuple[str, str, str]] = deque()
@@ -105,10 +107,15 @@ class SlideAlerts(QObject):
     def _pump(self) -> None:
         while self._waiting and len(self._cards) < MAX_VISIBLE and self._window.isVisible():
             title, detail, color = self._waiting.popleft()
-            card = _Card(self._window, title, detail, color, self._dismiss)
+            card = _Card(self._window, title, detail, color, self._clicked)
             self._cards.append(card)
             self._relayout(new=card)
             QTimer.singleShot(SHOW_MS, lambda c=card: self._dismiss(c))
+
+    def _clicked(self, card: _Card) -> None:
+        self._dismiss(card)
+        if self._on_open is not None:
+            self._on_open()
 
     def _dismiss(self, card: _Card) -> None:
         if card in self._cards:

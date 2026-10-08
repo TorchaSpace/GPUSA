@@ -310,3 +310,23 @@ def test_a_depot_manager_cannot_approve_a_switch():
     with pytest.raises(Exception):
         account_repository.authenticate("M-1", "7351", auth.AREA_ADMIN, "Depot WH-01")
     assert account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "Depot WH-01").role == "admin"
+
+
+def test_a_shop_running_low_slides_an_alert_into_the_console_and_a_click_opens_shipments(floor, qapp):
+    from database import dealership_repository, transaction_repository
+    from shared.models import Dealership, LineItem, Transaction
+
+    dealership_repository.create(Dealership(code="D-A", name="Harbor", region="Metro", city="X"))
+    shop = StockLocation.dealership("D-A")
+    product_repository.create(Product("TAPE", "Tape", 2, 0, 5))
+    stock_repository.receive(shop, "TAPE", 6)
+    floor._open_console(MANAGER)
+    console = floor._console_window
+    console._watcher.stop()
+    console._alerts.start()
+    transaction_repository.finalize_transaction(Transaction(items=[LineItem("TAPE", "Tape", 2, 1)]), location=shop)  # 5 = level
+    assert console._alerts.poll() == 1
+    assert len(console._alerts.active()) == 1
+    card = console._alerts.active()[0]
+    card.mousePressEvent(None)
+    assert console._stack.currentWidget() is console._pages["Shipments"] and console._alerts.active() == []

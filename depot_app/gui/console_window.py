@@ -74,6 +74,7 @@ from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
+from depot_app.gui.slide_alerts import SlideAlerts
 from shared.gui_kit.live_updates import DataWatcher
 from shared.i18n import tr
 from shared.textcase import upper
@@ -169,12 +170,17 @@ class ConsoleWindow(QMainWindow):
         self._session_timer.start()
 
         # Live: whatever the tills, the Floor or Admin just did shows on the page open now.
+        # A shop (or depot) running low slides in a card for the purchasing person; a click opens Shipments.
+        self._alerts = SlideAlerts(self, on_open=lambda: self._navigate("Shipments"))
         self._watcher = DataWatcher(parent=self)
         self._watcher.changed.connect(self.refresh_live)
         self._watcher.start()
 
     def refresh_live(self) -> None:
-        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+        if not self.isVisible():
+            return
+        self._alerts.poll()
+        if QApplication.activeModalWidget() is not None:
             return
         key = next((k for k, page in self._pages.items() if page is self._stack.currentWidget()), None)
         if key == "Warehouses":
