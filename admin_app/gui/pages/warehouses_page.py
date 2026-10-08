@@ -56,6 +56,7 @@ from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard
+from admin_app.gui.components.stock_distribute_popup import StockDistributePopup
 from admin_app.gui.components.stock_move_popup import StockMovePopup
 from admin_app.gui.components.styled_table import cell, styled_table
 from admin_app.gui.components.warehouse_capacity_card import WarehouseCapacityCard
@@ -139,7 +140,9 @@ class WarehousesPage(AdminPage):
         move.clicked.connect(self._open_move)
         refresh = CompactButton(tr("admin.refresh"))
         refresh.clicked.connect(self.reload)
-        for button in (add, move, refresh):
+        distribute = CompactButton(tr("admin.warehouses.dist_button"), variant="primary")
+        distribute.clicked.connect(self._open_distribute)
+        for button in (add, distribute, move, refresh):
             self.add_header_action(button)
 
         self.body_layout().addWidget(self._build_kpis())
@@ -151,6 +154,8 @@ class WarehousesPage(AdminPage):
         self._form.accepted.connect(self._save_form)
         self._move_popup = StockMovePopup(self)
         self._move_popup.stock_changed.connect(self.reload)
+        self._distribute_popup = StockDistributePopup(self)
+        self._distribute_popup.stock_changed.connect(self.reload)
 
         self._poller = PollingTimer(self._fetch, interval_ms=WAREHOUSE_POLL_INTERVAL_MS, parent=self)
         self._poller.result_ready.connect(self._on_fetched)
@@ -568,6 +573,14 @@ class WarehousesPage(AdminPage):
         )
         self._move_popup.show()
         self._move_popup.raise_()
+
+    def _open_distribute(self) -> None:
+        if not self._data:
+            return
+        active = [w for w in self._data["warehouses"] if w.is_active]
+        self._distribute_popup.set_choices(self._data["products"], active, self._data["dealerships"], source=UNASSIGNED)
+        self._distribute_popup.show()
+        self._distribute_popup.raise_()
 
     def place_all_unassigned(self, code: str) -> int:
         """Move every unassigned unit to warehouse `code`; returns units moved."""

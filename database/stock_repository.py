@@ -273,6 +273,44 @@ def transfer(
     _write(run)
 
 
+def distribute(source: StockLocation, barcode: str, allocations: list[tuple[StockLocation, int]],
+               note: str | None = None, actor: Actor | None = None) -> int:
+    """Split one product's stock from `source` across several places in ONE
+    all-or-nothing step: [(place, units), ...]. Zero-unit rows are ignored; a
+    place may appear once. Same rules as transfer() for each leg (capacity,
+    inactive warehouse, enough stock at the source - checked for the whole
+    sum). Returns the units placed."""
+    legs = [(loc, whole_number(qty, "Quantity")) for loc, qty in allocations if qty]
+    if not legs:
+        raise UserError("err.distribute_nothing")
+    if any(qty < 0 for _, qty in legs):
+        raise UserError("err.count_negative")
+    places = [loc for loc, _ in legs]
+    if len(set(places)) != len(places):
+        raise UserError("err.two_locations")
+    if source in places:
+        raise UserError("err.two_locations")
+
+    def run(conn):
+        require_location(conn, source)
+        code = resolve_product(conn, barcode)[0]
+        note_text = _clean(note)
+        total = 0
+        for destination, qty in legs:
+            require_location(conn, destination)
+            require_can_hold(conn, destination, qty)
+            change_level(conn, source, code, -qty, change_total=False)
+            change_level(conn, destination, code, qty, change_total=False)
+            log_movement(conn, source, code, "dispatch", qty, reason="transfer", note=note_text,
+                         reference=destination.label, actor=actor)
+            log_movement(conn, destination, code, "receive", qty, reason="transfer", note=note_text,
+                         reference=source.label, actor=actor)
+            total += qty
+        return total
+
+    return _write(run)
+
+
 def set_count(location: StockLocation, barcode: str, counted: int, note: str | None = None,
               actor: Actor | None = None) -> int:
     """A stock count: someone counted `counted` units at `location`. The
