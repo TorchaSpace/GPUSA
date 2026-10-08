@@ -65,3 +65,20 @@ def test_the_popup_checks_the_sum_and_applies(qapp):
     assert stock_repository.quantity_at(WH1, "BOX") == 70 and stock_repository.quantity_at(WH2, "BOX") == 20
     assert seen == [1] and all(s.value() == 0 for s in popup._spins)  # ready for the next one
     popup.close()
+
+
+def test_the_unplaced_warning_names_what_is_left_and_goes_away_when_all_is_placed(qapp):
+    from admin_app.gui.pages.warehouses_page import WarehousesPage
+
+    product_repository.create(Product("TAPE", "Tape roll", 2, 4, 1))
+    page = WarehousesPage()
+    page.show()
+    pump(qapp)
+    assert page._banner.isVisible() and "Carton (100)" in page._banner_text.text() and "Tape roll (4)" in page._banner_text.text()
+    page._open_distribute()
+    assert page._distribute_popup._barcode() == "BOX"  # opens on the product with the most waiting
+    stock_repository.distribute(UNASSIGNED, "BOX", [(WH1, 100)])
+    stock_repository.distribute(UNASSIGNED, "TAPE", [(WH1, 4)])
+    page.reload()
+    assert not page._banner.isVisible()
+    page.close()

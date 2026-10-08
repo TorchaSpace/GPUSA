@@ -583,6 +583,7 @@ TR_ADMIN = {
     "admin.warehouses.mv_product": "Ürün",
     "admin.warehouses.mv_qty": "Miktar",
     "admin.warehouses.mv_set": "{source}: {barcode} {qty} olarak ayarlandı ({diff}).",
+    "admin.warehouses.banner_left": "Henüz yerleşmeyenler:",
     "admin.warehouses.dist_title": "Stok dağıt",
     "admin.warehouses.dist_button": "Stok dağıt",
     "admin.warehouses.dist_hint": "Adetlerin nereye gideceğini seç. Hepsi birden yerleşir ya da hiçbiri.",

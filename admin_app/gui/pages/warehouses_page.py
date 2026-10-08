@@ -364,7 +364,13 @@ class WarehousesPage(AdminPage):
         unassigned = self._data["used"].get(UNASSIGNED, 0)
         active = [w for w in self._data["warehouses"] if w.is_active]
         self._banner.setVisible(bool(unassigned and active))
-        self._banner_text.setText(tr("admin.warehouses.banner").format(units=format_int(unassigned)))
+        left = sorted((lv for lv in self._data["levels"] if lv.location.is_unassigned and lv.quantity > 0),
+                      key=lambda lv: -lv.quantity)
+        listing = ", ".join(f"{lv.product_name} ({format_int(lv.quantity)})" for lv in left[:5])
+        if len(left) > 5:
+            listing += f" +{len(left) - 5}"
+        self._banner_text.setText(tr("admin.warehouses.banner").format(units=format_int(unassigned))
+                                  + (f"<br>{tr('admin.warehouses.banner_left')} {listing}" if listing else ""))
         current = self._place_target.currentData()
         self._place_target.clear()
         for w in active:
@@ -578,7 +584,10 @@ class WarehousesPage(AdminPage):
         if not self._data:
             return
         active = [w for w in self._data["warehouses"] if w.is_active]
-        self._distribute_popup.set_choices(self._data["products"], active, self._data["dealerships"], source=UNASSIGNED)
+        waiting = next((lv.product_barcode for lv in sorted(self._data["levels"], key=lambda lv: -lv.quantity)
+                        if lv.location.is_unassigned and lv.quantity > 0), None)
+        self._distribute_popup.set_choices(self._data["products"], active, self._data["dealerships"], source=UNASSIGNED,
+                                           barcode=waiting)
         self._distribute_popup.show()
         self._distribute_popup.raise_()
 

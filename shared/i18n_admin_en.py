@@ -541,6 +541,7 @@ EN_ADMIN = {
     "admin.warehouses.mv_product": "Product",
     "admin.warehouses.mv_qty": "Quantity",
     "admin.warehouses.mv_set": "{source}: {barcode} set to {qty} ({diff}).",
+    "admin.warehouses.banner_left": "Still unplaced:",
     "admin.warehouses.dist_title": "Distribute stock",
     "admin.warehouses.dist_button": "Distribute stock",
     "admin.warehouses.dist_hint": "Choose where the units go. Everything is placed at once, or nothing is.",
