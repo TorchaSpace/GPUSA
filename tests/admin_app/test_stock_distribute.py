@@ -93,3 +93,20 @@ def test_counting_a_shelf_places_the_waiting_units_instead_of_adding_them_twice(
     assert product_repository.get_by_barcode("BOX").stock_quantity == 130
     stock_repository.set_count(WH2, "BOX", 5)
     assert product_repository.get_by_barcode("BOX").stock_quantity == 135
+
+
+def test_clearing_the_unplaced_pile_removes_the_double_count(qapp):
+    from admin_app.gui.pages.warehouses_page import WarehousesPage
+
+    # 100 units were counted into a warehouse by hand BEFORE counts absorbed unplaced stock: the old double count
+    with connection.connection_scope() as conn:
+        stock_repository.change_level(conn, WH1, "BOX", 100, change_total=True)
+    assert product_repository.get_by_barcode("BOX").stock_quantity == 200
+    page = WarehousesPage()
+    page.show()
+    pump(qapp)
+    assert page.clear_unplaced() == 100
+    assert stock_repository.quantity_at(UNASSIGNED, "BOX") == 0 and stock_repository.quantity_at(WH1, "BOX") == 100
+    assert product_repository.get_by_barcode("BOX").stock_quantity == 100
+    assert not page._banner.isVisible()
+    page.close()

@@ -213,6 +213,10 @@ class WarehousesPage(AdminPage):
         place = CompactButton(tr("admin.warehouses.place_all"))
         place.clicked.connect(self._place_all_unassigned)
         layout.addWidget(place)
+        clear = CompactButton(tr("admin.warehouses.clear_unplaced"))
+        clear.setToolTip(tr("admin.warehouses.clear_unplaced_tip"))
+        clear.clicked.connect(self._clear_unplaced)
+        layout.addWidget(clear)
         self._banner.hide()
         return self._banner
 
@@ -590,6 +594,25 @@ class WarehousesPage(AdminPage):
                                            barcode=waiting)
         self._distribute_popup.show()
         self._distribute_popup.raise_()
+
+    def clear_unplaced(self) -> int:
+        """Drop the unplaced pile (it was already counted at the warehouses); returns units removed."""
+        removed = stock_repository.clear_unassigned(actor=current_session.actor())
+        self.reload()
+        return removed
+
+    def _clear_unplaced(self) -> None:
+        units = self._data["used"].get(UNASSIGNED, 0) if self._data else 0
+        if not units:
+            return
+        answer = QMessageBox.question(self, tr("admin.warehouses.clear_unplaced"),
+                                      tr("admin.warehouses.clear_unplaced_confirm").format(units=format_int(units)))
+        if answer != QMessageBox.Yes:
+            return
+        try:
+            self.clear_unplaced()
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            QMessageBox.warning(self, tr("admin.warehouses.clear_unplaced"), str(exc))
 
     def place_all_unassigned(self, code: str) -> int:
         """Move every unassigned unit to warehouse `code`; returns units moved."""

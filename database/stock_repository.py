@@ -342,6 +342,27 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
     return _write(run)
 
 
+def clear_unassigned(actor: Actor | None = None) -> int:
+    """Write off every unplaced unit as a count correction (to 0), all products at once. For stock that
+    was ALSO added at a warehouse by hand (a count or receipt) while it still sat "unplaced": the company
+    counted it twice. The company total drops by those units and each product gets a 'count' movement.
+    Returns the units removed."""
+    def run(conn):
+        rows = conn.execute(
+            "SELECT product_barcode, quantity FROM stock_levels WHERE location_kind = 'unassigned' AND quantity > 0"
+        ).fetchall()
+        removed = 0
+        for row in rows:
+            qty = int(row["quantity"])
+            change_level(conn, UNASSIGNED, row["product_barcode"], -qty, change_total=True)
+            log_movement(conn, UNASSIGNED, row["product_barcode"], "dispatch", qty, reason="count",
+                         note="Cleared unplaced stock (already counted at a warehouse)", actor=actor)
+            removed += qty
+        return removed
+
+    return _write(run)
+
+
 def place_all_unassigned(destination: StockLocation, actor: Actor | None = None) -> int:
     """Move every unassigned unit, of every product, to `destination` (the
     one-click "these are all in the main warehouse" after upgrading).
