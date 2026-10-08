@@ -24,6 +24,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtWidgets import (
     QApplication,
+    QComboBox,
     QFrame,
     QLineEdit,
     QScrollArea,
@@ -35,11 +36,15 @@ from PySide6.QtWidgets import (
 )
 
 import depot_app.gui.icons as icons
+from database import warehouse_repository
+from database.exceptions import DATABASE_ERRORS
+from database.stock_repository import critical_at
 from shared.gui_kit.live_updates import DataWatcher
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.checkin_panel import CheckInPanel
 from depot_app.gui.low_stock_banner import LowStockBanner
 from depot_app.gui.movement_panel import MovementPanel
+from depot_app.gui.slide_alerts import SlideAlerts
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.motion import fade_in, toast
@@ -67,6 +72,19 @@ class MainWindow(QMainWindow):
 
         self._console_window = None  # lazily created, kept alive here (see _open_console)
 
+        self._alerts = SlideAlerts(self)
+        self._build_content()
+
+        # Live: a request from a till, a check-in at the other door, stock moved
+        # from the Console... shows on the Floor within about a second.
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    def _build_content(self) -> None:
+        """The Floor for `self.warehouse`: header, low-stock banner, check-in and the two movement panels.
+        Rebuilt whole when the person switches depot, so nothing keeps pointing at the old one."""
+        p = INDUSTRY_PALETTE
         central = QWidget()
         central.setObjectName("floorCentral")
         central.setAttribute(Qt.WA_StyledBackground, True)
@@ -113,22 +131,85 @@ class MainWindow(QMainWindow):
         # big input boxes into each other. Without it the scroller scrolls when the content needs more.
         central.setMinimumWidth(1100)
         scroller.setWidget(central)
-        self.setCentralWidget(scroller)
+        self.setCentralWidget(scroller)  # Qt frees the previous content (and its pollers) with it
         fade_in(scroller, 260)
 
-        # Live: a request from a till, a check-in at the other door, stock moved
-        # from the Console... shows on the Floor within about a second.
-        self._watcher = DataWatcher(parent=self)
-        self._watcher.changed.connect(self.refresh_live)
-        self._watcher.start()
+    # --- switching depot -----------------------------------------------------
+
+    def _build_site_picker(self) -> QComboBox:
+        """The depot this Floor shows, as a drop-down of every active warehouse (this one always included)."""
+        p = INDUSTRY_PALETTE
+        picker = QComboBox()
+        picker.setObjectName("sitePicker")
+        picker.setStyleSheet(
+            f"#sitePicker {{ background-color: {p['accent_100']}; color: {p['accent_900']}; border: 1px solid {p['accent']}; "
+            f"padding: 5px 12px; font-size: 13px; font-weight: 600; min-width: 170px; }}"
+        )
+        picker.setToolTip(tr("depot.floor.switch_tip"))
+        self._fill_picker(picker)
+        picker.currentIndexChanged.connect(lambda _i, c=picker: QTimer.singleShot(0, lambda: self._picked(c)))
+        return picker
+
+    def _fill_picker(self, picker: QComboBox) -> None:
+        try:
+            warehouses = [w for w in warehouse_repository.list_all(active_only=True)]
+        except DATABASE_ERRORS:
+            warehouses = []
+        if not any(w.code == self.warehouse.code for w in warehouses):
+            warehouses.insert(0, self.warehouse)
+        picker.blockSignals(True)
+        picker.clear()
+        for w in warehouses:
+            picker.addItem(w.site_label, w.code)
+        picker.setCurrentIndex(max(0, picker.findData(self.warehouse.code)))
+        picker.blockSignals(False)
+        self._picker_codes = [w.code for w in warehouses]
+
+    def _picked(self, picker: QComboBox) -> None:
+        try:
+            code = picker.currentData()
+        except RuntimeError:  # the picker was rebuilt before this ran
+            return
+        if code and code != self.warehouse.code:
+            self.switch_warehouse(code)
+
+    def switch_warehouse(self, code: str) -> bool:
+        """Show another depot: every panel, the banner and the check-in list follow it. A signed-in
+        Console belongs to the depot it was opened for, so it is closed (signing that manager out)."""
+        try:
+            target = warehouse_repository.get_by_code(code)
+        except (ValueError, *DATABASE_ERRORS):
+            return False
+        if self._console_window is not None:
+            self._console_window.close()
+            self._console_window = None
+        self.warehouse = target
+        self.setWindowTitle(tr("depot.floor.window_title").format(site=target.site_label))
+        self._build_content()
+        self._alerts.start()
+        self._alerts.announce(critical_at(target.location), target.site_label)
+        return True
 
     def refresh_live(self) -> None:
-        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+        if not self.isVisible():
             return
+        self._alerts.poll()
+        if QApplication.activeModalWidget() is not None:
+            return
+        if self._site_picker.count() != len(self._picker_codes) or self._site_picker.count() != \
+                len(self._site_codes_now()):
+            self._fill_picker(self._site_picker)
         self._low_stock_banner.reload()
         self._checkin_panel.reload()
         self._receive_panel.reload()
         self._dispatch_panel.reload()
+
+    def _site_codes_now(self) -> list[str]:
+        try:
+            codes = [w.code for w in warehouse_repository.list_all(active_only=True)]
+        except DATABASE_ERRORS:
+            return list(self._picker_codes)
+        return codes if self.warehouse.code in codes else [self.warehouse.code, *codes]
 
     def _build_header(self) -> QWidget:
         p = INDUSTRY_PALETTE
@@ -153,12 +234,8 @@ class MainWindow(QMainWindow):
         )
         layout.addWidget(wordmark)
 
-        tag = QLabel(self.warehouse.site_label)
-        tag.setStyleSheet(
-            f"background-color: {p['accent_100']}; color: {p['accent_900']}; border: 1px solid {p['accent']}; "
-            f"padding: 5px 12px; font-size: 13px; font-weight: 600;"
-        )
-        layout.addWidget(tag)
+        self._site_picker = self._build_site_picker()
+        layout.addWidget(self._site_picker)
 
         layout.addStretch(1)
 

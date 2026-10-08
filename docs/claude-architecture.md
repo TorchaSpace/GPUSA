@@ -148,6 +148,7 @@ Check-in is scoped to this depot's warehouse. Floor header shows shift A/B/C
   PO steps, account lockout) so an event exists iff the action committed; `stock_crossing()` adds low/out
   once per crossing. Severity info/notice/warning/critical; kind + `data_json` are rendered at display time by
   `shared/activity.py` with `activity.<kind>.title/.detail` i18n keys (EN+TR). Pruned after 30 days at Admin start.
+- Depot Floor: the header drop-down switches depot (`MainWindow.switch_warehouse` rebuilds the content for it and closes the old Console); `depot_app/gui/slide_alerts.py` slides in one card per new low/out event (max 4 on screen, rest queue).
 - Admin: `components/notification_center.py` (`NotificationCenter` unread count per badge in settings,
   `NotificationPanel` from the header bell, `ToastHost` max 3 for warning/critical), and Overview's
   "Live activity" section.

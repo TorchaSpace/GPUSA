@@ -230,3 +230,37 @@ def test_floor_and_console_follow_the_database_without_a_refresh_button(floor, q
     stock_repository.receive(WH1, "BOX", 3)  # a change made elsewhere
     console.refresh_live()
     assert console._movements_table.rowCount() == before + 1
+
+
+def test_floor_can_switch_to_another_depot_and_everything_follows(floor, qapp):
+    assert floor._site_picker.count() == 2
+    floor._open_console(MANAGER)
+    first_console = floor._console_window
+    assert floor.switch_warehouse("WH-02")
+    pump(qapp)
+    assert floor.warehouse.code == "WH-02"
+    assert floor._receive_panel._location == WH2 and floor._dispatch_panel._location == WH2
+    assert floor._low_stock_banner._location == WH2
+    assert floor._site_picker.currentData() == "WH-02"
+    assert floor._console_window is None and first_console.session is None  # the old depot's Console is closed
+    assert "Gebze" in floor.windowTitle()
+    assert floor.switch_warehouse("NOPE") is False and floor.warehouse.code == "WH-02"
+
+
+def test_several_low_stock_alerts_slide_in_together_and_extra_ones_wait(floor, qapp):
+    from database import transaction_repository
+    from shared.models import LineItem, Transaction
+
+    for n in range(6):
+        product_repository.create(Product(f"P{n}", f"Item {n}", 1, 5, 4))
+        stock_repository.transfer(UNASSIGNED, WH1, f"P{n}", 5)
+    floor._alerts.start()
+    for n in range(6):  # each sale takes the item to its reorder level
+        transaction_repository.finalize_transaction(
+            Transaction(items=[LineItem(f"P{n}", f"Item {n}", 1, 1)]), location=WH1)
+    assert floor._alerts.poll() == 6
+    pump(qapp)
+    from depot_app.gui.slide_alerts import MAX_VISIBLE
+    assert len(floor._alerts.active()) == MAX_VISIBLE and len(floor._alerts._waiting) == 6 - MAX_VISIBLE
+    floor._alerts._dismiss(floor._alerts.active()[0])  # one goes, the next waiting one slides in
+    assert len(floor._alerts.active()) == MAX_VISIBLE and len(floor._alerts._waiting) == 6 - MAX_VISIBLE - 1
