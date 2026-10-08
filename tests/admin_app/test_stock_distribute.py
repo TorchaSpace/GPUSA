@@ -82,3 +82,14 @@ def test_the_unplaced_warning_names_what_is_left_and_goes_away_when_all_is_place
     page.reload()
     assert not page._banner.isVisible()
     page.close()
+
+
+def test_counting_a_shelf_places_the_waiting_units_instead_of_adding_them_twice():
+    stock_repository.set_count(WH1, "BOX", 100)  # the 100 sitting 'unplaced' are on this shelf
+    assert stock_repository.quantity_at(WH1, "BOX") == 100
+    assert stock_repository.quantity_at(UNASSIGNED, "BOX") == 0
+    assert product_repository.get_by_barcode("BOX").stock_quantity == 100
+    stock_repository.set_count(WH1, "BOX", 130)  # 30 more really were found
+    assert product_repository.get_by_barcode("BOX").stock_quantity == 130
+    stock_repository.set_count(WH2, "BOX", 5)
+    assert product_repository.get_by_barcode("BOX").stock_quantity == 135

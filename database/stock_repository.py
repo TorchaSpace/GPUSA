@@ -316,7 +316,8 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
     """A stock count: someone counted `counted` units at `location`. The
     level is set to that and the difference is written as a 'count'
     movement (and moves the company total - the units were found or
-    lost). Returns the difference (counted - previous level)."""
+    lost; except units that were waiting unplaced, which are simply placed
+    here). Returns the difference (counted - previous level)."""
     counted = whole_number(counted, "Count")
     if counted < 0:
         raise UserError("err.count_negative")
@@ -326,7 +327,14 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
         code = resolve_product(conn, barcode)[0]
         diff = counted - level_in(conn, location, code)
         if diff:
-            change_level(conn, location, code, diff, change_total=True)
+            # Units found on a real shelf that the company already counted as "not placed yet" are those
+            # units: take them off the unplaced pile instead of counting them twice.
+            absorbed = min(diff, level_in(conn, UNASSIGNED, code)) if diff > 0 and not location.is_unassigned else 0
+            if absorbed:
+                change_level(conn, UNASSIGNED, code, -absorbed, change_total=False)
+                change_level(conn, location, code, absorbed, change_total=False)
+            if diff - absorbed:
+                change_level(conn, location, code, diff - absorbed, change_total=True)
             log_movement(conn, location, code, "receive" if diff > 0 else "dispatch", abs(diff),
                          reason="count", note=_clean(note) or f"Counted {counted}", actor=actor)
         return diff
