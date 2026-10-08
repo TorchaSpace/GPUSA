@@ -21,12 +21,14 @@ nothing to show (dev-mode run, no sidecar, not yet registered).
 
 from __future__ import annotations
 
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository
 from database.exceptions import DataAccessError
 from pos_app.gui.auth_flow import till_sign_in_dialog
 
+from pos_app.gui.components.organic import toast_style
 from pos_app.gui.components.pos_header import PosHeader
 from pos_app.gui.pages.home_page import HomePage
 from pos_app.gui.pages.my_stock_page import MyStockPage
@@ -37,6 +39,7 @@ from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.dealership_bootstrap import load_dealership_identity
 from shared.gui_kit.idle_lock import IdleLock
+from shared.gui_kit.motion import animations_enabled, fade_in, toast
 from shared.i18n import tr
 from shared.models import UNASSIGNED, StockLocation
 
@@ -145,8 +148,14 @@ class MainWindow(QMainWindow):
         widget = self._pages.get(key)
         if widget is None:
             return
+        previous = self._stack.currentWidget()
         self._stack.setCurrentWidget(widget)
         self._header.set_active(key)
+        # Home plays its own staggered intro; every other page fades and
+        # drifts up a few pixels. Nothing animates before the window is up
+        # or when the page didn't actually change.
+        if key != "home" and widget is not previous and self.isVisible():
+            self._animate_in(widget)
         if key == "home":
             self._home_page.reload_badges()
         elif key == "sale":
@@ -155,3 +164,24 @@ class MainWindow(QMainWindow):
             self._stock_page.reload()
         elif key == "receive":
             self._receive_page.reload()
+
+    def _animate_in(self, widget: QWidget, rise: int = 14, duration: int = 240) -> None:
+        if not animations_enabled():
+            return
+        fade_in(widget, duration)
+        running = getattr(widget, "_page_slide", None)
+        if running is not None:
+            running.stop()
+        end = QPoint(0, 0)  # stacked pages always rest at the stack's origin
+        slide = QPropertyAnimation(widget, b"pos", widget)
+        slide.setDuration(duration)
+        slide.setStartValue(QPoint(end.x(), end.y() + rise))
+        slide.setEndValue(end)
+        slide.setEasingCurve(QEasingCurve.OutCubic)
+        widget._page_slide = slide
+        slide.start()
+
+    def notify(self, text: str) -> None:
+        """A short confirmation toast over the window (pages may call
+        `self.window().notify(...)` when it exists)."""
+        toast(self, text, 2600, style=toast_style())

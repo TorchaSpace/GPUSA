@@ -22,12 +22,12 @@ from PySide6.QtSvg import QSvgRenderer
 
 _SVG_TEMPLATE = (
     '<svg xmlns="http://www.w3.org/2000/svg" width="{size}" height="{size}" '
-    'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="1.5" '
+    'viewBox="0 0 24 24" fill="none" stroke="{color}" stroke-width="{stroke}" '
     'stroke-linecap="round" stroke-linejoin="round">{path}</svg>'
 )
 
 
-def svg_to_pixmap(path_markup: str, color: str, size: int = 16) -> QPixmap:
+def svg_to_pixmap(path_markup: str, color: str, size: int = 16, stroke: float = 1.5) -> QPixmap:
     """Render a `<path>/<rect>/<circle>...` fragment (no wrapping <svg>) to a QPixmap.
 
     `path_markup` is exactly the inner markup a mockup's icon uses (e.g.
@@ -35,7 +35,7 @@ def svg_to_pixmap(path_markup: str, color: str, size: int = 16) -> QPixmap:
     copy it verbatim from the mockup rather than re-drawing the icon by
     hand, so the shape stays pixel-faithful.
     """
-    svg_text = _SVG_TEMPLATE.format(size=size, color=color, path=path_markup)
+    svg_text = _SVG_TEMPLATE.format(size=size, color=color, path=path_markup, stroke=stroke)
     renderer = QSvgRenderer(QByteArray(svg_text.encode("utf-8")))
     pixmap = QPixmap(QSize(size, size))
     # Qt.transparent, not 0: PySide6 reads a bare 0 as Qt.color0, which
@@ -49,5 +49,5 @@ def svg_to_pixmap(path_markup: str, color: str, size: int = 16) -> QPixmap:
     return pixmap
 
 
-def svg_to_icon(path_markup: str, color: str, size: int = 16) -> QIcon:
-    return QIcon(svg_to_pixmap(path_markup, color, size))
+def svg_to_icon(path_markup: str, color: str, size: int = 16, stroke: float = 1.5) -> QIcon:
+    return QIcon(svg_to_pixmap(path_markup, color, size, stroke))

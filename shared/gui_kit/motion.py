@@ -247,10 +247,51 @@ class Level(QObject):
         self._animation.start()
 
 
+def stagger_in(widgets, step: int = 55, duration: int = 260, rise: int = 18) -> None:
+    """Bring `widgets` in one after another: each fades up from `rise` px below.
+    Each widget's own graphics effect is replaced while it plays and removed after,
+    so give shadows to an inner widget (or accept that the shadow returns afterwards)."""
+    if not animations_enabled():
+        return
+    for index, widget in enumerate(widgets):
+        if widget is None:
+            continue
+        QTimer.singleShot(index * step, lambda w=widget: _rise(w, duration, rise) if _alive(w) else None)
+
+
+def _rise(widget: QWidget, duration: int, rise: int) -> None:
+    kept = widget.graphicsEffect()
+    effect = QGraphicsOpacityEffect(widget)
+    effect.setOpacity(0.0)
+    widget.setGraphicsEffect(effect)
+    fade = QPropertyAnimation(effect, b"opacity", widget)
+    fade.setDuration(duration)
+    fade.setStartValue(0.0)
+    fade.setEndValue(1.0)
+    fade.setEasingCurve(QEasingCurve.OutCubic)
+    start = widget.pos()
+    slide = QPropertyAnimation(widget, b"pos", widget)
+    slide.setDuration(duration)
+    slide.setStartValue(QPoint(start.x(), start.y() + rise))
+    slide.setEndValue(start)
+    slide.setEasingCurve(QEasingCurve.OutCubic)
+    group = QParallelAnimationGroup(widget)
+    group.addAnimation(fade)
+    group.addAnimation(slide)
+
+    def done() -> None:
+        if widget.graphicsEffect() is effect:
+            widget.setGraphicsEffect(kept)
+
+    group.finished.connect(done)
+    widget._motion_rise = group
+    group.start()
+
+
 # --- toast ---------------------------------------------------------------------------
 
 
-def toast(parent: QWidget, text: str, ms: int = 2400) -> None:
+def toast(parent: QWidget, text: str, ms: int = 2400, style: str | None = None) -> None:
     """A small confirmation that slides up from the bottom of `parent`'s
     window, waits, and fades away. Never blocks or takes focus."""
     if parent is None or not text:
@@ -262,10 +303,10 @@ def toast(parent: QWidget, text: str, ms: int = 2400) -> None:
     label = QLabel(text, window)
     label.setObjectName("motionToast")
     label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-    label.setStyleSheet(
+    label.setStyleSheet(style or (
         "#motionToast { background-color: #26231f; color: #eae7e7; border: 1px solid #e1ad66;"
         " border-radius: 6px; padding: 9px 16px; font-size: 13px; }"
-    )
+    ))
     label.adjustSize()
     x = max(8, (window.width() - label.width()) // 2)
     rest_y = window.height() - label.height() - 28

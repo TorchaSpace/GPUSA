@@ -16,9 +16,11 @@ them out and asks the next cashier to sign in (`switch_cashier`).
 from __future__ import annotations
 
 from PySide6.QtCore import QTime, Qt, QTimer, Signal
-from PySide6.QtWidgets import QButtonGroup, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from pos_app.gui.components.organic import PillNav
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
+from shared.gui_kit.language_switch import LanguageSwitch
 from shared.i18n import tr
 from shared.textcase import upper
 
@@ -42,7 +44,9 @@ class PosHeader(QWidget):
         super().__init__(parent)
         p = ORGANIC_PALETTE
         self.setFixedHeight(HEADER_HEIGHT_PX)
-        self.setStyleSheet(f"background-color: {p['background']};")
+        self.setObjectName("posHeader")
+        self.setAttribute(Qt.WA_StyledBackground, True)
+        self.setStyleSheet(f"#posHeader {{ background-color: {p['background']}; }}")
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(28, 0, 28, 0)
@@ -51,6 +55,7 @@ class PosHeader(QWidget):
         layout.addWidget(self._build_brand(dealership_name, location_line))
         layout.addWidget(self._build_nav(), stretch=1)
         layout.addStretch(0)
+        layout.addWidget(LanguageSwitch(p, rounded=True))
         layout.addWidget(self._build_cashier(cashier_name))
 
     def _build_brand(self, dealership_name: str, location_line: str) -> QWidget:
@@ -83,49 +88,16 @@ class PosHeader(QWidget):
         return container
 
     def _build_nav(self) -> QWidget:
-        p = ORGANIC_PALETTE
-        pill = QWidget()
-        pill.setStyleSheet(f"background-color: {p['surface']}; border-radius: 999px;")
-        row = QHBoxLayout(pill)
-        row.setContentsMargins(6, 6, 6, 6)
-        row.setSpacing(6)
+        """The design's pill nav: ONE raised highlight slides between tabs."""
+        self._nav = PillNav([(key, tr(label_key)) for key, label_key in NAV_ITEMS])
+        self._nav.page_selected.connect(self.page_selected.emit)
+        holder = QWidget()
+        row = QHBoxLayout(holder)
+        row.setContentsMargins(0, 0, 0, 0)
         row.addStretch(1)
-
-        self._nav_group = QButtonGroup(self)
-        self._nav_group.setExclusive(True)
-        self._nav_buttons: dict[str, QPushButton] = {}
-
-        for key, label_key in NAV_ITEMS:
-            button = QPushButton(tr(label_key))
-            button.setCheckable(True)
-            button.setCursor(Qt.PointingHandCursor)
-            button.setFixedHeight(48)
-            button.setStyleSheet(
-                f"""
-                QPushButton {{
-                    border: none;
-                    border-radius: 24px;
-                    padding: 0 22px;
-                    font-family: {p['font_family_css']};
-                    font-size: 16px;
-                    font-weight: 600;
-                    color: {p['text_secondary']};
-                    background: transparent;
-                }}
-                QPushButton:checked {{
-                    background-color: {p['background']};
-                    color: {p['text_primary']};
-                }}
-                """
-            )
-            button.clicked.connect(lambda checked, k=key: self.page_selected.emit(k))
-            self._nav_group.addButton(button)
-            self._nav_buttons[key] = button
-            row.addWidget(button)
-
+        row.addWidget(self._nav)
         row.addStretch(1)
-        self._nav_buttons["home"].setChecked(True)
-        return pill
+        return holder
 
     def _build_cashier(self, cashier_name: str) -> QWidget:
         p = ORGANIC_PALETTE
@@ -186,6 +158,4 @@ class PosHeader(QWidget):
         self._clock_label.setText(QTime.currentTime().toString("HH:mm"))
 
     def set_active(self, key: str) -> None:
-        button = self._nav_buttons.get(key)
-        if button is not None:
-            button.setChecked(True)
+        self._nav.set_active(key)
