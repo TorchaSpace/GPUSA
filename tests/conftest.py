@@ -68,7 +68,7 @@ def pytest_sessionfinish(session, exitstatus):
     _exit_status = int(exitstatus)
 
 
-@pytest.hookimpl(trylast=True)
+@pytest.hookimpl(tryfirst=True)
 def pytest_unconfigure(config):
     import os
     import sys
