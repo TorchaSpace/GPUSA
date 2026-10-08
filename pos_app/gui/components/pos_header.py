@@ -16,7 +16,7 @@ them out and asks the next cashier to sign in (`switch_cashier`).
 from __future__ import annotations
 
 from PySide6.QtCore import QTime, Qt, QTimer, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
 from pos_app.gui.components.organic import PillNav
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
@@ -33,6 +33,7 @@ HEADER_HEIGHT_PX = 76
 class PosHeader(QWidget):
     page_selected = Signal(str)
     switch_cashier = Signal()
+    dealership_picked = Signal(str)
 
     def __init__(
         self,
@@ -78,9 +79,19 @@ class PosHeader(QWidget):
         names.setSpacing(0)
         name_label = QLabel(dealership_name)
         name_label.setStyleSheet(f"font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']};")
+        self._name_label = name_label
+        # With more than one shop in the system the name becomes a picker (switching away asks an administrator).
+        self._shop_picker = QComboBox()
+        self._shop_picker.setStyleSheet(
+            f"QComboBox {{ font-family: {FONT_HEADING_CSS}; font-size: 20px; color: {p['text_primary']}; "
+            f"background: transparent; border: none; padding: 0; }} QComboBox::drop-down {{ width: 22px; border: none; }}")
+        self._shop_picker.setToolTip(tr("pos.switch.tip"))
+        self._shop_picker.hide()
+        self._shop_picker.activated.connect(lambda _i: self.dealership_picked.emit(self._shop_picker.currentData() or ""))
         location_label = QLabel(location_line)
         location_label.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         names.addWidget(name_label)
+        names.addWidget(self._shop_picker)
         names.addWidget(location_label)
         names_widget = QWidget()
         names_widget.setLayout(names)
@@ -149,6 +160,19 @@ class PosHeader(QWidget):
         self._clock_timer.timeout.connect(self._tick_clock)
         self._clock_timer.start(30_000)
         return container
+
+    def set_dealership_choices(self, shops: list[tuple[str, str]], current_code: str | None) -> None:
+        """Offer `shops` [(code, name)] as a drop-down in place of the plain name (only when there is a choice)."""
+        picker = self._shop_picker
+        picker.blockSignals(True)
+        picker.clear()
+        for code, name in shops:
+            picker.addItem(name, code)
+        picker.setCurrentIndex(max(0, picker.findData(current_code)))
+        picker.blockSignals(False)
+        many = len(shops) > 1
+        picker.setVisible(many)
+        self._name_label.setVisible(not many)
 
     def set_cashier(self, cashier_name: str) -> None:
         self._cashier_label.setText(cashier_name)

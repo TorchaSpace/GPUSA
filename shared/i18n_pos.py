@@ -7,6 +7,10 @@ from __future__ import annotations
 EN_POS: dict[str, str] = {
     # till sign-in
     "pos.auth.close_till": "Close till",
+    "pos.switch.title": "Switch shop",
+    "pos.switch.subtitle": "Moving this till to {name} needs an administrator's badge and PIN.",
+    "pos.switch.tip": "Switch the shop this till shows",
+    "pos.switch.cart_not_empty": "Finish or clear the open sale before switching shop.",
     "pos.auth.title": "Who's on the till?",
     "pos.auth.subtitle": "{name} · sign in with your badge and PIN to open the till.",
     "pos.auth.no_accounts": "No accounts exist yet - an administrator adds them in Admin > Settings.",
@@ -173,6 +177,10 @@ EN_POS: dict[str, str] = {
 TR_POS: dict[str, str] = {
     # till sign-in
     "pos.auth.close_till": "Kasayı kapat",
+    "pos.switch.title": "Bayi değiştir",
+    "pos.switch.subtitle": "Bu kasayı {name} bayisine geçirmek için yöneticinin badge ve PIN'i gerekir.",
+    "pos.switch.tip": "Bu kasanın gösterdiği bayiyi değiştir",
+    "pos.switch.cart_not_empty": "Bayi değiştirmeden önce açık satışı bitir ya da temizle.",
     "pos.auth.title": "Kasada kim var?",
     "pos.auth.subtitle": "{name} · kasayı açmak için rozetiniz ve PIN'inizle giriş yapın.",
     "pos.auth.no_accounts": "Henüz hesap yok - hesapları bir yönetici Yönetim > Ayarlar'dan ekler.",

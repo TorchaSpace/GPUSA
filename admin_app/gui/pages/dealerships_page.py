@@ -24,13 +24,15 @@ from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.dealership_form_popup import DealershipFormPopup
 from admin_app.gui.components.dealership_table import DealershipTable, status_for
+from admin_app.gui.components.reorder_levels_popup import ReorderLevelsPopup
 from admin_app.gui.components.section import Section
+from admin_app.gui.components.stock_move_popup import StockMovePopup
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from shared import current_session
 from shared.formatting import format_int
 from shared.i18n import plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
-from database import dealership_repository, stock_repository
+from database import dealership_repository, product_repository, stock_repository, warehouse_repository
 from database.exceptions import DATABASE_ERRORS
 from shared.models import DEALERSHIP_REGIONS, Dealership, StockLocation
 
@@ -45,6 +47,11 @@ class DealershipsPage(AdminPage):
 
         self._popup = DealershipFormPopup(self)
         self._popup.accepted.connect(self._save_popup)
+
+        self._reorder_popup = ReorderLevelsPopup(self)
+        self._reorder_popup.levels_changed.connect(self.reload)
+        self._count_popup = StockMovePopup(self)
+        self._count_popup.stock_changed.connect(self.reload)
 
         self._all_dealerships: list[Dealership] = []
 
@@ -143,6 +150,16 @@ class DealershipsPage(AdminPage):
         button_row.addStretch(1)
         layout.addLayout(button_row)
 
+        stock_row = QHBoxLayout()
+        self._detail_levels_button = CompactButton(tr("admin.dealerships.reorder_levels"))
+        self._detail_levels_button.clicked.connect(self._open_reorder_levels)
+        self._detail_opening_button = CompactButton(tr("admin.dealerships.opening_stock"))
+        self._detail_opening_button.clicked.connect(self._open_opening_stock)
+        stock_row.addWidget(self._detail_levels_button)
+        stock_row.addWidget(self._detail_opening_button)
+        stock_row.addStretch(1)
+        layout.addLayout(stock_row)
+
         return panel
 
     def _detail_row(self, label: str, value: str, color: str | None = None) -> QWidget:
@@ -168,6 +185,8 @@ class DealershipsPage(AdminPage):
         has_selection = dealership is not None
         self._detail_edit_button.setEnabled(has_selection)
         self._detail_delete_button.setEnabled(has_selection)
+        self._detail_levels_button.setEnabled(has_selection)
+        self._detail_opening_button.setEnabled(has_selection)
 
         if dealership is None:
             self._detail_name.setText(tr("admin.dealerships.none_selected"))
@@ -229,6 +248,24 @@ class DealershipsPage(AdminPage):
         else:
             self._table.clearSelection()
             self._show_detail(None)
+
+    def _open_reorder_levels(self) -> None:
+        dealership = self._table.selected_dealership()
+        if dealership is not None:
+            self._reorder_popup.open_for(StockLocation.dealership(dealership.code), dealership.name)
+
+    def _open_opening_stock(self) -> None:
+        """Type what this shop really holds (the count form, already on this shop): units that were waiting
+        unplaced are placed here, anything beyond is new stock."""
+        dealership = self._table.selected_dealership()
+        if dealership is None:
+            return
+        try:
+            self._count_popup.set_choices(product_repository.list_active(), warehouse_repository.list_all(active_only=True),
+                                          self._all_dealerships, source=StockLocation.dealership(dealership.code))
+        except DATABASE_ERRORS:
+            return
+        self._count_popup.show_count()
 
     def _open_add_popup(self) -> None:
         self._popup.open_or_refresh(dealership=None)

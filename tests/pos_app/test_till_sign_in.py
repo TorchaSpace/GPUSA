@@ -99,3 +99,57 @@ def test_the_till_reloads_what_is_on_screen_when_the_database_changes(qapp, cash
     window.refresh_live()
     assert sale_reloads == []  # never under a sale being rung up
     window.close()
+
+
+class _FakeDialog:
+    def __init__(self, session):
+        self.session = session
+
+    def exec(self):
+        return 1 if self.session is not None else 0
+
+
+def test_switching_shop_asks_an_administrator_and_every_page_follows(qapp, cashier, monkeypatch):
+    from database import dealership_repository
+    from shared.models import Dealership, StockLocation
+    import pos_app.gui.main_window as mw
+    from PySide6.QtTest import QTest
+
+    for code in ("D-A", "D-B"):
+        dealership_repository.create(Dealership(code=code, name=f"Shop {code}", region="Metro", city="Town"))
+    admin = account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "POS")
+    monkeypatch.setattr(mw, "load_dealership_identity", lambda: {"code": "D-A", "name": "Shop D-A", "location_line": "Town · Metro"})
+    window = mw.MainWindow()
+    window._watcher.stop()
+    window.show()
+    pump(qapp)
+    assert window._header._shop_picker.isVisible() and window._header._shop_picker.count() == 2
+
+    asked = []
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda home, name, parent: (asked.append(name), _FakeDialog(None))[1])
+    window._switch_checked("D-B")  # declined: stays, picker restored
+    assert asked == ["Shop D-B"] and window._dealership_code == "D-A"
+    assert window._header._shop_picker.currentData() == "D-A"
+
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda home, name, parent: (asked.append(name), _FakeDialog(admin))[1])
+    window._switch_checked("D-B")
+    assert window._dealership_code == "D-B" and window._header._shop_picker.currentData() == "D-B"
+    assert window._stock_page._location == StockLocation.dealership("D-B")
+    assert window._sales_page._dealership_code == "D-B"
+
+    window._switch_checked("D-A")  # back to this till's own shop: free
+    assert asked == ["Shop D-B", "Shop D-B"] and window._dealership_code == "D-A"
+    window.close()
+
+
+def test_an_open_sale_blocks_switching_shop(qapp, cashier, monkeypatch):
+    import pos_app.gui.main_window as mw
+
+    window = mw.MainWindow()
+    window._watcher.stop()
+    window._sale_page.has_items = lambda: True
+    called = []
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda *a, **k: called.append(1))
+    window._switch_checked("D-X")
+    assert called == [] and window._dealership_code is None
+    window.close()

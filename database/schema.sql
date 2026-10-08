@@ -434,6 +434,17 @@ CREATE TABLE IF NOT EXISTS stock_levels (
 
 CREATE INDEX IF NOT EXISTS idx_stock_levels_product_barcode
     ON stock_levels(product_barcode);
+
+-- A shop's (or warehouse's) own reorder level for a product, set in Admin. Without a row the product's
+-- own critical_stock_level applies there. Read through stock_repository.products_at().
+CREATE TABLE IF NOT EXISTS location_reorder_levels (
+    location_kind   TEXT NOT NULL CHECK (location_kind IN ('warehouse', 'dealership')),
+    location_code   TEXT NOT NULL,
+    product_barcode TEXT NOT NULL REFERENCES products(barcode) ON DELETE CASCADE,
+    level           INTEGER NOT NULL CHECK (level >= 0),
+    updated_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    PRIMARY KEY (location_kind, location_code, product_barcode)
+);
 -- Indexes on columns that older databases only get from
 -- database/migrations.py are created there, after the columns exist.
 

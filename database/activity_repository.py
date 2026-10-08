@@ -64,10 +64,11 @@ def stock_crossing(conn: sqlite3.Connection, location: StockLocation, barcode: s
     that stays low does not repeat itself."""
     if after >= before:
         return
-    row = conn.execute("SELECT name, critical_stock_level FROM products WHERE barcode = ?", (barcode,)).fetchone()
+    row = conn.execute("SELECT name FROM products WHERE barcode = ?", (barcode,)).fetchone()
     if row is None:
         return
-    level = int(row["critical_stock_level"])
+    from database.stock_repository import reorder_level_for  # local: stock_repository imports this module
+    level = reorder_level_for(conn, location, barcode)
     if after <= 0 < before:
         record(conn, "stock_out", severity="critical", source=source, location=location, actor=actor,
                product=row["name"], barcode=barcode)

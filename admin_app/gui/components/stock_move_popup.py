@@ -122,6 +122,12 @@ class StockMovePopup(QDialog):
         self._error.hide()
         self._update_on_hand()
 
+    def show_count(self) -> None:
+        """Open on the 'Record a stock count' mode."""
+        self._count_radio.setChecked(True)
+        self.show()
+        self.raise_()
+
     @staticmethod
     def _select(combo: QComboBox, location: StockLocation) -> None:
         for i in range(combo.count()):

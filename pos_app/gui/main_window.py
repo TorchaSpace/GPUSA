@@ -21,12 +21,12 @@ nothing to show (dev-mode run, no sidecar, not yet registered).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation
+from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
-from database import account_repository
-from database.exceptions import DataAccessError
-from pos_app.gui.auth_flow import till_sign_in_dialog
+from database import account_repository, dealership_repository
+from database.exceptions import DATABASE_ERRORS, DataAccessError
+from pos_app.gui.auth_flow import switch_dealership_dialog, till_sign_in_dialog
 
 from pos_app.gui.components.organic import toast_style
 from pos_app.gui.components.pos_header import PosHeader
@@ -64,26 +64,39 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setStyleSheet(f"QMainWindow {{ background-color: {ORGANIC_PALETTE['background']}; }}")
 
+        self._home_identity = load_dealership_identity()  # what this install was set up as (None in a dev run)
+        self._build_shell(self._home_identity)
+
+        # Live: stock sent by the depot, a request answered, a sale rung up at
+        # another till... shows here within about a second.
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    def _build_shell(self, identity: dict | None) -> None:
+        """Header + the five pages for one dealership (`identity`: code, name, location_line - or None for a
+        dev run on unassigned stock). Rebuilt whole when someone switches shop, so no page keeps the old one."""
+        session = self.session
         central = QWidget()
         layout = QVBoxLayout(central)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        identity = load_dealership_identity()
         dealership_name = identity["name"] if identity else DEALERSHIP_NAME
         location_line = identity["location_line"] if identity else tr("pos.main.location_line")
 
         self._dealership_name = dealership_name
         self._header = PosHeader(dealership_name, location_line, session.name if session else tr("pos.main.cashier"))
         self._header.switch_cashier.connect(self.switch_cashier)
+        self._header.dealership_picked.connect(self._on_dealership_picked)
         layout.addWidget(self._header)
 
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
 
         cashier_first_name = session.first_name if session else tr("pos.main.cashier").split()[0]
-        # The dealership this terminal was set up as (None in a dev run /
-        # a POS with no setup file) - scopes Receive Inventory and its badge.
+        # The dealership this screen shows (None in a dev run / a POS with no setup file)
+        # - scopes Receive Inventory and its badge.
         dealership_code = identity["code"] if identity else None
         self._dealership_code = dealership_code
         # ...and whose shelf it sells from / receives into. Without an
@@ -113,13 +126,67 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(central)
 
         self._header.page_selected.connect(self._navigate)
+        self._fill_dealership_choices()
         self._navigate("home")
 
-        # Live: stock sent by the depot, a request answered, a sale rung up at
-        # another till... shows here within about a second.
-        self._watcher = DataWatcher(parent=self)
-        self._watcher.changed.connect(self.refresh_live)
-        self._watcher.start()
+    # --- switching shop ------------------------------------------------------
+
+    def _fill_dealership_choices(self) -> None:
+        try:
+            shops = [(d.code, d.name) for d in dealership_repository.list_all() if d.is_active]
+        except DATABASE_ERRORS:
+            shops = []
+        if self._dealership_code and all(code != self._dealership_code for code, _ in shops):
+            shops.insert(0, (self._dealership_code, self._dealership_name))
+        self._header.set_dealership_choices(shops, self._dealership_code)
+
+    def _on_dealership_picked(self, code: str) -> None:
+        QTimer.singleShot(0, lambda: self._switch_checked(code))
+
+    def _switch_checked(self, code: str) -> None:
+        if not code or code == self._dealership_code:
+            return
+        if self._sale_page.has_items():
+            self.notify(tr("pos.switch.cart_not_empty"))
+            self._fill_dealership_choices()
+            return
+        home_code = self._home_identity["code"] if self._home_identity else None
+        if code != home_code and not self._admin_approves_switch(code):
+            self._fill_dealership_choices()
+            return
+        if not self.switch_dealership(code):
+            self._fill_dealership_choices()
+
+    def _admin_approves_switch(self, code: str) -> bool:
+        """Leaving this till's own shop asks an administrator for badge + PIN, every time (a cashier works at
+        their own shop; an administrator may see them all). Going back to the till's own shop is free."""
+        try:
+            target = dealership_repository.get_by_code(code)
+        except (ValueError, *DATABASE_ERRORS):
+            return False
+        home_code = self._home_identity["code"] if self._home_identity else None
+        dialog = switch_dealership_dialog(home_code, target.name, self)
+        if not dialog.exec() or dialog.session is None:
+            return False
+        try:
+            account_repository.sign_out(dialog.session)  # a one-off approval, not a session
+        except DataAccessError:
+            pass
+        return True
+
+    def switch_dealership(self, code: str) -> bool:
+        """Show another dealership: pages, stock, receive list and sales all follow it."""
+        try:
+            shop = dealership_repository.get_by_code(code)
+        except (ValueError, *DATABASE_ERRORS):
+            return False
+        if not shop.is_active:
+            return False
+        self._sale_page.clear_cart()
+        self._build_shell({"code": shop.code, "name": shop.name,
+                           "location_line": " · ".join(part for part in (shop.city, shop.region) if part)
+                           or tr("pos.main.location_line")})
+        return True
 
     def refresh_live(self) -> None:
         """The database changed under us: reload what is on screen (never over an

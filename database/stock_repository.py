@@ -406,10 +406,12 @@ def quantity_at(location: StockLocation, barcode: str) -> int:
 
 
 _PRODUCT_AT_SQL = (
-    "SELECT p.barcode, p.name, p.price, p.critical_stock_level, p.is_active, COALESCE(l.quantity, 0) AS qty, "
-    "(l.product_barcode IS NOT NULL) AS stocked "
+    "SELECT p.barcode, p.name, p.price, COALESCE(r.level, p.critical_stock_level) AS critical_stock_level, "
+    "p.is_active, COALESCE(l.quantity, 0) AS qty, (l.product_barcode IS NOT NULL) AS stocked "
     "FROM products p LEFT JOIN stock_levels l ON l.product_barcode = p.barcode "
     "AND l.location_kind = ? AND l.location_code = ? "
+    "LEFT JOIN location_reorder_levels r ON r.product_barcode = p.barcode "
+    "AND r.location_kind = ? AND r.location_code = ? "
 )
 
 
@@ -422,8 +424,8 @@ def _product_here(r: sqlite3.Row) -> Product:
 def products_at(location: StockLocation, include_inactive: bool = False) -> list[Product]:
     """Every product, with `stock_quantity` set to what's at `location`
     (0 where nothing is) - what POS and the depot show as "my stock".
-    `critical_stock_level` is the product's own (one threshold applies
-    at every location); `stocked_here` says whether this location has (or
+    `critical_stock_level` is this location's own reorder level when Admin
+    set one (set_reorder_level), else the product's; `stocked_here` says whether this location has (or
     had) a level row for it.
 
     Deactivated products are left out - except those still holding units
@@ -434,7 +436,8 @@ def products_at(location: StockLocation, include_inactive: bool = False) -> list
     if not include_inactive:
         sql += "WHERE p.is_active = 1 OR COALESCE(l.quantity, 0) > 0 "
     with connection_scope() as conn:
-        rows = conn.execute(sql + "ORDER BY p.name", (location.kind, location.code)).fetchall()
+        rows = conn.execute(sql + "ORDER BY p.name",
+                            (location.kind, location.code, location.kind, location.code)).fetchall()
     return [_product_here(r) for r in rows]
 
 
@@ -446,13 +449,56 @@ def product_at(location: StockLocation, barcode: str, active_only: bool = False)
     with connection_scope() as conn:
         row = conn.execute(
             _PRODUCT_AT_SQL + "WHERE p.barcode = ? COLLATE NOCASE ORDER BY p.barcode = ? DESC",
-            (location.kind, location.code, text, text),
+            (location.kind, location.code, location.kind, location.code, text, text),
         ).fetchone()
     if row is None:
         raise ProductNotFoundError(barcode)
     if active_only and not row["is_active"]:
         raise ProductInactiveError(row["barcode"])
     return _product_here(row)
+
+
+def reorder_level_for(conn: sqlite3.Connection, location: StockLocation, barcode: str) -> int:
+    """The reorder level that applies to `barcode` at `location`: Admin's own for that place, else the product's."""
+    row = conn.execute(
+        "SELECT COALESCE(r.level, p.critical_stock_level) FROM products p LEFT JOIN location_reorder_levels r "
+        "ON r.product_barcode = p.barcode AND r.location_kind = ? AND r.location_code = ? WHERE p.barcode = ?",
+        (location.kind, location.code, barcode)).fetchone()
+    return int(row[0]) if row else 0
+
+
+def reorder_overrides_at(location: StockLocation) -> dict[str, int]:
+    """{barcode: level} for the products Admin gave this place its own reorder level."""
+    with connection_scope() as conn:
+        rows = conn.execute("SELECT product_barcode, level FROM location_reorder_levels "
+                            "WHERE location_kind = ? AND location_code = ?", (location.kind, location.code)).fetchall()
+    return {r[0]: int(r[1]) for r in rows}
+
+
+def set_reorder_level(location: StockLocation, barcode: str, level: int | None, actor: Actor | None = None) -> None:
+    """Set this place's own reorder level for a product (0 = never alert here); None goes back to the
+    product's default. Warehouses and dealerships only."""
+    if location.kind not in ("warehouse", "dealership"):
+        raise UserError("err.pick_location")
+    if level is not None:
+        level = whole_number(level, "Reorder level")
+        if level < 0:
+            raise UserError("err.count_negative")
+
+    def run(conn):
+        require_location(conn, location)
+        code = resolve_product(conn, barcode)[0]
+        if level is None:
+            conn.execute("DELETE FROM location_reorder_levels WHERE location_kind = ? AND location_code = ? "
+                         "AND product_barcode = ?", (location.kind, location.code, code))
+        else:
+            conn.execute(
+                "INSERT INTO location_reorder_levels (location_kind, location_code, product_barcode, level) "
+                "VALUES (?, ?, ?, ?) ON CONFLICT (location_kind, location_code, product_barcode) DO UPDATE SET "
+                "level = excluded.level, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                (location.kind, location.code, code, level))
+
+    _write(run)
 
 
 def critical_at(location: StockLocation) -> list[Product]:

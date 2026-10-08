@@ -67,3 +67,14 @@ def till_sign_in_dialog(dealership_code: str | None, dealership_name: str, paren
         cancel_text=cancel_text or tr("pos.auth.close_till"),
         parent=parent,
     )
+
+
+def switch_dealership_dialog(home_code: str | None, target_name: str, parent=None) -> SignInDialog:
+    """Moving the till to another shop: administrators only (a cashier stays at their own shop)."""
+    return SignInDialog(
+        tr("pos.switch.title"),
+        tr("pos.switch.subtitle").format(name=target_name),
+        lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name(home_code)),
+        palette=ORGANIC_PALETTE,
+        parent=parent,
+    )
