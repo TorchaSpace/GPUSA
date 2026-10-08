@@ -2,6 +2,7 @@
 
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
 from pos_app.gui.main_window import MainWindow
@@ -11,6 +12,10 @@ from database import settings_repository
 from shared import currency, i18n
 from shared.dealership_bootstrap import load_dealership_identity, register_pending_dealership
 from shared.theme import apply_theme
+from database.backups import daily_backup
+
+
+BACKUP_CHECK_MS = 60 * 60 * 1000
 
 
 def main() -> int:
@@ -32,6 +37,11 @@ def main() -> int:
         return 0
     window = MainWindow(dialog.session)
     window.show()
+    # Today's backup now, then an hourly check so a till left open for days still makes one a day.
+    daily_backup()
+    backup_timer = QTimer(window)
+    backup_timer.timeout.connect(lambda: daily_backup())
+    backup_timer.start(BACKUP_CHECK_MS)
     return app.exec()
 
 

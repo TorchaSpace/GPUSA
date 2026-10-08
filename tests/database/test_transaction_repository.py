@@ -117,3 +117,25 @@ def test_finalize_transaction_empty_items_raises():
 def test_get_by_id_missing_raises():
     with pytest.raises(TransactionNotFoundError):
         transaction_repository.get_by_id(999)
+
+
+def test_the_payment_method_is_stored_and_read_back():
+    product_repository.create(_make_product(stock=10))
+    sale = Transaction(
+        items=[LineItem(product_barcode="SKU-1", product_name_at_sale="Test Widget", unit_price_at_sale=5.00, quantity=1)],
+        payment_method="cash",
+    )
+    finalized = transaction_repository.finalize_transaction(sale)
+    assert finalized.payment_method == "cash"
+    assert transaction_repository.get_by_id(finalized.id).payment_method == "cash"
+
+
+def test_an_unknown_payment_method_is_refused_before_anything_is_written():
+    product_repository.create(_make_product(stock=10))
+    sale = Transaction(
+        items=[LineItem(product_barcode="SKU-1", product_name_at_sale="Test Widget", unit_price_at_sale=5.00, quantity=1)],
+        payment_method="cheque",
+    )
+    with pytest.raises(ValueError):
+        transaction_repository.finalize_transaction(sale)
+    assert product_repository.get_by_barcode("SKU-1").stock_quantity == 10

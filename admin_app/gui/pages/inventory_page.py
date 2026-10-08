@@ -6,7 +6,7 @@ Real vs. placeholder, explicitly:
   from database.product_repository.list_all().
 - Product table + Add/Edit/Delete: REAL - reuses the exact same
   ProductFormPopup/product_repository calls as the original
-  ProductManagementTab (see that file), just re-skinned into the
+  pre-redesign product tab (since removed), re-skinned into the
   mockup's table+detail-panel layout instead of a table+button-row one.
 - Export Price List: REAL, a plain CSV of barcode/name/price/stock - not
   the mockup's presumably branded PDF price sheet, but real data out to

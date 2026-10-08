@@ -1,6 +1,6 @@
 """Add/edit-product popup: a RefreshablePopup wrapping a simple form.
 
-ProductManagementTab keeps ONE instance of this alive and reuses it via
+The Inventory page (admin_app/gui/pages/inventory_page.py) keeps ONE instance of this alive and reuses it via
 open_or_refresh() for both "Add Product" and "Edit Product" -
 refresh_content() rebuilds the form fields from whatever Product (or
 None, for Add) it's called with, rather than a new popup being
@@ -32,7 +32,7 @@ _MAX_QUANTITY = 1_000_000
 
 class ProductFormPopup(RefreshablePopup):
     """Emits QDialog's own `accepted` signal when Save is pressed - the
-    caller (ProductManagementTab) connects to that and reads the result
+    caller (the Inventory page) connects to that and reads the result
     back via result_product() / is_editing() rather than this class
     reaching into the repository itself; that keeps this popup a pure
     form, with no database import of its own.

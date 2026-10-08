@@ -139,6 +139,15 @@ def test_an_unchanged_cart_checks_out_normally(page, boxes):
     assert page._cart == {}
 
 
+@pytest.mark.parametrize(("button", "stored"), [("Card", "card"), ("Cash", "cash")])
+def test_the_payment_button_pressed_is_recorded_on_the_sale(page, button, stored):
+    page._add_to_cart(_tile_for(page, "RICE"))
+    page._checkout(button)
+    with connection.connection_scope() as conn:
+        latest = conn.execute("SELECT payment_method FROM transactions ORDER BY id DESC LIMIT 1").fetchone()
+    assert latest["payment_method"] == stored
+
+
 # --- the database has the last word (finalize_transaction re-checks) ------------
 
 

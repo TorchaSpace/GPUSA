@@ -40,6 +40,8 @@ from the Floor's "İdari Giriş") or Administrator. The POS asks "Who's on
 the till?" before it opens (the header's "Switch" hands over at shift
 change); the depot Floor stays open to everyone. Five wrong PINs lock an
 account for 5 minutes; an administrator can unlock it in Settings.
+Admin and the POS sign out by themselves after 15 minutes with nobody at
+the screen (the POS asks "Who's on the till?" again, as at a shift change).
 
 ## Testing
 
@@ -256,9 +258,9 @@ breakdown of what's real vs. placeholder per screen. In short:
   capacity cards (85% threshold), movement logs, workforce per site, stock
   by location, move / count stock; Settings - sign-in accounts (add,
   reset PIN, role, switch off, unlock) and the sign-in activity log;
-  Reports is still a themed placeholder; Sales Reports -
-  PDF/Excel export - is still fully working via a button on the Reports
-  placeholder). Run `python -m admin_app.main`.
+  Reports - revenue trend, region and payment-method split, dealership
+  ranking, CSV/PDF/Excel export, with the per-product Sales Reports one
+  button away). Run `python -m admin_app.main`.
 - **`pos_app`**: a 4-screen header nav (Home, New Sale, My Local Stock
   and Receive Inventory are all real and wired to the same shared
   database - stock shown and sold is THIS dealership's shelf; Receive
@@ -342,3 +344,14 @@ what's on trucks). **After upgrading, existing stock shows as "Unassigned"**
 use **Place all here**, or **Move / count stock** to split it - until then
 dealerships have nothing on their shelves to sell. See `architecture.md`'s
 "Warehouses & per-location stock" section.
+
+**Card / Cash are recorded** (migration v7, `transactions.payment_method`):
+the receipt prints how the sale was paid and Admin > Reports' export splits
+revenue by payment method, so the till can be counted at the end of a day.
+Sales from before the upgrade show as "Not recorded".
+
+**Automatic daily backups** (`database/backups.py`): every app, when it
+opens and then once an hour, makes sure today's copy exists in a `backups`
+folder beside `shared_backend.db` (`shared_backend-YYYY-MM-DD.db`); the
+newest 14 are kept. Restoring is copying one back over `shared_backend.db`
+with every app closed. Admin > Settings can still write an extra copy anywhere.

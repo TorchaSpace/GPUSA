@@ -63,7 +63,7 @@ from __future__ import annotations
 
 import sqlite3
 
-LATEST_VERSION = 6
+LATEST_VERSION = 7
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -298,7 +298,18 @@ def _to_v6(conn: sqlite3.Connection) -> None:
     _add_columns(conn, _V6_COLUMNS)
 
 
-_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6}
+# Version 7 - the till records how each sale was paid (Card / Cash used to finalize identically).
+_V7_COLUMNS = (
+    ("transactions", "payment_method",
+     "TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash'))"),
+)
+
+
+def _to_v7(conn: sqlite3.Connection) -> None:
+    _add_columns(conn, _V7_COLUMNS)
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

@@ -200,3 +200,19 @@ def test_settings_security_question_needs_the_current_pin(qapp):
     except AuthError:
         pass
     assert accounts.get_security_question() is None
+
+
+def test_admin_left_alone_signs_out_and_asks_again(qapp, monkeypatch):
+    from admin_app.gui.main_window import MainWindow
+
+    account_repository.create_first_admin("A-1", "Erol", "482913")
+    session = account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "Admin")
+    window = MainWindow(session)
+    window.show()
+    pump(qapp)
+    signed_out = []
+    monkeypatch.setattr(window, "sign_out", lambda: signed_out.append(True))
+    window._idle_lock.last -= auth.IDLE_LOCK_SECONDS + 1
+    assert window._idle_lock.check() and signed_out == [True]
+    window._idle_lock.stop()
+    window.close()

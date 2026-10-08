@@ -89,4 +89,6 @@ def build_receipt(transaction: Transaction, store_name: str | None = None,
     lines.append(divider)
 
     lines.append(_two_column("TOTAL", f"{transaction.total:.2f}"))
+    if transaction.payment_method:
+        lines.append(_two_column("PAID", transaction.payment_method.capitalize()))
     return ReceiptDocument(lines=lines)

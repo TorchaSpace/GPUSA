@@ -49,7 +49,7 @@ Tables: `products`, `transactions`, `transaction_items`, `stock_movements`,
 `ledger_entries`, `ledger_audit` (append-only via triggers), `shipments`,
 `shipment_lines`, `app_settings` (key/value).
 
-Migrations: `PRAGMA user_version`, `LATEST_VERSION = 6`, one `BEGIN IMMEDIATE` per
+Migrations: `PRAGMA user_version`, `LATEST_VERSION = 7`, one `BEGIN IMMEDIATE` per
 startup, safe when all three apps start at once. Schema.sql stays the source of
 truth for new DBs; a new column needs **both** a schema.sql change and a `_to_vN`
 step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
@@ -62,6 +62,7 @@ step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
 | 4 | PO receiving (purchase_orders rebuilt for new CHECK), `products.cost_price`, `unit_cost_at_sale`, `cost_known` |
 | 5 | ledger `created_by/settled_by/updated_by` + `ledger_audit` |
 | 6 | `stock_movements.bin_code` (bin/dock no longer glued into `note`) |
+| 7 | `transactions.payment_method` ('card' / 'cash'; NULL = from before v7) |
 
 ### The stock invariant (most important rule)
 
@@ -81,7 +82,7 @@ products.stock_quantity = SUM(stock_levels) + units on dispatched, not-yet-recei
 
 | Domain | Repository / pure logic | UI |
 |---|---|---|
-| Sales | `transaction_repository.finalize_transaction(txn, location, cashier)` re-checks price, product active, stock, cashier, dealership active inside the txn (`PriceChangedError`, …); `sale_cost_repository`, `shared/costing.py` (cents, weighted average cost, margin) | POS New Sale; Admin Reports/Overview show gross profit & "unknown cost" share |
+| Sales | `transaction_repository.finalize_transaction(txn, location, cashier)` re-checks price, product active, stock, cashier, dealership active inside the txn (`PriceChangedError`, …), stores `payment_method` (card/cash); `sale_cost_repository`, `shared/costing.py` (cents, weighted average cost, margin) | POS New Sale; Admin Reports/Overview show gross profit & "unknown cost" share |
 | Stock / warehouses | `stock_repository`, `warehouse_repository`, `inventory_repository` (Floor facade), `shared/warehousing.py`, `warehouse_bootstrap.py` | Depot Floor + Console; Admin Warehouses (Move/count, Place all here) |
 | Purchasing | `purchase_order_repository`: price bands, `submit` (in band → sent, else pending), `approve/reject`, `receive_against_order` (partial/full into a warehouse, updates weighted avg cost), `cancel_order`; `shared.models.hold_reason_for` | Depot Portal › Purchasing (+ `receive_delivery_dialog`); Admin Purchase requests |
 | Treasury | `ledger_repository` (every write takes `actor`, writes `ledger_audit` in the same txn), `shared/treasury.py` (overdue etc. derived, never stored), `shared/ledger_audit.py` | Admin Treasury (History / Recent activity); Depot Portal › Local Treasury (record only, settle in Admin) |
@@ -124,6 +125,10 @@ Check-in is scoped to this depot's warehouse. Floor header shows shift A/B/C
   palette in `<app>/theme.py`. Use `#objectName` selectors; a selector-less
   `setStyleSheet` leaks borders onto child `QLabel`s. Escape `&` as `&&` in
   button/tab labels.
+- **Idle lock** — `shared/gui_kit/idle_lock.IdleLock` (`IDLE_LOCK_SECONDS` = 15 min in
+  `shared/auth.py`): Admin signs out, POS hands the till over; skipped while a modal is open.
+- **Backups** — `database/backups.daily_backup()` at every app start + hourly: dated copy in
+  `backups/` beside the DB, newest 14 kept, never raises.
 - `shared/gui_kit/`: `PollingTimer` (survives transient DB locks),
   `RefreshablePopup`, `VisualTab`, `sign_in_dialog`, `icon_kit.svg_to_icon`.
 
@@ -150,8 +155,10 @@ exit 1.
   Linux is built on `ubuntu-22.04` on purpose (old glibc → runs on Arch etc.);
   the tarball has `install.sh` for per-user `.desktop` entries.
 
-## Recent history (newest first, 2026-10-03 → 10-04)
+## Recent history (newest first, 2026-10-03 → 10-08)
 
+0. 2026-10-08: Card/Cash recorded (migration v7, receipt + report split), automatic
+   daily backups, idle lock for Admin/POS, pre-redesign Admin tabs deleted.
 1. `b4c6557` test fix: login button found by upper-cased label.
 2. `72139db` Depot: "İdari Giriş" passed the `clicked(bool)` arg as a session →
    dead "Not signed in" console (buttons now ignore signal args); Floor no longer
@@ -179,13 +186,11 @@ exit 1.
 - PO section "Not in this v1: receiving against a PO" — done (`receive_against_order`).
 - "Transaction has no cost" / sales profit absent — done (v4).
 - Console idle lock and TR/EN switch not described.
-- `admin_app/gui/product_management_tab.py`, `price_update_tab.py`,
-  `inventory_health_tab.py` are still unwired leftovers (only `sales_reports_tab.py`
-  is reachable) — verify before relying on them.
 
 ## Still open / not built
 
-Payment method on transactions (Card/Cash finalize identically), bins/put-away as
+Bins/put-away as
 a real entity, per-location reorder levels, warehouse-to-warehouse truck
 transfers, multi-drop / partial shipments, partial ledger payments & bank
-balances, idle lock for Admin/POS, real webfonts (system fallbacks today).
+balances, real webfonts (system fallbacks today), code signing, and a real
+multi-site backend (SQLite WAL is not safe on a network share).

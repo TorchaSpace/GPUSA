@@ -41,7 +41,10 @@ CREATE TABLE IF NOT EXISTS transactions (
     -- sale made before per-location stock existed).
     dealership_code TEXT,
     -- The signed-in cashier ("name · badge" snapshot; migration v2).
-    cashier         TEXT
+    cashier         TEXT,
+    -- How the customer paid (migration v7). NULL: a sale from before the
+    -- till recorded it.
+    payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash'))
 );
 
 -- Line items are stored separately from `transactions` (rather than as a

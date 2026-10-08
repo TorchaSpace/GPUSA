@@ -2,6 +2,7 @@
 
 import sys
 
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QMessageBox
 
 from shared.i18n import tr
@@ -16,6 +17,10 @@ from database import settings_repository
 from database.exceptions import DataAccessError
 from shared import currency, i18n
 from shared.theme import apply_theme
+from database.backups import daily_backup
+
+
+BACKUP_CHECK_MS = 60 * 60 * 1000
 
 
 def main() -> int:
@@ -45,6 +50,11 @@ def main() -> int:
         return 0
     window = MainWindow(session)
     window.show()
+    # Today's backup now, then an hourly check so a till left open for days still makes one a day.
+    daily_backup()
+    backup_timer = QTimer(window)
+    backup_timer.timeout.connect(lambda: daily_backup())
+    backup_timer.start(BACKUP_CHECK_MS)
     return app.exec()
 
 

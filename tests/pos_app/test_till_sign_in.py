@@ -58,3 +58,20 @@ def test_window_shows_the_cashier_and_sales_record_them(qapp, cashier, monkeypat
     window.set_session(other)
     assert window._header._cashier_label.text() == "Erol" and current_session.get() == other
     window.close()
+
+
+def test_a_till_left_alone_is_handed_over_as_at_a_shift_change(qapp, cashier, monkeypatch):
+    from pos_app.gui.main_window import MainWindow
+
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = MainWindow(session)
+    window.show()
+    pump(qapp)
+    switched = []
+    monkeypatch.setattr(window, "switch_cashier", lambda: switched.append(True))
+    window._idle_lock.last -= auth.IDLE_LOCK_SECONDS - 60
+    assert not window._idle_lock.check() and switched == []
+    window._idle_lock.last -= 120
+    assert window._idle_lock.check() and switched == [True]
+    window._idle_lock.stop()
+    window.close()

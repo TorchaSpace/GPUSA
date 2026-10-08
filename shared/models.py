@@ -69,6 +69,10 @@ class LineItem:
         return round(self.unit_price_at_sale * self.quantity, 2)
 
 
+# How a sale was paid - matches database/schema.sql's payment_method CHECK.
+PAYMENT_METHODS = ("card", "cash")
+
+
 @dataclass
 class Transaction:
     items: list[LineItem] = field(default_factory=list)
@@ -76,6 +80,7 @@ class Transaction:
     created_at: datetime | None = None
     dealership_code: str | None = None  # whose shelf it came off (None: unassigned stock)
     cashier: str | None = None  # "name · badge" of the signed-in cashier
+    payment_method: str | None = None  # one of PAYMENT_METHODS; None on sales from before v7
 
     @property
     def total(self) -> float:

@@ -113,7 +113,7 @@ def get_critical_stock_list() -> list[Product]:
     company-wide view; a single location's own alerts come from
     stock_repository.critical_at(). See shared/gui_kit/polling.py for how
     depot_app re-runs per-location alerts on an interval, and
-    admin_app/gui/inventory_health_tab.py for the passive equivalent.
+    admin_app's Overview page for the passive equivalent.
     """
     with connection_scope() as conn:
         rows = conn.execute(

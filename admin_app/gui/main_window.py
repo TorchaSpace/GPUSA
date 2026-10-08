@@ -47,8 +47,9 @@ from admin_app.gui.pages.treasury_page import TreasuryPage
 from admin_app.gui.pages.workforce_page import WorkforcePage
 from admin_app.gui.sales_reports_tab import SalesReportsTab
 from shared import current_session
-from shared.auth import Session
+from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.constants import PURCHASE_REQUEST_POLL_INTERVAL_MS
+from shared.gui_kit.idle_lock import IdleLock
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
 
@@ -88,6 +89,11 @@ class MainWindow(QMainWindow):
         self.session = session
         current_session.set(session)
         self.resize(1400, 900)
+        # Nobody at the screen for IDLE_LOCK_SECONDS: sign out and ask again.
+        self._idle_lock = IdleLock(IDLE_LOCK_SECONDS, parent=self)
+        self._idle_lock.idle.connect(self._lock_when_idle)
+        if session is not None:
+            self._idle_lock.start()
 
         central = QWidget()
         layout = QHBoxLayout(central)
@@ -168,6 +174,10 @@ class MainWindow(QMainWindow):
             elif key == "workforce":
                 self._workforce_page.reload()  # check-ins arrive from the depot all day
 
+    def _lock_when_idle(self) -> None:
+        if self.session is not None and self.isVisible():
+            self.sign_out()
+
     def sign_out(self) -> None:
         """Sign out, hide everything, and ask for a sign-in again; Quit
         there closes Admin. Another administrator may sign in."""
@@ -185,6 +195,7 @@ class MainWindow(QMainWindow):
             current_session.set(self.session)
             self._sidebar.set_user(self.session.name, self.session.role_label)
             self.navigate("overview")  # the next administrator starts at Overview, not where the last one left off
+            self._idle_lock.touch()
             self.show()
         else:
             QApplication.quit()

@@ -34,8 +34,9 @@ from pos_app.gui.pages.new_sale_page import NewSalePage
 from pos_app.gui.pages.receive_page import ReceivePage
 from pos_app.theme import ORGANIC_PALETTE
 from shared import current_session
-from shared.auth import Session
+from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.dealership_bootstrap import load_dealership_identity
+from shared.gui_kit.idle_lock import IdleLock
 from shared.i18n import tr
 from shared.models import UNASSIGNED, StockLocation
 
@@ -50,6 +51,11 @@ class MainWindow(QMainWindow):
         self.session = session
         current_session.set(session)
         self.setWindowTitle(tr("pos.window_title"))
+        # Till left alone for IDLE_LOCK_SECONDS: hand it over as at a shift change.
+        self._idle_lock = IdleLock(IDLE_LOCK_SECONDS, parent=self)
+        self._idle_lock.idle.connect(self._lock_when_idle)
+        if session is not None:
+            self._idle_lock.start()
         self.resize(1280, 800)
         self.setStyleSheet(f"QMainWindow {{ background-color: {ORGANIC_PALETTE['background']}; }}")
 
@@ -100,6 +106,10 @@ class MainWindow(QMainWindow):
         self._header.page_selected.connect(self._navigate)
         self._navigate("home")
 
+    def _lock_when_idle(self) -> None:
+        if self.session is not None and self.isVisible():
+            self.switch_cashier()
+
     def switch_cashier(self) -> None:
         """Shift change: sign the current cashier out, clear the open sale,
         and ask the next one to sign in. "Close till" there closes the POS."""
@@ -116,6 +126,7 @@ class MainWindow(QMainWindow):
         if dialog.exec() and dialog.session is not None:
             self.set_session(dialog.session)
             self._navigate("home")
+            self._idle_lock.touch()
             self.show()
         else:
             QApplication.quit()

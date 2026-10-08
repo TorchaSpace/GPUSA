@@ -49,6 +49,7 @@ MAX_PIN_LENGTH = 12
 MAX_FAILED_ATTEMPTS = 5
 LOCK_MINUTES = 5
 PORTAL_AUTO_LOCK_SECONDS = 10 * 60  # the Manager Portal mockup's 10-minute session
+IDLE_LOCK_SECONDS = 15 * 60  # Admin and POS sign out after this long with no input (same as the depot Console)
 
 _ALGORITHM = "pbkdf2_sha256"
 DEFAULT_PBKDF2_ITERATIONS = 200_000

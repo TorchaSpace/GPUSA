@@ -209,3 +209,10 @@ def test_view_x_labels_are_inside_the_range_and_start_at_zero():
 def test_view_rejects_an_unknown_mode():
     with pytest.raises(ValueError):
         analytics.build_report_view(analytics.period_for("month", date(2026, 9, 3)), [], [], [], "weekly")
+
+
+def test_revenue_by_payment_splits_card_and_cash_and_flags_unrecorded_sales():
+    card, cash, old = _sale(1, 10.0), _sale(1, 4.5), _sale(1, 2.0)
+    card.payment_method, cash.payment_method = "card", "cash"
+    assert analytics.revenue_by_payment([card, cash, old]) == {"Card": 10.0, "Cash": 4.5, "Not recorded": 2.0}
+    assert analytics.revenue_by_payment([]) == {"Card": 0.0, "Cash": 0.0}

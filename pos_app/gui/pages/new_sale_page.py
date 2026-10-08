@@ -21,11 +21,8 @@ Real, end to end:
   (or another POS till hitting the same shared_backend.db) shows the
   new numbers immediately, no polling or push needed.
 
-Simplification: the mockup has separate "Card"/"Cash" buttons. Since
-shared.models.Transaction has no payment-method field yet, both buttons
-finalize the identical sale - the distinction is visual only for now,
-not persisted. Extending Transaction with a real payment_method column
-is a small, separate follow-up once that's actually needed.
+"Card" / "Cash" record how the sale was paid (transactions.payment_method,
+migration v7), so Admin's reports can split takings by payment method.
 """
 
 from __future__ import annotations
@@ -61,7 +58,7 @@ from pos_app.services.checkout_service import complete_sale
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.currency import format_money
 from shared.i18n import plural, tr
-from shared.models import UNASSIGNED, LineItem, Product, StockLocation, Transaction
+from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, Product, StockLocation, Transaction
 from shared import current_session
 from shared.textcase import upper
 from shared.warehousing import tr_or
@@ -520,6 +517,7 @@ class NewSalePage(QWidget):
             return
 
         pending = Transaction(
+            payment_method=payment_label.lower() if payment_label.lower() in PAYMENT_METHODS else None,
             items=[
                 LineItem(
                     product_barcode=line.barcode,

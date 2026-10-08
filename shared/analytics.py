@@ -43,7 +43,7 @@ from shared.builders.report_builder import (
 )
 from shared.formatting import day_month_text, format_number, localize_number, long_date_text
 from shared.i18n import tr
-from shared.models import Dealership, Transaction
+from shared.models import PAYMENT_METHODS, Dealership, Transaction
 
 UNASSIGNED_REGION = "Unassigned"
 
@@ -292,6 +292,20 @@ def revenue_by_region(transactions: list[Transaction], dealerships: list[Dealers
     return {region: cents_to_amount(value) for region, value in totals.items()}
 
 
+PAYMENT_NOT_RECORDED = "Not recorded"
+
+
+def revenue_by_payment(transactions: list[Transaction]) -> dict[str, float]:
+    """Revenue per payment method ("Card", "Cash"), for counting the till at
+    the end of a day. Sales from before the till recorded it fall under
+    "Not recorded", listed only when there are any."""
+    totals: dict[str, int] = {method.capitalize(): 0 for method in PAYMENT_METHODS}
+    for transaction in transactions:
+        key = transaction.payment_method.capitalize() if transaction.payment_method else PAYMENT_NOT_RECORDED
+        totals[key] = totals.get(key, 0) + transaction_cents(transaction)
+    return {method: cents_to_amount(value) for method, value in totals.items()}
+
+
 @dataclass(frozen=True)
 class DealershipRevenue:
     code: str
@@ -393,6 +407,7 @@ def build_period_report(
     daily_rows = [(f"{period.start + timedelta(days=i):%Y-%m-%d}", amount_text(value)) for i, value in enumerate(series)]
 
     region_rows = [(region, amount_text(value)) for region, value in revenue_by_region(transactions, dealerships).items()]
+    payment_rows = [(method, amount_text(value)) for method, value in revenue_by_payment(transactions).items()]
     ranking = top_dealerships(transactions, dealerships, period.end, limit=10, week_transactions=week_transactions)
     with_profit = any(d.profit.has_profit for d in ranking)
     top_rows = []
@@ -408,6 +423,7 @@ def build_period_report(
         ReportSection("Totals", totals_rows),
         ReportSection("Revenue per day", daily_rows),
         ReportSection("Revenue by region", region_rows),
+        ReportSection("Revenue by payment method", payment_rows),
         ReportSection(top_title, top_rows),
     ]
     sections.extend(section for section in base.sections if section.title.startswith(PRODUCT_SECTION_TITLE))

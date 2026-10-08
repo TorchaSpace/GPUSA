@@ -22,7 +22,7 @@ from database.exceptions import (
 from database.stock_repository import change_level, level_in, require_location
 from shared.auth import AREA_POS, Actor, actor_label
 from shared.formatting import to_db_timestamp
-from shared.models import UNASSIGNED, LineItem, StockLocation, Transaction
+from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, StockLocation, Transaction
 
 
 def finalize_transaction(transaction: Transaction, location: StockLocation = UNASSIGNED,
@@ -60,10 +60,16 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     "the other checkout committed first, stock ran out" failure here, not
     a partially-applied write if two checkouts land at once.
 
+    `transaction.payment_method` ("card" / "cash", see
+    shared.models.PAYMENT_METHODS) is stored as given; anything else is a
+    ValueError before the database is touched.
+
     Returns the same Transaction with `id` and `created_at` populated.
     """
     if not transaction.items:
         raise ValueError("Cannot finalize a transaction with no line items")
+    if transaction.payment_method is not None and transaction.payment_method not in PAYMENT_METHODS:
+        raise ValueError(f"Unknown payment method: {transaction.payment_method!r}")
 
     wanted: dict[str, int] = {}
     for item in transaction.items:
@@ -104,8 +110,9 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
                     raise InsufficientStockError(barcode, quantity, available, location.label)
 
             cursor = conn.execute(
-                "INSERT INTO transactions (total, dealership_code, cashier) VALUES (?, ?, ?)",
-                (transaction.total, None if location.is_unassigned else location.code, actor_label(cashier)),
+                "INSERT INTO transactions (total, dealership_code, cashier, payment_method) VALUES (?, ?, ?, ?)",
+                (transaction.total, None if location.is_unassigned else location.code, actor_label(cashier),
+                 transaction.payment_method),
             )
             transaction_id = cursor.lastrowid
 
@@ -149,6 +156,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
         items=sold,
         dealership_code=None if location.is_unassigned else location.code,
         cashier=actor_label(cashier),
+        payment_method=transaction.payment_method,
     )
 
 
@@ -166,7 +174,7 @@ def get_by_id(transaction_id: int) -> Transaction:
     """
     with connection_scope() as conn:
         header = conn.execute(
-            "SELECT id, created_at, dealership_code, cashier FROM transactions WHERE id = ?", (transaction_id,)
+            "SELECT id, created_at, dealership_code, cashier, payment_method FROM transactions WHERE id = ?", (transaction_id,)
         ).fetchone()
         if header is None:
             raise TransactionNotFoundError(transaction_id)
@@ -189,7 +197,8 @@ def get_by_id(transaction_id: int) -> Transaction:
         for item in item_rows
     ]
     return Transaction(id=header["id"], created_at=_parse_timestamp(header["created_at"]), items=items,
-                       dealership_code=header["dealership_code"], cashier=header["cashier"])
+                       dealership_code=header["dealership_code"], cashier=header["cashier"],
+                       payment_method=header["payment_method"])
 
 
 def _parse_timestamp(value: str) -> datetime:
@@ -228,7 +237,7 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
     """
     with connection_scope() as conn:
         header_rows = conn.execute(
-            "SELECT id, created_at, dealership_code, cashier FROM transactions "
+            "SELECT id, created_at, dealership_code, cashier, payment_method FROM transactions "
             "WHERE created_at >= ? AND created_at < ? "
             "ORDER BY created_at",
             (to_db_timestamp(start), to_db_timestamp(end)),
@@ -259,6 +268,7 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
                     items=items,
                     dealership_code=header["dealership_code"],
                     cashier=header["cashier"],
+                    payment_method=header["payment_method"],
                 )
             )
     return transactions
