@@ -24,7 +24,7 @@ from pathlib import Path
 
 from database.connection import copy_database_to
 from database.exceptions import DataAccessError
-from shared.paths import get_db_path
+from shared.paths import get_db_path, restrict_to_owner
 
 DAILY_BACKUPS_KEPT = 14
 BACKUP_DIR_NAME = "backups"
@@ -50,12 +50,14 @@ def daily_backup(today: date | None = None, keep: int = DAILY_BACKUPS_KEPT) -> P
         db_path = Path(get_db_path())
         folder = backup_dir()
         folder.mkdir(parents=True, exist_ok=True)
+        restrict_to_owner(folder)
         target = folder / _name_for(db_path, today or date.today())
         if not target.exists():
             temporary = folder / f".{target.name}.{os.getpid()}.tmp"
             temporary.unlink(missing_ok=True)
             copy_database_to(temporary)
             os.replace(temporary, target)
+            restrict_to_owner(target)
         for old in _dated_backups(folder, db_path)[:-keep] if keep > 0 else []:
             old.unlink(missing_ok=True)
         return target

@@ -184,3 +184,20 @@ def set_db_path(new_path: Path) -> None:
     config = _load_config()
     config["db_path"] = str(new_path)
     _save_config(config)
+
+
+def restrict_to_owner(path: Path) -> bool:
+    """Best effort: make `path` readable by its owner only (0600 for a file,
+    0700 for a folder) so other accounts on a shared machine cannot copy the
+    database or its backups (staff details, PIN hashes). POSIX only - on
+    Windows the folder's inherited ACL decides (see the installer notes in
+    README); returns whether anything was changed."""
+    if os.name != "posix":
+        return False
+    try:
+        path = Path(path)
+        path.chmod(0o700 if path.is_dir() else 0o600)
+        return True
+    except OSError:
+        return False
+

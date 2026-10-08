@@ -282,9 +282,10 @@ def list_between(start: datetime, end: datetime, net_of_returns: bool = True) ->
                 for item in item_rows
             ]
             if net_of_returns:
-                items = _net_items(conn, header["id"], items)
-                if not items:
+                net = _net_items(conn, header["id"], items)
+                if items and not net:  # everything on it was refunded
                     continue
+                items = net
             transactions.append(
                 Transaction(
                     id=header["id"],

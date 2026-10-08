@@ -52,7 +52,7 @@ PORTAL_AUTO_LOCK_SECONDS = 10 * 60  # the Manager Portal mockup's 10-minute sess
 IDLE_LOCK_SECONDS = 15 * 60  # Admin and POS sign out after this long with no input (same as the depot Console)
 
 _ALGORITHM = "pbkdf2_sha256"
-DEFAULT_PBKDF2_ITERATIONS = 200_000
+DEFAULT_PBKDF2_ITERATIONS = 600_000  # OWASP guidance for PBKDF2-HMAC-SHA256; older hashes are upgraded at sign-in
 PBKDF2_ITERATIONS = DEFAULT_PBKDF2_ITERATIONS  # tests lower this; the apps never do
 
 
@@ -105,6 +105,16 @@ def verify_pin(pin: str, stored: str) -> bool:
     except (ValueError, AttributeError):
         return False
     return hmac.compare_digest(digest.hex(), digest_hex)
+
+
+def needs_rehash(stored: str) -> bool:
+    """True when `stored` was made with fewer iterations than today's setting
+    (a hash from an older version): the next correct sign-in re-hashes the PIN."""
+    try:
+        algorithm, iterations, _salt, _digest = stored.split("$")
+        return algorithm == _ALGORITHM and int(iterations) < PBKDF2_ITERATIONS
+    except ValueError:
+        return False
 
 
 @dataclass(frozen=True)

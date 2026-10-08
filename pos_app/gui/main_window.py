@@ -34,6 +34,7 @@ from pos_app.gui.pages.home_page import HomePage
 from pos_app.gui.pages.my_stock_page import MyStockPage
 from pos_app.gui.pages.new_sale_page import NewSalePage
 from pos_app.gui.pages.receive_page import ReceivePage
+from pos_app.gui.sales_page import SalesPage
 from pos_app.theme import ORGANIC_PALETTE
 from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
@@ -102,6 +103,10 @@ class MainWindow(QMainWindow):
         self._receive_page.stock_changed.connect(self._home_page.reload_badges)
         self._receive_page.incoming_changed.connect(self._home_page.reload_badges)
         self._register_page("receive", self._receive_page)
+
+        self._sales_page = SalesPage(location)
+        self._sales_page.stock_changed.connect(lambda: self._stock_page.reload(play=False))
+        self._register_page("sales", self._sales_page)
 
         layout.addWidget(self._stack, stretch=1)
         self.setCentralWidget(central)

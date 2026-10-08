@@ -64,6 +64,7 @@ step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
 | 6 | `stock_movements.bin_code` (bin/dock no longer glued into `note`) |
 | 7 | `transactions.payment_method` ('card' / 'cash'; NULL = from before v7) |
 | 8 | `stock_requests` table (dealership → depot; one open request per shop+product, unique partial index) |
+| 9 | `transactions.client_uuid` (unique when set: a re-sent sale stores once), `sale_returns` + `sale_return_items` (refunds), `day_closes` (till count), `admin_audit` (append-only: deletes, refunds) |
 
 ### The stock invariant (most important rule)
 
@@ -89,6 +90,7 @@ products.stock_quantity = SUM(stock_levels) + units on dispatched, not-yet-recei
 | Treasury | `ledger_repository` (every write takes `actor`, writes `ledger_audit` in the same txn), `shared/treasury.py` (overdue etc. derived, never stored), `shared/ledger_audit.py` | Admin Treasury (History / Recent activity); Depot Portal › Local Treasury (record only, settle in Admin) |
 | Shipments | `shipment_repository`, `shared/distribution.py` (progress/delay derived from schedule) | Depot Console › Shipments; POS Receive; Admin Distribution |
 | Stock requests | `stock_request_repository`: `create` (POS), `cancel`/`decline`, `mark_planned` (called by `shipment_repository.create(request_ids=…)` in the same txn), cancelling the shipment reopens them; `dealership_shortages()` = shelf ≤ reorder level with incoming + requested; statuses open/planned/declined/cancelled, "delivered" derived from the shipment | POS My Stock › Request stock / My requests; Depot Console › Shipments "Dealership needs" panel; Admin Distribution "Dealership needs" |
+| Refunds & day close | `sale_return_repository.create(sale_id, [(barcode, qty, restock)], reason, approved_by, requested_by)` — manager approval re-checked in the txn (`ReturnApprovalError`), quantities vs sold − returned, restocked units go back on the shelf, `admin_audit` row; `transaction_repository.list_between(..., net_of_returns=True)` reads sales NET of refunds (reports), `False` for the day close; `day_close_repository.summarize/close` (cash sales − cash refunds vs counted) | POS Sales page (Return items needs a manager badge+PIN, Close the day); Admin Reports › Till control |
 | People & sign-in | `employee_repository`, `attendance_repository`, `account_repository`, `shared/auth.py` (roles, PIN rules, PBKDF2 200k, lockout 5→5 min), `shared/current_session.py` | Admin Settings › Accounts; Depot Console › attendance + Floor Check-in Log |
 | PIN recovery | `account_repository`: recovery code, security question, "start over" (backup beside DB → erase → new admin); `shared/recovery_code.py`, `shared/security_question.py` | Admin sign-in "Forgot your PIN or badge ID?" |
 | Settings | `settings_repository` (`safe_language()`, `safe_currency()`, store profile, notification flags); `shared/store_settings.py` | Admin Settings; TR/EN switch in Depot headers |
@@ -159,6 +161,7 @@ exit 1.
 
 ## Recent history (newest first, 2026-10-03 → 10-08)
 
+0. 2026-10-08: before the cloud move: idempotent sales (`client_uuid`), refunds with manager approval, day-close count, `admin_audit` for deletes, PBKDF2 600k with upgrade-on-sign-in, owner-only DB/backup permissions (migration v9).
 0. 2026-10-08: dealership stock requests + low-at-dealerships lists (migration v8).
 0. 2026-10-08: Card/Cash recorded (migration v7, receipt + report split), automatic
    daily backups, idle lock for Admin/POS, pre-redesign Admin tabs deleted.

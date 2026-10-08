@@ -38,3 +38,11 @@ def test_role_areas():
 def test_session_helpers():
     s = auth.Session(1, "B-1", "Murat Yılmaz", "cashier", "2026-01-01T00:00:00.000Z", auth.AREA_POS, "POS 001")
     assert (s.first_name, s.initials, s.role_label, s.actor.label) == ("Murat", "MY", "Cashier", "Murat Yılmaz · B-1")
+
+
+def test_an_older_hash_is_recognised_for_upgrade(monkeypatch):
+    old = auth.hash_pin("482913", iterations=1_000)
+    monkeypatch.setattr(auth, "PBKDF2_ITERATIONS", 5_000)
+    assert auth.needs_rehash(old)
+    assert not auth.needs_rehash(auth.hash_pin("482913"))
+    assert not auth.needs_rehash("garbage")

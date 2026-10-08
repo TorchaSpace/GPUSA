@@ -256,3 +256,23 @@ def test_first_admin_badge_is_normalised_and_validated():
         accounts.create_first_admin("A-1", "x" * 10_000, "482913")
     session = accounts.create_first_admin(" a-1 ", "Erol", "482913")
     assert session.badge_id == "A-1"
+
+
+def test_signing_in_upgrades_a_hash_made_with_fewer_iterations(monkeypatch):
+    from shared import auth as _auth
+    from database import employee_repository
+    from shared.models import Employee
+
+    employee_repository.create(Employee("B-7", "Old Hash", "Sales & service", "Dealership", "Harbor Point"))
+    accounts.create_first_admin("B-1", "Erol Admin", "482913")
+    accounts.create_account("B-7", "cashier", "5831")
+    with connection.connection_scope() as conn:
+        conn.execute("UPDATE accounts SET pin_hash = ? WHERE employee_id = (SELECT id FROM employees WHERE badge_id = 'B-7')",
+                     (_auth.hash_pin("5831", iterations=100),))
+        conn.commit()
+    accounts.authenticate("B-7", "5831", "pos", "Till 1")
+    with connection.connection_scope() as conn:
+        stored = conn.execute("SELECT pin_hash FROM accounts a JOIN employees e ON e.id = a.employee_id "
+                              "WHERE e.badge_id = 'B-7'").fetchone()[0]
+    assert stored.split("$")[1] == str(_auth.PBKDF2_ITERATIONS)
+    accounts.authenticate("B-7", "5831", "pos", "Till 1")  # still works after the upgrade

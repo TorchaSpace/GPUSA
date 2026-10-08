@@ -360,6 +360,22 @@ shipment* puts every open request of that shop into the New shipment form
 tops up shops at or below the reorder level. Admin > Distribution shows the
 same open requests and low shelves.
 
+**Refunds and the end-of-day count** (migration v9): the till has a
+**Sales** page (last 7 days at this dealership). *Return items* refunds
+part or all of a sale - the cashier picks the units, says why, and a manager
+or administrator approves with their badge and PIN. Units marked "back on the
+shelf" return to the dealership's stock, damaged ones only move money; the
+same unit can never be refunded twice. Reports read sales net of refunds.
+*Close the day* shows the cash the sales say should be in the drawer (cash
+sales minus cash refunds), takes what the cashier counted and stores the
+difference; Admin > Reports > Till control lists the counts and refunds.
+Every sale now carries a key from the till, so sending it twice stores it
+once (needed for the offline tills of the cloud plan). Deleting a product,
+dealership or warehouse is written to an append-only audit trail. PINs use
+600,000 PBKDF2 rounds (older hashes upgrade at the next sign-in) and, on
+macOS/Linux, the database and its backups are readable by their owner only;
+on Windows give the data folder an owner/administrators-only ACL when installing.
+
 **Automatic daily backups** (`database/backups.py`): every app, when it
 opens and then once an hour, makes sure today's copy exists in a `backups`
 folder beside `shared_backend.db` (`shared_backend-YYYY-MM-DD.db`); the

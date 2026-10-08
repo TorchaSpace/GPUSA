@@ -363,6 +363,9 @@ def _verify_with_lockout(row: sqlite3.Row, pin: str, area: str, terminal: str, n
         raise AccountLockedError(local_datetime_text(account.locked_until))
 
     if auth.verify_pin(pin or "", row["pin_hash"]):
+        if auth.needs_rehash(row["pin_hash"]):  # made by an older version with fewer iterations
+            upgraded = auth.hash_pin(pin)
+            _write(lambda conn: conn.execute("UPDATE accounts SET pin_hash = ? WHERE id = ?", (upgraded, account.id)))
         return
 
     def wrong(conn):

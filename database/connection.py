@@ -14,7 +14,7 @@ from threading import Lock
 
 from shared.i18n import UserError
 from database.migrations import run_migrations
-from shared.paths import get_db_path, resource_path
+from shared.paths import get_db_path, resource_path, restrict_to_owner
 
 # WAL mode allows one writer + multiple concurrent readers, which is the
 # minimum needed for the POS app and Admin app to hit the same file at
@@ -52,6 +52,9 @@ def _ensure_schema(conn: sqlite3.Connection) -> None:
         # Columns/data an older database is missing - see database/migrations.py.
         run_migrations(conn)
         _initialized = True
+        main_db = conn.execute("PRAGMA database_list").fetchone()["file"]
+        if main_db:
+            restrict_to_owner(Path(main_db))
 
 
 def get_connection(db_path: Path | None = None) -> sqlite3.Connection:

@@ -33,13 +33,14 @@ Sales Reports tab is still reachable from the header button.
 from __future__ import annotations
 
 import html
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFileDialog,
+    QHeaderView,
     QHBoxLayout,
     QLabel,
     QMessageBox,
@@ -55,9 +56,11 @@ from admin_app.gui.components.charts import DonutChart, RevenueChart, Sparkline
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
+from admin_app.gui.components.styled_table import cell, styled_table
 from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
-from database import dealership_repository, sale_cost_repository, transaction_repository
+from database import dealership_repository, day_close_repository, sale_cost_repository, sale_return_repository
+from database import transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import analytics
 from shared.formatting import day_month_text, format_number
@@ -89,6 +92,7 @@ class ReportsPage(AdminPage):
         lower_layout.addWidget(self._build_breakdown(), stretch=1)
         lower_layout.addWidget(self._build_top(), stretch=1)
         self.body_layout().addWidget(lower)
+        self.body_layout().addWidget(self._build_control())
         self.body_layout().addStretch(1)
         self._empty_note = QLabel("")
         self._empty_note.setStyleSheet(f"color: {p['text_secondary']}; font-size: 12px;")
@@ -205,6 +209,58 @@ class ReportsPage(AdminPage):
         section.body_layout().addWidget(row)
         return section
 
+    def _build_control(self) -> QWidget:
+        """Till control: the end-of-day counts that did not match, and the refunds paid out."""
+        section = Section(tr("admin.reports.control_kicker").format(short=0, refunds=0),
+                          tr("admin.reports.control_heading"))
+        self._closes_table = styled_table([tr(f"admin.reports.close_col_{k}") for k in (
+            "date", "dealer", "expected", "counted", "difference", "by", "note")])
+        self._refunds_table = styled_table([tr(f"admin.reports.refund_col_{k}") for k in (
+            "no", "when", "dealer", "amount", "method", "reason", "approved")])
+        for table, stretch in ((self._closes_table, 6), (self._refunds_table, 5)):
+            header = table.horizontalHeader()
+            header.setStretchLastSection(False)
+            for column in range(table.columnCount()):
+                header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(stretch, QHeaderView.Stretch)
+            table.setMinimumHeight(130)
+            section.body_layout().addWidget(table)
+        self._control_section = section
+        return section
+
+    def _render_control(self) -> None:
+        p = CLASSICAL_PALETTE
+        try:
+            closes = day_close_repository.list_recent(30)
+            refunds = sale_return_repository.list_between(
+                datetime.now() - timedelta(days=60), datetime.now() + timedelta(days=1))[::-1][:30]
+        except DATABASE_ERRORS:
+            return
+        short = [c for c in closes if c.difference != 0]
+        self._control_section.set_kicker(tr("admin.reports.control_kicker").format(
+            short=len(short), refunds=len(refunds)))
+        self._closes_table.setRowCount(len(closes))
+        for row, close in enumerate(closes):
+            warn = close.difference != 0
+            values = [
+                cell(close.business_date.isoformat()), cell(close.dealership_code or "—"),
+                cell(format_money(close.expected_cash), right=True), cell(format_money(close.counted_cash), right=True),
+                cell(format_money(close.difference), right=True, color=p["accent"] if warn else None),
+                cell(close.closed_by or "—"), cell(close.note or "", color=p["text_secondary"]),
+            ]
+            for column, item in enumerate(values):
+                self._closes_table.setItem(row, column, item)
+        self._refunds_table.setRowCount(len(refunds))
+        for row, refund in enumerate(refunds):
+            values = [
+                cell(refund.number), cell(refund.created_at.strftime("%Y-%m-%d %H:%M") if refund.created_at else ""),
+                cell(refund.dealership_code or "—"), cell(format_money(refund.total), right=True),
+                cell(refund.payment_method.capitalize() if refund.payment_method else "—"),
+                cell(refund.reason), cell(refund.approved_by or "—"),
+            ]
+            for column, item in enumerate(values):
+                self._refunds_table.setItem(row, column, item)
+
     def _build_top(self) -> QWidget:
         section = Section(tr("admin.reports.top_kicker"), tr("admin.reports.top_heading"))
         self._top_host = QWidget()
@@ -277,6 +333,7 @@ class ReportsPage(AdminPage):
         self._render_trend(view)
         self._render_breakdown(view)
         self._render_top(view)
+        self._render_control()
 
     def _render_trend(self, view: analytics.ReportView) -> None:
         period = view.period
