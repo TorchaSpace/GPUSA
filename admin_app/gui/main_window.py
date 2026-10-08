@@ -237,6 +237,8 @@ class MainWindow(QMainWindow):
                 self._dealerships_page.reload()  # stock and status change elsewhere (depot, POS, another Admin)
             elif key == "workforce":
                 self._workforce_page.reload()  # check-ins arrive from the depot all day
+            elif key in ("inventory", "distribution"):
+                widget.reload()  # stock moves at the depots and tills while the page is closed
 
     def _lock_when_idle(self) -> None:
         if self.session is not None and self.isVisible():

@@ -409,6 +409,91 @@ def _order_row(conn: sqlite3.Connection, order_id: int) -> sqlite3.Row:
     return row
 
 
+def _book_against(conn: sqlite3.Connection, row: sqlite3.Row, order: PurchaseOrder, quantity: int,
+                  actor: Actor | None, received_by: str, warehouse_location: StockLocation, *,
+                  note: str | None = None, bin_code: str | None = None) -> None:
+    """The write half of a delivery against one order, inside the caller's transaction (the order is
+    known receivable and `quantity` fits what is still due)."""
+    order_id = int(row["id"])
+    product = conn.execute(
+        "SELECT stock_quantity, cost_price FROM products WHERE barcode = ?", (row["product_barcode"],)
+    ).fetchone()
+    if product is None:
+        raise ProductNotFoundError(row["product_barcode"])
+    on_hand_before, old_cost = int(product["stock_quantity"]), float(product["cost_price"])
+
+    # The conditional UPDATE is the real guard (status and quantity
+    # re-checked by the same statement that changes them); the reads
+    # above only give clear messages.
+    cursor = conn.execute(
+        "UPDATE purchase_orders SET received_qty = received_qty + ?, "
+        "status = CASE WHEN received_qty + ? >= quantity THEN 'received' ELSE 'partially_received' END, "
+        f"received_at = {_NOW}, received_by = ? "
+        "WHERE id = ? AND status IN ('sent', 'partially_received') AND received_qty + ? <= quantity",
+        (quantity, quantity, received_by, order_id, quantity),
+    )
+    if cursor.rowcount == 0:
+        raise PurchaseOrderStateError(order.number, row["status"], "received")
+
+    stock_repository.receive_in(
+        conn, warehouse_location, row["product_barcode"], quantity,
+        note=note or f"Received against {order.number} ({row['supplier']})", actor=actor, reference=order.number,
+        bin_code=bin_code,
+    )
+    conn.execute(
+        f"UPDATE products SET cost_price = ?, updated_at = {_NOW} WHERE barcode = ?",
+        (weighted_average_cost(on_hand_before, old_cost, quantity, float(row["unit_price"])),
+         row["product_barcode"]),
+    )
+
+
+@_wrap_sqlite
+def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor: Actor | None = None, *,
+                     note: str | None = None, reference: str | None = None,
+                     bin_code: str | None = None) -> list[str]:
+    """Goods arrive at a warehouse's Floor. If this depot has open orders (sent / partly received) for the
+    product, the delivery is booked against them, oldest first, so the order shows as received and cannot be
+    received a second time by hand; whatever is beyond what the orders still await is an ordinary receipt.
+    One transaction. Returns the order numbers it settled units against (empty = plain receipt)."""
+    if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+        raise UserError("err.qty_positive")
+
+    def run(conn):
+        numbers: list[str] = []
+        left = quantity
+        code = stock_repository.resolve_product(conn, barcode, active_only=True)[0]
+        if location.kind == "warehouse":
+            site_row = conn.execute("SELECT code, name FROM warehouses WHERE code = ?", (location.code,)).fetchone()
+            if site_row is not None:
+                site = normalise_site(f"{site_row['code']} · {site_row['name']}")
+                received_by = actor_label(actor) if actor is not None else None
+                if not received_by or not received_by.strip(" ·"):
+                    received_by = f"Floor · {location.code}"
+                candidates = conn.execute(
+                    "SELECT * FROM purchase_orders WHERE product_barcode = ? AND status IN ('sent', 'partially_received') "
+                    "ORDER BY id", (code,)).fetchall()
+                for row in candidates:
+                    if left <= 0:
+                        break
+                    if normalise_site(row["site"]) != site:
+                        continue
+                    take = min(left, int(row["quantity"]) - int(row["received_qty"]))
+                    if take <= 0:
+                        continue
+                    order = _row_to_order(row)
+                    _book_against(conn, row, order, take, actor, received_by, location,
+                                  note=note or f"Received at the Floor against {order.number} ({row['supplier']})",
+                                  bin_code=bin_code)
+                    numbers.append(order.number)
+                    left -= take
+        if left > 0:
+            stock_repository.receive_in(conn, location, code, left, note=note, actor=actor, reference=reference,
+                                        bin_code=bin_code)
+        return numbers
+
+    return _in_transaction(run)
+
+
 @_wrap_sqlite
 def receive_against_order(order_id: int, quantity: int, actor: Actor | None,
                           warehouse_location: StockLocation) -> PurchaseOrder:
@@ -446,35 +531,7 @@ def receive_against_order(order_id: int, quantity: int, actor: Actor | None,
         if quantity > remaining:
             raise PurchaseOrderOverReceiveError(order.number, quantity, remaining)
 
-        product = conn.execute(
-            "SELECT stock_quantity, cost_price FROM products WHERE barcode = ?", (row["product_barcode"],)
-        ).fetchone()
-        if product is None:
-            raise ProductNotFoundError(row["product_barcode"])
-        on_hand_before, old_cost = int(product["stock_quantity"]), float(product["cost_price"])
-
-        # The conditional UPDATE is the real guard (status and quantity
-        # re-checked by the same statement that changes them); the reads
-        # above only give clear messages.
-        cursor = conn.execute(
-            "UPDATE purchase_orders SET received_qty = received_qty + ?, "
-            "status = CASE WHEN received_qty + ? >= quantity THEN 'received' ELSE 'partially_received' END, "
-            f"received_at = {_NOW}, received_by = ? "
-            "WHERE id = ? AND status IN ('sent', 'partially_received') AND received_qty + ? <= quantity",
-            (quantity, quantity, received_by, order_id, quantity),
-        )
-        if cursor.rowcount == 0:
-            raise PurchaseOrderStateError(order.number, row["status"], "received")
-
-        stock_repository.receive_in(
-            conn, warehouse_location, row["product_barcode"], quantity,
-            note=f"Received against {order.number} ({row['supplier']})", actor=actor, reference=order.number,
-        )
-        conn.execute(
-            f"UPDATE products SET cost_price = ?, updated_at = {_NOW} WHERE barcode = ?",
-            (weighted_average_cost(on_hand_before, old_cost, quantity, float(row["unit_price"])),
-             row["product_barcode"]),
-        )
+        _book_against(conn, row, order, quantity, actor, received_by, warehouse_location)
         return _row_to_order(_order_row(conn, order_id))
 
     return _in_transaction(run)
