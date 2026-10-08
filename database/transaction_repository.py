@@ -235,8 +235,15 @@ def _as_local(naive_utc: datetime) -> datetime:
     return naive_utc.replace(tzinfo=timezone.utc).astimezone().replace(tzinfo=None)
 
 
-def list_between(start: datetime, end: datetime) -> list[Transaction]:
+def list_between(start: datetime, end: datetime, net_of_returns: bool = True) -> list[Transaction]:
     """Return all transactions in [start, end), for the Admin sales report tab.
+
+    By default each sale is read NET of its refunds (database/sale_return_repository.py):
+    the returned units come off its lines (taken off the lines in order) and a
+    sale with nothing left is left out, so revenue, profit and unit counts in every
+    report already exclude what was given back. Refunds count on the SALE's date
+    here; the day-close report reads them on the day they were paid out instead
+    (net_of_returns=False plus sale_return_repository.list_between).
 
     `start`/`end` are LOCAL times (a date picker on this machine) and each
     returned transaction's created_at is local too, so a sale at 01:30 in
@@ -274,6 +281,10 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
                 )
                 for item in item_rows
             ]
+            if net_of_returns:
+                items = _net_items(conn, header["id"], items)
+                if not items:
+                    continue
             transactions.append(
                 Transaction(
                     id=header["id"],
@@ -285,3 +296,25 @@ def list_between(start: datetime, end: datetime) -> list[Transaction]:
                 )
             )
     return transactions
+
+
+def _net_items(conn: sqlite3.Connection, transaction_id: int, items: list[LineItem]) -> list[LineItem]:
+    """`items` less the units refunded per product, taken off the lines in order."""
+    returned = {
+        row[0]: int(row[1])
+        for row in conn.execute(
+            "SELECT i.product_barcode, SUM(i.quantity) FROM sale_return_items i "
+            "JOIN sale_returns r ON r.id = i.return_id WHERE r.transaction_id = ? GROUP BY i.product_barcode",
+            (transaction_id,),
+        )
+    }
+    if not returned:
+        return items
+    net: list[LineItem] = []
+    for item in items:
+        take = min(item.quantity, returned.get(item.product_barcode, 0))
+        if take:
+            returned[item.product_barcode] -= take
+        if item.quantity - take > 0:
+            net.append(dataclasses.replace(item, quantity=item.quantity - take))
+    return net

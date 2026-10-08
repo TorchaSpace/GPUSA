@@ -533,3 +533,66 @@ BEGIN SELECT RAISE(ABORT, 'admin_audit is append-only'); END;
 
 CREATE TRIGGER IF NOT EXISTS trg_admin_audit_no_delete BEFORE DELETE ON admin_audit
 BEGIN SELECT RAISE(ABORT, 'admin_audit is append-only'); END;
+
+-- Refunds (migration v9): goods a customer brought back from an earlier sale.
+-- One row per refund, its lines in sale_return_items. The sale itself is never
+-- edited; sales reports read it net of what was returned (transaction_repository
+-- .list_between), the day-close report counts the refund on the day it was paid
+-- out. `restock` = 1: the units went back on the dealership shelf; 0: damaged /
+-- not resellable, only the money moved. A refund needs a manager's approval
+-- (approved_by). payment_method is copied from the sale (money goes back the way
+-- it came). client_uuid makes a re-sent refund store once.
+CREATE TABLE IF NOT EXISTS sale_returns (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    transaction_id  INTEGER NOT NULL REFERENCES transactions(id),
+    dealership_code TEXT,
+    total           REAL NOT NULL CHECK (total > 0),
+    payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash')),
+    reason          TEXT NOT NULL,
+    requested_by    TEXT,
+    approved_by     TEXT,
+    client_uuid     TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_sale_returns_transaction_id ON sale_returns(transaction_id);
+CREATE INDEX IF NOT EXISTS idx_sale_returns_created_at ON sale_returns(created_at);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_returns_client_uuid ON sale_returns(client_uuid) WHERE client_uuid IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS sale_return_items (
+    id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+    return_id           INTEGER NOT NULL REFERENCES sale_returns(id) ON DELETE CASCADE,
+    product_barcode     TEXT NOT NULL REFERENCES products(barcode),
+    product_name_at_sale TEXT NOT NULL,
+    unit_price_at_sale  REAL NOT NULL,
+    quantity            INTEGER NOT NULL CHECK (quantity > 0),
+    restock             INTEGER NOT NULL DEFAULT 1 CHECK (restock IN (0, 1))
+);
+
+CREATE INDEX IF NOT EXISTS idx_sale_return_items_return_id ON sale_return_items(return_id);
+
+-- End-of-day till count (migration v9): what the sales say should be in the
+-- drawer (cash sales less cash refunds that day) against what the cashier
+-- counted. A day can be closed more than once (a late sale, a recount): the
+-- newest row for the date is the one that counts; older rows stay as history.
+CREATE TABLE IF NOT EXISTS day_closes (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    dealership_code TEXT,
+    business_date   TEXT NOT NULL,
+    sales_count     INTEGER NOT NULL,
+    cash_sales      REAL NOT NULL,
+    card_sales      REAL NOT NULL,
+    other_sales     REAL NOT NULL DEFAULT 0,
+    cash_refunds    REAL NOT NULL,
+    card_refunds    REAL NOT NULL,
+    expected_cash   REAL NOT NULL,
+    counted_cash    REAL NOT NULL CHECK (counted_cash >= 0),
+    difference      REAL NOT NULL,
+    note            TEXT,
+    closed_by       TEXT
+);
+
+CREATE INDEX IF NOT EXISTS idx_day_closes_date ON day_closes(business_date);
+CREATE INDEX IF NOT EXISTS idx_day_closes_dealership ON day_closes(dealership_code);
+

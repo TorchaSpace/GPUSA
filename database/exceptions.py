@@ -596,3 +596,23 @@ class DuplicateStockRequestError(DataAccessError):
         super().__init__(f"There is already an open request for {product_name} ({number})")
         self._localize("err.stock_request_duplicate", number=number, product=product_name)
         self.number = number
+
+
+class ReturnQuantityError(DataAccessError):
+    """Raised when a refund asks for more of a product than the sale still
+    has out (sold minus already returned). `available` may be 0."""
+
+    def __init__(self, product: str, requested: int, available: int):
+        super().__init__(f"Only {available} of {product} can still be returned (asked for {requested})")
+        self._localize("err.return_qty", product=product, requested=requested, available=available)
+        self.available = available
+
+
+class ReturnApprovalError(AuthError):
+    """The refund's approver is not a signed-off manager: their account is
+    switched off, or their role may not open the depot console / Admin."""
+
+    def __init__(self):
+        super().__init__("A manager or administrator has to approve a refund.")
+        self._localize("err.return_approver")
+

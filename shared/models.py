@@ -625,3 +625,103 @@ class Account:
     locked_until: str | None = None  # db timestamp; in the past = not locked
     last_sign_in_at: str | None = None
     id: int | None = None
+
+
+@dataclass
+class ReturnLine:
+    """One product on a refund. `restock` False = damaged / not resellable."""
+
+    product_barcode: str
+    product_name_at_sale: str
+    unit_price_at_sale: float
+    quantity: int
+    restock: bool = True
+
+    @property
+    def line_total(self) -> float:
+        return round(self.unit_price_at_sale * self.quantity, 2)
+
+
+@dataclass
+class SaleReturn:
+    """A refund against an earlier sale (database/sale_return_repository.py)."""
+
+    transaction_id: int
+    lines: list[ReturnLine] = field(default_factory=list)
+    reason: str = ""
+    id: int | None = None
+    created_at: datetime | None = None
+    dealership_code: str | None = None
+    payment_method: str | None = None
+    requested_by: str | None = None
+    approved_by: str | None = None
+    client_uuid: str | None = None
+
+    @property
+    def number(self) -> str:
+        return "RF-%05d" % (self.id or 0)
+
+    @property
+    def total(self) -> float:
+        return round(sum(line.line_total for line in self.lines), 2)
+
+
+@dataclass(frozen=True)
+class ReturnableLine:
+    """What of one sold product can still come back."""
+
+    product_barcode: str
+    product_name_at_sale: str
+    unit_price_at_sale: float
+    sold: int
+    returned: int
+
+    @property
+    def available(self) -> int:
+        return self.sold - self.returned
+
+
+@dataclass(frozen=True)
+class DaySummary:
+    """What one dealership's till should hold for one calendar day
+    (database/day_close_repository.py)."""
+
+    dealership_code: str | None
+    business_date: date
+    sales_count: int
+    cash_sales: float
+    card_sales: float
+    other_sales: float  # sales whose payment method was never recorded
+    cash_refunds: float
+    card_refunds: float
+    refunds_count: int
+
+    @property
+    def expected_cash(self) -> float:
+        return round(self.cash_sales - self.cash_refunds, 2)
+
+    @property
+    def net_total(self) -> float:
+        return round(self.cash_sales + self.card_sales + self.other_sales - self.cash_refunds - self.card_refunds, 2)
+
+
+@dataclass
+class DayClose:
+    """One end-of-day count; difference = counted - expected (negative: cash is missing)."""
+
+    dealership_code: str | None
+    business_date: date
+    sales_count: int
+    cash_sales: float
+    card_sales: float
+    other_sales: float
+    cash_refunds: float
+    card_refunds: float
+    expected_cash: float
+    counted_cash: float
+    difference: float
+    note: str | None = None
+    closed_by: str | None = None
+    id: int | None = None
+    created_at: datetime | None = None
+
