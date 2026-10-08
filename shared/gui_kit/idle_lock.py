@@ -26,21 +26,46 @@ from PySide6.QtWidgets import QApplication
 _INPUT = {QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.KeyPress, QEvent.Wheel, QEvent.TouchBegin}
 _CHECK_MS = 15_000
 
-# Locks whose filter is installed on the QApplication. They are taken off
-# again before the interpreter tears down: a Python event filter still
-# registered while PySide frees its wrappers crashes the process on exit.
+# Running locks. Input is watched by ONE application-wide filter object that
+# is never parented to a window: a window's own child filter being torn down
+# while Qt still delivers events to it crashed PySide on exit (bus error /
+# exit 139 after every test had passed).
 _ACTIVE: "weakref.WeakSet[IdleLock]" = weakref.WeakSet()
 
 
-def _remove_all_filters() -> None:
-    for lock in list(_ACTIVE):
+class _InputWatch(QObject):
+    def eventFilter(self, obj, event) -> bool:
+        if event.type() in _INPUT:
+            for lock in list(_ACTIVE):
+                lock.touch()
+        return False
+
+
+_watch: _InputWatch | None = None
+
+
+def _ensure_watch() -> None:
+    global _watch
+    app = QApplication.instance()
+    if app is None or _watch is not None:
+        return
+    _watch = _InputWatch()
+    app.installEventFilter(_watch)
+
+
+def _remove_watch() -> None:
+    global _watch
+    app = QApplication.instance()
+    if _watch is not None and app is not None:
         try:
-            lock.stop()
-        except RuntimeError:  # its C++ side is already gone
+            app.removeEventFilter(_watch)
+        except RuntimeError:
             pass
+    _watch = None
+    _ACTIVE.clear()
 
 
-atexit.register(_remove_all_filters)
+atexit.register(_remove_watch)
 
 
 class IdleLock(QObject):
@@ -64,27 +89,23 @@ class IdleLock(QObject):
         self._timer.timeout.connect(self.check)
 
     def start(self) -> None:
-        app = QApplication.instance()
-        if app is not None:
-            app.installEventFilter(self)
-            _ACTIVE.add(self)
+        _ensure_watch()
+        _ACTIVE.add(self)
         self.touch()
         self._timer.start(_CHECK_MS)
 
     def stop(self) -> None:
         self._timer.stop()
         _ACTIVE.discard(self)
-        app = QApplication.instance()
-        if app is not None:
-            app.removeEventFilter(self)
 
     def touch(self) -> None:
         """Count now as activity (input, or a fresh sign-in)."""
         self.last = self._clock()
 
     def eventFilter(self, obj, event) -> bool:
+        """Not installed itself (see _InputWatch); kept so input can be fed in directly."""
         if event.type() in _INPUT:
-            self.last = self._clock()
+            self.touch()
         return False
 
     def check(self) -> bool:
