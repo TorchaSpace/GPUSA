@@ -54,3 +54,27 @@ def _nobody_signed_in():
     current_session.clear()
     yield
     current_session.clear()
+
+
+# PySide can crash while the interpreter tears its Qt objects down AFTER
+# every test has run and been reported (exit 139 / bus error on CI). The
+# run's real result is known by then, so leave straight away with it
+# instead of letting interpreter shutdown turn a green run red.
+_exit_status = 0
+
+
+def pytest_sessionfinish(session, exitstatus):
+    global _exit_status
+    _exit_status = int(exitstatus)
+
+
+@pytest.hookimpl(trylast=True)
+def pytest_unconfigure(config):
+    import os
+    import sys
+
+    if os.environ.get("GPUSA_HARD_EXIT", "1") != "1":
+        return
+    sys.stdout.flush()
+    sys.stderr.flush()
+    os._exit(_exit_status)
