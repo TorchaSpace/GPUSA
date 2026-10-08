@@ -437,6 +437,88 @@ class Shipment:
         return [line for line in self.lines if line.discrepancy != 0]
 
 
+# --- Dealership stock requests ---------------------------------------------
+
+STOCK_REQUEST_STATUSES = ("open", "planned", "declined", "cancelled")
+
+
+@dataclass
+class StockRequest:
+    """A dealership asking the depot for a product (POS > My Local Stock).
+
+    `status`: "open" (waiting for the depot), "planned" (a shipment was
+    planned from it - `shipment_id`), "declined" (by the depot, with
+    `decision_note`) or "cancelled" (withdrawn by the dealership). Whether
+    a planned one has arrived is the shipment's own status, joined in as
+    `shipment_status`. Timestamps are the database's UTC ISO strings."""
+
+    dealership_code: str
+    dealership_name: str
+    product_barcode: str
+    product_name: str
+    quantity: int
+    status: str = "open"
+    note: str | None = None
+    requested_by: str | None = None
+    decided_by: str | None = None
+    decision_note: str | None = None
+    shipment_id: int | None = None
+    shipment_status: str | None = None
+    id: int | None = None
+    created_at: str | None = None
+    updated_at: str | None = None
+
+    @property
+    def number(self) -> str:
+        return f"RQ-{self.id:05d}" if self.id is not None else "RQ-(new)"
+
+    @property
+    def shipment_number(self) -> str | None:
+        return f"SH-{self.shipment_id:05d}" if self.shipment_id is not None else None
+
+    @property
+    def is_open(self) -> bool:
+        return self.status == "open"
+
+    @property
+    def delivered(self) -> bool:
+        return self.status == "planned" and self.shipment_status == "delivered"
+
+
+@dataclass(frozen=True)
+class DealershipShortage:
+    """A product at/below its reorder level on a dealership's shelf, with
+    what's already on its way (`incoming_qty`, active shipments) and asked
+    for (`requested_qty`, open requests) - Admin's and the depot's "low at
+    dealerships" lists."""
+
+    dealership_code: str
+    dealership_name: str
+    product_barcode: str
+    product_name: str
+    on_hand: int
+    reorder_level: int
+    incoming_qty: int = 0
+    requested_qty: int = 0
+
+    @property
+    def covered(self) -> bool:
+        """Enough is already coming or asked for to lift it above the reorder level."""
+        return self.on_hand + self.incoming_qty + self.requested_qty > self.reorder_level
+
+    @property
+    def suggested_qty(self) -> int:
+        return suggested_request_qty(self.on_hand, self.reorder_level, self.incoming_qty + self.requested_qty)
+
+
+def suggested_request_qty(on_hand: int, reorder_level: int, already_coming: int = 0) -> int:
+    """How much to ask for: back up to twice the reorder level, less what is
+    already on its way. At least 1 when anything is wanted; 0 when nothing is."""
+    if reorder_level <= 0:
+        return 0
+    return max(0, 2 * reorder_level - on_hand - already_coming)
+
+
 # --- Warehouses & per-location stock ---------------------------------------
 
 LOCATION_KINDS = ("warehouse", "dealership", "unassigned")

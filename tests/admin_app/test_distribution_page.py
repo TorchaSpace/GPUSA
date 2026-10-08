@@ -80,3 +80,23 @@ def test_delivered_section_shows_discrepancies(page, data):
     assert page._delivered_table.item(0, 0).text() == received.number
     assert page._delivered_table.item(0, 3).text() == "20"  # what arrived, not the 24 shipped
     assert page._delivered_table.item(0, 5).text() == "A -4 · “crushed”"
+
+
+def test_dealership_needs_show_open_requests_and_low_shelves(qapp, data):
+    from admin_app.gui.pages.distribution_page import DistributionPage
+    from database import stock_repository, stock_request_repository as requests, warehouse_repository
+    from shared.models import StockLocation, Warehouse
+
+    product_repository.create(Product("B", "Rice", 4, 100, 10))
+    warehouse_repository.create(Warehouse(code="WH-01", name="Merkez"))
+    stock_repository.place_all_unassigned(StockLocation.warehouse("WH-01"))
+    stock_repository.transfer(StockLocation.warehouse("WH-01"), StockLocation.dealership("001"), "B", 2)
+    requests.create("001", "A", 30, note="weekend rush")
+    widget = DistributionPage()
+    try:
+        assert [r.number for r in widget.requests] == ["RQ-00001"]
+        assert widget._requests_table.item(0, 5).text() == "weekend rush"
+        assert [(s.dealership_code, s.product_barcode) for s in widget.shortages] == [("001", "B")]
+        assert "1 REQUESTS WAITING · 1 RUNNING LOW" in widget._needs_section._kicker_label.text()
+    finally:
+        widget.close()

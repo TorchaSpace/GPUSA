@@ -63,6 +63,7 @@ step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
 | 5 | ledger `created_by/settled_by/updated_by` + `ledger_audit` |
 | 6 | `stock_movements.bin_code` (bin/dock no longer glued into `note`) |
 | 7 | `transactions.payment_method` ('card' / 'cash'; NULL = from before v7) |
+| 8 | `stock_requests` table (dealership → depot; one open request per shop+product, unique partial index) |
 
 ### The stock invariant (most important rule)
 
@@ -87,6 +88,7 @@ products.stock_quantity = SUM(stock_levels) + units on dispatched, not-yet-recei
 | Purchasing | `purchase_order_repository`: price bands, `submit` (in band → sent, else pending), `approve/reject`, `receive_against_order` (partial/full into a warehouse, updates weighted avg cost), `cancel_order`; `shared.models.hold_reason_for` | Depot Portal › Purchasing (+ `receive_delivery_dialog`); Admin Purchase requests |
 | Treasury | `ledger_repository` (every write takes `actor`, writes `ledger_audit` in the same txn), `shared/treasury.py` (overdue etc. derived, never stored), `shared/ledger_audit.py` | Admin Treasury (History / Recent activity); Depot Portal › Local Treasury (record only, settle in Admin) |
 | Shipments | `shipment_repository`, `shared/distribution.py` (progress/delay derived from schedule) | Depot Console › Shipments; POS Receive; Admin Distribution |
+| Stock requests | `stock_request_repository`: `create` (POS), `cancel`/`decline`, `mark_planned` (called by `shipment_repository.create(request_ids=…)` in the same txn), cancelling the shipment reopens them; `dealership_shortages()` = shelf ≤ reorder level with incoming + requested; statuses open/planned/declined/cancelled, "delivered" derived from the shipment | POS My Stock › Request stock / My requests; Depot Console › Shipments "Dealership needs" panel; Admin Distribution "Dealership needs" |
 | People & sign-in | `employee_repository`, `attendance_repository`, `account_repository`, `shared/auth.py` (roles, PIN rules, PBKDF2 200k, lockout 5→5 min), `shared/current_session.py` | Admin Settings › Accounts; Depot Console › attendance + Floor Check-in Log |
 | PIN recovery | `account_repository`: recovery code, security question, "start over" (backup beside DB → erase → new admin); `shared/recovery_code.py`, `shared/security_question.py` | Admin sign-in "Forgot your PIN or badge ID?" |
 | Settings | `settings_repository` (`safe_language()`, `safe_currency()`, store profile, notification flags); `shared/store_settings.py` | Admin Settings; TR/EN switch in Depot headers |
@@ -157,6 +159,7 @@ exit 1.
 
 ## Recent history (newest first, 2026-10-03 → 10-08)
 
+0. 2026-10-08: dealership stock requests + low-at-dealerships lists (migration v8).
 0. 2026-10-08: Card/Cash recorded (migration v7, receipt + report split), automatic
    daily backups, idle lock for Admin/POS, pre-redesign Admin tabs deleted.
 1. `b4c6557` test fix: login button found by upper-cased label.

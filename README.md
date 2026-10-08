@@ -350,6 +350,16 @@ the receipt prints how the sale was paid and Admin > Reports' export splits
 revenue by payment method, so the till can be counted at the end of a day.
 Sales from before the upgrade show as "Not recorded".
 
+**Dealerships can ask the depot for stock** (migration v8,
+`stock_requests`): POS > My Stock has **Request stock** (low and empty shelf
+items first, a suggested quantity) and **My requests** (state, withdraw).
+The depot's Console > Shipments shows a **Dealership needs** panel: *Plan
+shipment* puts every open request of that shop into the New shipment form
+(creating it marks them planned; cancelling the shipment reopens them),
+*Decline* takes a reason the dealership sees, and the *running low* list
+tops up shops at or below the reorder level. Admin > Distribution shows the
+same open requests and low shelves.
+
 **Automatic daily backups** (`database/backups.py`): every app, when it
 opens and then once an hour, makes sure today's copy exists in a `backups`
 folder beside `shared_backend.db` (`shared_backend-YYYY-MM-DD.db`); the

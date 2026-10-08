@@ -11,6 +11,11 @@ a fixed heuristic (on-hand relative to 2x the reorder point) purely for
 a visual sense of "how full", not a real capacity metric - see
 _fill_pct()'s docstring.
 
+Asking the depot: on a dealership till the header has "Request stock"
+(pos_app/gui/stock_requests.RequestStockDialog, low / out products first)
+and "My requests (N)" (their state, withdraw a waiting one); a row with an
+open request says how many were asked for.
+
 Motion (skipped when `animations_enabled()` is False): the filter's raised
 highlight slides from All to Low to Out; the rows rise in one after another
 whenever the list is (re)built; each on-hand number counts up from the value
@@ -33,9 +38,10 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database import stock_repository
+from database import shipment_repository, stock_repository, stock_request_repository
 from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.product_status import stock_status
+from pos_app.gui.stock_requests import MyRequestsDialog, RequestStockDialog, dark_button, primary_button
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.gui_kit.motion import Level, animations_enabled, count_up, stagger_in
 from shared.i18n import tr
@@ -285,7 +291,8 @@ class _StockRow(QWidget):
     """One product: tint circle, name + reorder note, SKU, on-hand number,
     level bar, status pill - on a radius-26 tile tinted by its status."""
 
-    def __init__(self, product: Product, tint: str, shown_qty: int, from_pct: int, parent: QWidget | None = None):
+    def __init__(self, product: Product, tint: str, shown_qty: int, from_pct: int, requested: int = 0,
+                 parent: QWidget | None = None):
         super().__init__(parent)
         p = ORGANIC_PALETTE
         status = stock_status(product)
@@ -323,6 +330,8 @@ class _StockRow(QWidget):
             tr("pos.stock.reorder_at").format(n=product.critical_stock_level)
             if product.critical_stock_level else tr("pos.stock.no_reorder")
         )
+        if requested:
+            reorder += " · " + tr("pos.request.asked").format(n=requested)
         names.addWidget(_label(reorder, f"font-size: 14px; color: {p['text_secondary']};"))
         layout.addLayout(names, stretch=1)
 
@@ -386,6 +395,9 @@ class MyStockPage(QWidget):
         self._active_filter = "All"
         self._last: dict[str, tuple[int, int]] = {}  # barcode -> (qty, pct) the rows last showed
         self._rows: list[_StockRow] = []
+        self._requested: dict[str, int] = {}  # barcode (upper) -> units in this shop's open requests
+        # Requests go from a dealership's shelf; a till with no dealership identity has nobody to ask.
+        self._dealership_code = location.code if location.kind == "dealership" else None
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(28, 12, 28, 0)
@@ -440,6 +452,19 @@ class MyStockPage(QWidget):
         row.addWidget(titles_widget)
         row.addStretch(1)
 
+        self.request_button = primary_button(tr("pos.request.button"), 52)
+        self.request_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.request_button.setFixedWidth(210)
+        self.request_button.clicked.connect(lambda: self.open_request_dialog())
+        self.my_requests_button = dark_button(tr("pos.request.mine").format(n=0), 52)
+        self.my_requests_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.my_requests_button.setFixedWidth(230)
+        self.my_requests_button.clicked.connect(self.open_my_requests)
+        for button in (self.request_button, self.my_requests_button):
+            button.setVisible(self._dealership_code is not None)
+            row.addWidget(button, 0, Qt.AlignBottom)
+        row.addSpacing(12)
+
         dots = {"All": p["accent_2"], "Low": _YELLOW, "Out": _RED}
         self._filter = _FilterSegment([(key, tr(_FILTER_KEYS[key]), dots[key]) for key in ("All", "Low", "Out")])
         self._filter.picked.connect(self._set_filter)
@@ -487,6 +512,7 @@ class MyStockPage(QWidget):
         # "My stock" is what this shelf carries: products it holds or has held. The rest of the
         # catalogue isn't "out of stock" here - it was never stocked - and would swamp the Out count.
         self._all_products = [p for p in here if p.stocked_here or p.stock_quantity > 0]
+        self._load_requests()
         self._subtitle_label.setText(tr("pos.stock.counted").format(time=datetime.now().strftime("%H:%M")))
         self._render_filter_labels()
         self._render_rows(play=play)
@@ -522,7 +548,8 @@ class MyStockPage(QWidget):
             pct = _fill_pct(product)
             # Animating: start from what this product showed last time (zero the first time).
             shown_qty, from_pct = self._last.get(product.barcode, (0, 0)) if animate else (product.stock_quantity, pct)
-            row = _StockRow(product, tints[product.barcode], shown_qty, from_pct)
+            row = _StockRow(product, tints[product.barcode], shown_qty, from_pct,
+                            self._requested.get(product.barcode.upper(), 0))
             self._rows_layout.insertWidget(index, row)
             self._rows.append(row)
         self._last = {product.barcode: (product.stock_quantity, _fill_pct(product)) for product in self._all_products}
@@ -538,3 +565,52 @@ class MyStockPage(QWidget):
             row.play()
         except RuntimeError:  # the list was rebuilt meanwhile and this row is gone
             pass
+
+    # --- asking the depot --------------------------------------------------------
+    def _load_requests(self) -> None:
+        self._requested = {}
+        if self._dealership_code is None:
+            return
+        try:
+            open_requests = stock_request_repository.list_requests(("open",), self._dealership_code)
+        except DATABASE_ERRORS:
+            open_requests = []
+        for request in open_requests:
+            key = request.product_barcode.upper()
+            self._requested[key] = self._requested.get(key, 0) + request.quantity
+        self.my_requests_button.setText(tr("pos.request.mine").format(n=len(open_requests)))
+
+    def _incoming(self) -> dict[str, int]:
+        """Units already on active shipments to this shop, per product."""
+        coming: dict[str, int] = {}
+        try:
+            shipments = shipment_repository.list_shipments(("scheduled", "in_transit"), self._dealership_code)
+        except DATABASE_ERRORS:
+            return coming
+        for shipment in shipments:
+            for line in shipment.lines:
+                key = line.product_barcode.upper()
+                coming[key] = coming.get(key, 0) + line.expected_qty
+        return coming
+
+    def request_dialog(self, preselect: str | None = None) -> RequestStockDialog:
+        """The dialog "Request stock" opens (built, not shown - tests drive it)."""
+        try:
+            catalogue = stock_repository.products_at(self._location)
+        except DATABASE_ERRORS:
+            catalogue = list(self._all_products)
+        return RequestStockDialog(self._dealership_code, catalogue, self._incoming(), preselect, self)
+
+    def open_request_dialog(self, preselect: str | None = None) -> None:
+        if self._dealership_code is None:
+            return
+        dialog = self.request_dialog(preselect)
+        if dialog.exec() and dialog.request is not None:
+            self.reload(play=False)
+
+    def open_my_requests(self) -> None:
+        if self._dealership_code is None:
+            return
+        MyRequestsDialog(self._dealership_code, self).exec()
+        self.reload(play=False)
+

@@ -563,3 +563,36 @@ class PriceChangedError(DataAccessError):
             f"{b}: {old:,.2f} → {new:,.2f}" for b, old, new in self.changes))
         first = self.changes[0] if self.changes else ("", 0.0, 0.0)
         self.barcode, self.old_price, self.new_price = first
+
+
+class StockRequestNotFoundError(DataAccessError):
+    """Raised when a lookup by stock request id matches no request."""
+
+    def __init__(self, request_id: int):
+        super().__init__(f"No stock request found with id {request_id!r}")
+        self._localize("err.stock_request_not_found", id=_r(request_id))
+        self.request_id = request_id
+
+
+class StockRequestStateError(DataAccessError):
+    """Raised when an action doesn't fit a stock request's current status -
+    e.g. declining one the depot already planned, or cancelling one twice
+    (another terminal got there first). `status` is the current status."""
+
+    def __init__(self, number: str, status: str, action: str):
+        super().__init__(f"{number} can't be {action} - it is {status}")
+        self._localize(
+            "err.stock_request_state", number=number, action=_word("stock_request_action", action),
+            status=_word("stock_request_status", status),
+        )
+        self.number = number
+        self.status = status
+
+
+class DuplicateStockRequestError(DataAccessError):
+    """Raised when a dealership asks for a product it already has an open request for."""
+
+    def __init__(self, number: str, product_name: str):
+        super().__init__(f"There is already an open request for {product_name} ({number})")
+        self._localize("err.stock_request_duplicate", number=number, product=product_name)
+        self.number = number

@@ -40,6 +40,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError
+from database import stock_request_repository
 from database.connection import connection_scope
 from datetime import datetime, timedelta
 
@@ -182,6 +183,8 @@ def create(
     driver: str | None = None,
     origin_code: str | None = None,
     departure=None,
+    request_ids: list[int] | None = None,
+    actor: Actor | None = None,
 ) -> Shipment:
     """Plan a shipment ("scheduled"). `origin` is the site label shown
     everywhere ("WH-01 · İstanbul Merkez"); `origin_code` the warehouse
@@ -193,7 +196,12 @@ def create(
     ValueError for blank fields / no lines / a bad quantity / a bad ETA,
     DealershipNotFoundError, ProductNotFoundError (ProductInactiveError for
     a deactivated product), UnknownLocationError for an unknown origin_code.
-    Stock isn't checked here - it's taken (and checked) on dispatch."""
+    Stock isn't checked here - it's taken (and checked) on dispatch.
+
+    `request_ids`: the dealership's open stock requests this shipment
+    fills - marked "planned" in the same transaction (see
+    stock_request_repository.mark_planned); one that is no longer open or
+    belongs to another dealership refuses the whole shipment."""
     origin, carrier = (origin or "").strip(), (carrier or "").strip()
     driver = (driver or "").strip() or None
     origin_code = (origin_code or "").strip() or None
@@ -242,6 +250,8 @@ def create(
                 "VALUES (?, ?, ?, ?)",
                 [(shipment_id, barcode, names[barcode], qty) for barcode, qty in merged.items()],
             )
+            if request_ids:
+                stock_request_repository.mark_planned(conn, list(request_ids), shipment_id, dealership_code, actor)
             shipment = _fetch(conn, shipment_id)
         except Exception:
             conn.execute("ROLLBACK")
@@ -314,7 +324,8 @@ def update_eta(shipment_id: int, eta) -> Shipment:
 
 def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
     """Call the shipment off. If it was already dispatched, the goods go
-    back onto the origin warehouse's stock."""
+    back onto the origin warehouse's stock. Stock requests it was planned
+    from go back to "open" - the dealership still needs the goods."""
 
     def run(conn, shipment):
         if not shipment.is_active:
@@ -327,6 +338,7 @@ def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
                 log_movement(conn, origin, line.product_barcode, "receive", line.expected_qty, reason="shipment",
                              reference=shipment.number, note="Returned - shipment cancelled", actor=actor)
         _touch(conn, shipment.id, "status = 'cancelled', stock_moved = 0")
+        stock_request_repository.reopen_for_shipment(conn, shipment.id)  # the dealership still needs it
 
     return _write(shipment_id, run)
 

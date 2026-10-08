@@ -19,6 +19,11 @@ short); Cancel after dispatch puts them back; the dealership's receipt
 puts them on its shelf. The product picker shows what's on hand here.
 Don't also log a shipment as an Outbound dispatch on the Floor - that's
 for goods leaving the company.
+
+Above the form, the "Dealership needs" panel (depot_app/gui/dealership_needs.py)
+lists the shops' open stock requests and low shelves; "Plan shipment" /
+"Add to shipment" fill the form from them, and creating the shipment marks
+the requests it carries as planned.
 """
 
 from __future__ import annotations
@@ -50,6 +55,7 @@ from database import dealership_repository, shipment_repository, stock_repositor
 from database.exceptions import DATABASE_ERRORS, InsufficientStockError
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
+from depot_app.gui.dealership_needs import DealershipNeedsPanel
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import duration_text, eta_text, lateness, live_status
@@ -112,6 +118,8 @@ class ShipmentsPage(QWidget):
         self._origin_code = origin_code  # the warehouse whose stock they come out of
         self._shipments: list[Shipment] = []
         self._draft_lines: list[tuple[str, str, int]] = []  # (barcode, label, qty)
+        self._draft_request_ids: list[int] = []  # open stock requests the draft fills
+        self._draft_request_dealership: str | None = None  # ...all from this dealership
         self.setObjectName("shipmentsPage")
         self.setStyleSheet(f"#shipmentsPage {{ background-color: {p['background']}; }}")
 
@@ -134,6 +142,9 @@ class ShipmentsPage(QWidget):
         title_row.addWidget(refresh, alignment=Qt.AlignTop)
         layout.addLayout(title_row)
 
+        self.needs = DealershipNeedsPanel()
+        self.needs.plan_requested.connect(self.prefill)
+        layout.addWidget(self.needs)
         layout.addWidget(self._build_form())
         layout.addWidget(_kicker(tr("depot.ship.kicker_list").format(origin=origin)))
         self._table = _table([tr(f"depot.ship.col_{k}") for k in ("no", "dest", "carrier", "items", "departed", "eta", "status", "late")])
@@ -279,6 +290,35 @@ class ShipmentsPage(QWidget):
             self._draft_lines.append((barcode, self._product_input.currentText(), quantity))
         self._render_draft()
 
+    def prefill(self, dealership_code: str, lines: list, request_ids: list) -> None:
+        """Fill the New shipment form from the Dealership needs panel: the
+        destination, and each line added to the draft (merged with what is
+        there for the same shop; a different shop starts a fresh draft)."""
+        self._form_error.hide()
+        index = self._dest_input.findData(dealership_code)
+        if index < 0:
+            self._show_form_error(tr("depot.needs.dealer_off"))
+            return
+        if self._dest_input.currentData() != dealership_code or (
+                self._draft_request_dealership not in (None, dealership_code)):
+            self._draft_lines, self._draft_request_ids = [], []
+        self._dest_input.setCurrentIndex(index)
+        self._draft_request_dealership = dealership_code
+        for barcode, label, qty in lines:
+            existing = next((i for i, (b, _l, _q) in enumerate(self._draft_lines) if b.upper() == barcode.upper()), None)
+            if existing is None:
+                product_index = self._product_input.findData(barcode)
+                shown = self._product_input.itemText(product_index) if product_index >= 0 else label
+                self._draft_lines.append((barcode, shown, qty))
+            elif not request_ids:  # a shortage top-up adds to the line
+                b, shown, old = self._draft_lines[existing]
+                self._draft_lines[existing] = (b, shown, old + qty)
+        self._draft_request_ids = list(dict.fromkeys(self._draft_request_ids + list(request_ids)))
+        self._render_draft()
+
+    def draft(self) -> list[tuple[str, int]]:
+        return [(barcode, qty) for barcode, _label, qty in self._draft_lines]
+
     def _remove_line(self) -> None:
         rows = self._lines_table.selectionModel().selectedRows()
         if rows:
@@ -312,6 +352,9 @@ class ShipmentsPage(QWidget):
                 driver=self._driver_input.text(),
                 eta=_from_qdatetime(self._eta_input.dateTime()),
                 lines=[(barcode, qty) for barcode, _label, qty in self._draft_lines],
+                # The requests only go along while the form still goes to the shop that asked.
+                request_ids=self._draft_request_ids if code == self._draft_request_dealership else None,
+                actor=current_session.actor(),
             )
         except (ValueError, *DATABASE_ERRORS) as exc:  # blank carrier, bad ETA, inactive product, ...
             self._show_form_error(str(exc))
@@ -326,7 +369,9 @@ class ShipmentsPage(QWidget):
             except (ValueError, *DATABASE_ERRORS) as exc:
                 dispatch_problem = tr("depot.ship.not_dispatched").format(error=exc)
         self._draft_lines = []
+        self._draft_request_ids, self._draft_request_dealership = [], None
         self._render_draft()
+        self.needs.reload()
         self._driver_input.clear()
         self._dispatch_now.setChecked(False)
         self.reload()
@@ -396,10 +441,13 @@ class ShipmentsPage(QWidget):
 
     def reload(self) -> None:
         self._on_fetched(self._fetch())
+        self.needs.reload()
 
     def _on_fetched(self, shipments: list[Shipment] | None) -> None:
         if shipments is None:
             return
+        if self.isVisible():
+            self.needs.reload()  # requests arrive from the tills all day
         selected = self.selected()
         # Active ones first (soonest ETA), then finished ones newest first.
         active = [s for s in shipments if s.is_active]

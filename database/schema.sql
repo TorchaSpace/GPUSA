@@ -480,3 +480,31 @@ CREATE TABLE IF NOT EXISTS app_settings (
     value       TEXT NOT NULL,
     updated_at  TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
+
+-- A dealership asking its depot for stock (migration v8). POS raises one
+-- per product ("open"); the depot plans a shipment from it ("planned",
+-- `shipment_id` set - a cancelled shipment puts it back to "open") or
+-- declines it; the POS can withdraw an open one ("cancelled"). Names are
+-- snapshots, like everywhere else history is kept. At most one open
+-- request per dealership and product (partial unique index below).
+CREATE TABLE IF NOT EXISTS stock_requests (
+    id               INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    updated_at       TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    dealership_code  TEXT NOT NULL,
+    dealership_name  TEXT NOT NULL,
+    product_barcode  TEXT NOT NULL,
+    product_name     TEXT NOT NULL,
+    quantity         INTEGER NOT NULL CHECK (quantity > 0),
+    note             TEXT,
+    status           TEXT NOT NULL DEFAULT 'open'
+                     CHECK (status IN ('open', 'planned', 'declined', 'cancelled')),
+    requested_by     TEXT,
+    decided_by       TEXT,
+    decision_note    TEXT,
+    shipment_id      INTEGER
+);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_stock_requests_one_open
+    ON stock_requests(dealership_code, product_barcode COLLATE NOCASE) WHERE status = 'open';
+CREATE INDEX IF NOT EXISTS idx_stock_requests_status ON stock_requests(status);
+CREATE INDEX IF NOT EXISTS idx_stock_requests_shipment_id ON stock_requests(shipment_id);

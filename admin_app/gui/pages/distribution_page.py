@@ -19,6 +19,10 @@ Added: "Delivered · last 7 days" - what arrived, and any discrepancy a
 dealership reported (e.g. "BOX-2218 −4 · '4 cartons crushed'"), since
 that's the part of distribution an admin actually has to act on.
 
+Added: "Dealership needs" - the stock requests the dealerships' tills sent
+the depot that nobody has planned yet, and the shops whose shelf is at or
+below the reorder level with nothing (or not enough) on the way.
+
 Deliberately different from the mockup: its "Carrier feeds refresh every
 30 s" footer and drifting progress bars imply live GPS that doesn't
 exist here - this page says progress is estimated from departure and
@@ -43,12 +47,12 @@ from admin_app.gui.components.stat_card import StatCard
 from admin_app.gui.components.styled_table import cell, styled_table
 from shared.i18n import enum_label, plural, tr
 from admin_app.theme import CLASSICAL_PALETTE
-from database import shipment_repository
+from database import shipment_repository, stock_request_repository
 from shared.constants import SHIPMENT_POLL_INTERVAL_MS
 from shared.distribution import duration_text, eta_text, lateness, live_status, summarize
 from shared.formatting import format_int, local_datetime_text, parse_db_timestamp
 from shared.gui_kit.polling import PollingTimer
-from shared.models import Shipment
+from shared.models import DealershipShortage, Shipment, StockRequest
 
 _FILTERS = ("All", "Scheduled", "In Transit", "Arriving", "Delayed")
 _DELIVERED_WINDOW = timedelta(days=7)
@@ -75,6 +79,8 @@ class DistributionPage(AdminPage):
         super().__init__(tr("page.distribution.title"), parent, subtitle=tr("page.distribution.subtitle"))
         self._now_provider = now_provider or (lambda: datetime.now(timezone.utc))
         self._shipments: list[Shipment] = []
+        self.requests: list[StockRequest] = []
+        self.shortages: list[DealershipShortage] = []
         self._active: list[Shipment] = []
         self._shown: list[Shipment] = []
         self._selected_id: int | None = None
@@ -97,6 +103,7 @@ class DistributionPage(AdminPage):
         self.body_layout().addWidget(self._routes_section)
 
         self.body_layout().addWidget(self._build_ledger())
+        self.body_layout().addWidget(self._build_needs())
         self.body_layout().addWidget(self._build_delivered())
 
         self._poller = PollingTimer(self._fetch, interval_ms=SHIPMENT_POLL_INTERVAL_MS, parent=self)
@@ -203,20 +210,39 @@ class DistributionPage(AdminPage):
         section.body_layout().addWidget(self._delivered_table)
         return section
 
+    def _build_needs(self) -> Section:
+        self._needs_section = Section(tr("admin.distribution.needs_kicker").format(requests=0, low=0),
+                                      tr("admin.distribution.needs_heading"))
+        self._requests_table = styled_table([tr(f"admin.distribution.col_{key}") for key in (
+            "request", "dealer", "product", "qty", "asked", "note")])
+        self._low_table = styled_table([tr(f"admin.distribution.col_{key}") for key in (
+            "dealer", "product", "on_hand", "reorder", "coming", "requested")])
+        for table, stretch in ((self._requests_table, 5), (self._low_table, 1)):
+            header = table.horizontalHeader()
+            header.setStretchLastSection(False)
+            for column in range(table.columnCount()):
+                header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+            header.setSectionResizeMode(stretch, QHeaderView.Stretch)
+            table.setMinimumHeight(140)
+            self._needs_section.body_layout().addWidget(table)
+        return self._needs_section
+
     # --- data --------------------------------------------------------------
 
-    def _fetch(self) -> list[Shipment] | None:
+    def _fetch(self) -> tuple | None:
         try:
-            return shipment_repository.list_shipments()
+            return (shipment_repository.list_shipments(), stock_request_repository.list_open(),
+                    stock_request_repository.dealership_shortages())
         except Exception:  # a transient lock on a timer tick
             return None
 
     def reload(self) -> None:
         self._on_fetched(self._fetch())
 
-    def _on_fetched(self, shipments: list[Shipment] | None) -> None:
-        if shipments is None:
+    def _on_fetched(self, fetched: tuple | None) -> None:
+        if fetched is None:
             return
+        shipments, self.requests, self.shortages = fetched
         now = self.now()
         p = CLASSICAL_PALETTE
         self._shipments = shipments
@@ -254,6 +280,7 @@ class DistributionPage(AdminPage):
         self._render_routes()
         self._render_table()
         self._render_delivered()
+        self._render_needs()
 
     def set_filter(self, name: str) -> None:
         self._filter = name
@@ -341,3 +368,34 @@ class DistributionPage(AdminPage):
             ]
             for column, item in enumerate(values):
                 self._delivered_table.setItem(index, column, item)
+
+    def _render_needs(self) -> None:
+        p = CLASSICAL_PALETTE
+        uncovered = [s for s in self.shortages if not s.covered]
+        self._needs_section.set_kicker(tr("admin.distribution.needs_kicker").format(
+            requests=len(self.requests), low=len(uncovered)))
+        self._requests_table.setRowCount(len(self.requests))
+        for index, request in enumerate(self.requests):
+            values = [
+                cell(request.number, color=GOLD),
+                cell(f"{request.dealership_name} · {request.dealership_code}"),
+                cell(f"{request.product_name} · {request.product_barcode}"),
+                cell(format_int(request.quantity), right=True),
+                cell(local_datetime_text(request.created_at)),
+                cell(request.note or "", color=p["text_secondary"]),
+            ]
+            for column, item in enumerate(values):
+                self._requests_table.setItem(index, column, item)
+        self._low_table.setRowCount(len(self.shortages))
+        for index, shortage in enumerate(self.shortages):
+            values = [
+                cell(f"{shortage.dealership_name} · {shortage.dealership_code}"),
+                cell(f"{shortage.product_name} · {shortage.product_barcode}",
+                     color=p["text_secondary"] if shortage.covered else WARN),
+                cell(format_int(shortage.on_hand), right=True),
+                cell(format_int(shortage.reorder_level), right=True),
+                cell(format_int(shortage.incoming_qty), right=True),
+                cell(format_int(shortage.requested_qty), right=True),
+            ]
+            for column, item in enumerate(values):
+                self._low_table.setItem(index, column, item)
