@@ -776,6 +776,9 @@ class NewSalePage(QWidget):
 
     # --- Data + checkout -------------------------------------------------
 
+    def has_items(self) -> bool:
+        return bool(self._cart)
+
     def reload(self) -> None:
         try:
             self._all_products = stock_repository.products_at(self._location)

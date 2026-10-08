@@ -161,6 +161,16 @@ def log_movement(
         (barcode, movement_type, int(quantity), note, location.kind, location.code, reason, reference,
          actor_label(actor), _clean(bin_code)),
     )
+    if reason in ("receive", "dispatch", "count"):  # the depot's own in / out / count, not shipment legs
+        from database import activity_repository  # local: activity_repository reads the same tables
+
+        name = conn.execute("SELECT name FROM products WHERE barcode = ?", (barcode,)).fetchone()
+        activity_repository.record(
+            conn, {"receive": "stock_in", "dispatch": "stock_written_out", "count": "stock_count"}[reason],
+            severity="notice" if reason != "receive" else "info",
+            source="depot" if location.kind == "warehouse" else "admin", location=location, actor=actor,
+            product=name[0] if name else barcode, barcode=barcode, quantity=int(quantity),
+            direction=movement_type, reference=reference or "")
 
 
 def receive_in(conn: sqlite3.Connection, location: StockLocation, barcode: str, quantity: int, *,

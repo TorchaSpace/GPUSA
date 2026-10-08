@@ -214,3 +214,19 @@ def test_language_switch_saves_then_restarts_only_on_a_change(qapp):
     assert saved == [] and restarted == []
     switch.choose("tr")
     assert saved == ["tr"] and restarted == [1]
+
+
+def test_floor_and_console_follow_the_database_without_a_refresh_button(floor, qapp):
+    floor._watcher.stop()
+    stock_repository.receive(WH1, "BOX", 5)
+    floor._receive_panel.reload = lambda calls=[]: calls.append(1) or setattr(floor, "_seen_receive", len(calls))
+    floor.refresh_live()
+    assert floor._seen_receive == 1
+    floor._open_console(MANAGER)
+    console = floor._console_window
+    console._watcher.stop()
+    pump(qapp)
+    before = console._movements_table.rowCount()
+    stock_repository.receive(WH1, "BOX", 3)  # a change made elsewhere
+    console.refresh_live()
+    assert console._movements_table.rowCount() == before + 1

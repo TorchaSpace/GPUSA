@@ -9,8 +9,9 @@ stale (see "Known stale spots" at the end). Last refreshed: 2026-10-06, at commi
 ## What it is
 
 Three PySide6 desktop apps over one shared SQLite file (`shared_backend.db`, WAL,
-`busy_timeout`). No server, no IPC: cross-app "live" updates are `PollingTimer`
-polls (10–15 s).
+`busy_timeout`). No server, no IPC: cross-app "live" updates come from `DataWatcher`
+(`shared/gui_kit/live_updates.py`, ~1 s, see below); `PollingTimer` remains for
+some background counts.
 
 | App | Who | Shape | Theme |
 |---|---|---|---|
@@ -135,6 +136,21 @@ Check-in is scoped to this depot's warehouse. Floor header shows shift A/B/C
   `backups/` beside the DB, newest 14 kept, never raises.
 - `shared/gui_kit/`: `PollingTimer` (survives transient DB locks),
   `RefreshablePopup`, `VisualTab`, `sign_in_dialog`, `icon_kit.svg_to_icon`.
+
+## Live updates and the Admin notification centre (2026-10-08)
+
+- `DataWatcher` polls `PRAGMA data_version` (moves when ANOTHER connection commits; nearly free) once a
+  second and emits `changed` after a 250 ms settle, at most once per 2 s. Every main window (POS, Depot Floor,
+  Depot Console, Admin) connects it to `refresh_live()`: reload the page on screen, never over a modal dialog,
+  Admin Settings, or a POS sale in progress. Swap this class for a push channel when a server exists.
+- `activity_events` (schema.sql, no migration step): `database/activity_repository.record()` is called INSIDE
+  the transaction of the action (sale, refund, day close, stock request, shipment steps, stock movements,
+  PO steps, account lockout) so an event exists iff the action committed; `stock_crossing()` adds low/out
+  once per crossing. Severity info/notice/warning/critical; kind + `data_json` are rendered at display time by
+  `shared/activity.py` with `activity.<kind>.title/.detail` i18n keys (EN+TR). Pruned after 30 days at Admin start.
+- Admin: `components/notification_center.py` (`NotificationCenter` unread count per badge in settings,
+  `NotificationPanel` from the header bell, `ToastHost` max 3 for warning/critical), and Overview's
+  "Live activity" section.
 
 ## Startup sequence (all three `main.py`s, roughly)
 

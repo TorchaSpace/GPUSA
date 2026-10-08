@@ -44,6 +44,7 @@ from PySide6.QtWidgets import (
 )
 
 from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
+from admin_app.gui.components.notification_center import activity_table, fill_activity_table
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.section import Section
@@ -53,6 +54,7 @@ from admin_app.gui.components.styled_table import cell, styled_table
 from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
+    activity_repository,
     attendance_repository,
     dealership_repository,
     product_repository,
@@ -116,6 +118,7 @@ class OverviewPage(AdminPage):
 
         self.body_layout().addWidget(self._build_metric_row())
         self.body_layout().addWidget(self._build_stock_section(), stretch=1)
+        self.body_layout().addWidget(self._build_activity_section())
         self.body_layout().addWidget(self._build_attendance_section())
 
         self.reload()
@@ -171,6 +174,13 @@ class OverviewPage(AdminPage):
         self._stock_footer.setStyleSheet(f"color: {p['text_secondary']}; font-size: 11px; padding: 8px 16px;")
         self._stock_section.body_layout().addWidget(self._stock_footer)
         return self._stock_section
+
+    def _build_activity_section(self) -> QWidget:
+        self._activity_section = Section(tr("activity.overview_kicker"), tr("activity.overview_heading"))
+        self._activity_table = activity_table()
+        self._activity_table.setMinimumHeight(200)
+        self._activity_section.body_layout().addWidget(self._activity_table)
+        return self._activity_section
 
     def _build_attendance_section(self) -> QWidget:
         p = CLASSICAL_PALETTE
@@ -229,9 +239,17 @@ class OverviewPage(AdminPage):
             analytics.sales_today(sales, today), on_the_road,
         )
         self._render_stock()
+        self._render_activity()
         self._render_attendance()
 
     # --- rendering ----------------------------------------------------
+
+    def _render_activity(self) -> None:
+        try:
+            events = activity_repository.list_recent(8, "info")
+        except DATABASE_ERRORS:
+            events = []
+        fill_activity_table(self._activity_table, events)
 
     def _render_revenue(self, period, sales, previous, dealerships) -> None:
         revenue = analytics.revenue_between(sales, period.start, period.end)

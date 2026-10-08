@@ -40,6 +40,7 @@ from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.dealership_bootstrap import load_dealership_identity
 from shared.gui_kit.idle_lock import IdleLock
+from shared.gui_kit.live_updates import DataWatcher
 from shared.gui_kit.motion import animations_enabled, fade_in, toast
 from shared.i18n import tr
 from shared.models import UNASSIGNED, StockLocation
@@ -113,6 +114,28 @@ class MainWindow(QMainWindow):
 
         self._header.page_selected.connect(self._navigate)
         self._navigate("home")
+
+        # Live: stock sent by the depot, a request answered, a sale rung up at
+        # another till... shows here within about a second.
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    def refresh_live(self) -> None:
+        """The database changed under us: reload what is on screen (never over an
+        open dialog, and never under a sale being rung up)."""
+        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+            return
+        self._home_page.reload_badges()
+        page = self._stack.currentWidget()
+        if page is self._stock_page:
+            self._stock_page.reload(play=False)
+        elif page is self._receive_page:
+            self._receive_page.reload()
+        elif page is self._sales_page:
+            self._sales_page.reload()
+        elif page is self._sale_page and not self._sale_page.has_items():
+            self._sale_page.reload()
 
     def _lock_when_idle(self) -> None:
         if self.session is not None and self.isVisible():

@@ -23,6 +23,7 @@ from __future__ import annotations
 
 from PySide6.QtCore import QEvent, QTimer, Qt
 from PySide6.QtWidgets import (
+    QApplication,
     QFrame,
     QLineEdit,
     QScrollArea,
@@ -34,6 +35,7 @@ from PySide6.QtWidgets import (
 )
 
 import depot_app.gui.icons as icons
+from shared.gui_kit.live_updates import DataWatcher
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.checkin_panel import CheckInPanel
 from depot_app.gui.low_stock_banner import LowStockBanner
@@ -113,6 +115,20 @@ class MainWindow(QMainWindow):
         scroller.setWidget(central)
         self.setCentralWidget(scroller)
         fade_in(scroller, 260)
+
+        # Live: a request from a till, a check-in at the other door, stock moved
+        # from the Console... shows on the Floor within about a second.
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    def refresh_live(self) -> None:
+        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+            return
+        self._low_stock_banner.reload()
+        self._checkin_panel.reload()
+        self._receive_panel.reload()
+        self._dispatch_panel.reload()
 
     def _build_header(self) -> QWidget:
         p = INDUSTRY_PALETTE

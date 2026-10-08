@@ -45,7 +45,7 @@ import sqlite3
 from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
-from database import account_repository, stock_repository
+from database import account_repository, activity_repository, stock_repository
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
@@ -259,6 +259,10 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
             row = conn.execute(
                 "SELECT * FROM purchase_orders WHERE id = ?", (cursor.lastrowid,)
             ).fetchone()
+            activity_repository.record(
+                conn, "po_pending" if hold_reason else "po_sent", severity="warning" if hold_reason else "info",
+                source="depot", actor=raised_by, number=_row_to_order(row).number, product=product["name"],
+                quantity=quantity, total=round(quantity * unit_price, 2), site=site)
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -350,6 +354,10 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
     order = _row_to_order(row)
     if cursor.rowcount == 0:
         raise PurchaseOrderAlreadyDecidedError(order.number, order.status)
+    with connection_scope() as conn:
+        activity_repository.record(conn, "po_approved" if new_status == "sent" else "po_rejected", source="admin",
+                                   actor=decided_by, number=order.number, product=order.product_name,
+                                   quantity=order.quantity)
     return order
 
 

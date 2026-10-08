@@ -74,6 +74,7 @@ from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
+from shared.gui_kit.live_updates import DataWatcher
 from shared.i18n import tr
 from shared.textcase import upper
 from shared.auth import Session
@@ -166,6 +167,22 @@ class ConsoleWindow(QMainWindow):
         self._session_timer.setInterval(SESSION_CHECK_MS)
         self._session_timer.timeout.connect(self._check_session)
         self._session_timer.start()
+
+        # Live: whatever the tills, the Floor or Admin just did shows on the page open now.
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    def refresh_live(self) -> None:
+        if not self.isVisible() or QApplication.activeModalWidget() is not None:
+            return
+        key = next((k for k, page in self._pages.items() if page is self._stack.currentWidget()), None)
+        if key == "Warehouses":
+            self._refresh_warehouses_page()
+        else:
+            reload = getattr(self._pages.get(key), "reload", None)
+            if callable(reload):
+                reload()
 
     def _build_sidebar(self) -> QWidget:
         p = INDUSTRY_PALETTE
@@ -321,7 +338,7 @@ class ConsoleWindow(QMainWindow):
     def _check_session(self, now: float | None = None) -> str | None:
         """Lock the Console when the signed-in person has been switched off in
         Admin, or has been idle too long. Returns why it locked (None = still fine)."""
-        if self.session is None or not self.isVisible():
+        if not self.isVisible():
             return None
         reason = None
         if not account_repository.is_session_valid(self.session):

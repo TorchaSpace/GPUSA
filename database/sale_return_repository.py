@@ -26,7 +26,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from database import account_repository, audit_repository
+from database import account_repository, activity_repository, audit_repository
 from database.connection import connection_scope
 from database.exceptions import ReturnApprovalError, ReturnQuantityError, SessionInvalidError, TransactionNotFoundError
 from database.stock_repository import change_level
@@ -145,6 +145,9 @@ def create(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str,
                     change_level(conn, location, barcode, restocked, change_total=True)
             audit_repository.record(conn, approved_by, "refunded", "sale", f"#{transaction_id}",
                                     f"RF-{return_id:05d} · {total:.2f} · {reason}")
+            activity_repository.record(conn, "refund", severity="notice", source="pos", location=location,
+                                       actor=approved_by, number=f"RF-{return_id:05d}", total=total,
+                                       reason=reason, sale=transaction_id)
         except Exception:
             conn.execute("ROLLBACK")
             raise

@@ -37,7 +37,7 @@ from database.exceptions import (
     SignInFailedError,
     localized_auth,
 )
-from database import employee_repository
+from database import activity_repository, employee_repository
 from shared import auth, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
@@ -374,6 +374,8 @@ def _verify_with_lockout(row: sqlite3.Row, pin: str, area: str, terminal: str, n
             until = to_db_timestamp(now + timedelta(minutes=auth.LOCK_MINUTES))
             conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = ? WHERE id = ?", (until, account.id))
             _log(conn, "locked", badge_id, area, terminal, f"{attempts} wrong PINs")
+            activity_repository.record(conn, "account_locked", severity="warning", source="system",
+                                       badge=badge_id, area=area, terminal=terminal or "")
             return until
         conn.execute("UPDATE accounts SET failed_attempts = ? WHERE id = ?", (attempts, account.id))
         _log(conn, "failed", badge_id, area, terminal, "wrong PIN")

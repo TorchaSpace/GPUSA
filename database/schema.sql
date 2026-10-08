@@ -596,3 +596,25 @@ CREATE TABLE IF NOT EXISTS day_closes (
 CREATE INDEX IF NOT EXISTS idx_day_closes_date ON day_closes(business_date);
 CREATE INDEX IF NOT EXISTS idx_day_closes_dealership ON day_closes(dealership_code);
 
+-- What happened at the tills and in the depots, newest last (the Admin
+-- notification panel and live feed read it). One row per event, written in
+-- the SAME transaction as the thing it describes by
+-- database/activity_repository.py, so a feed entry exists if and only if the
+-- action does. `kind` + `data_json` are rendered into a sentence at display
+-- time in the viewer's language (shared/activity.py); location_name is a text
+-- snapshot. Rows older than a month are pruned.
+CREATE TABLE IF NOT EXISTS activity_events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    at              TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    kind            TEXT NOT NULL,
+    severity        TEXT NOT NULL DEFAULT 'info' CHECK (severity IN ('info', 'notice', 'warning', 'critical')),
+    source          TEXT NOT NULL DEFAULT 'system' CHECK (source IN ('pos', 'depot', 'admin', 'system')),
+    location_kind   TEXT,
+    location_code   TEXT,
+    location_name   TEXT,
+    actor           TEXT,
+    data_json       TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE INDEX IF NOT EXISTS idx_activity_events_at ON activity_events(at);
+

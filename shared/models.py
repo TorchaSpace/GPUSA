@@ -725,3 +725,27 @@ class DayClose:
     id: int | None = None
     created_at: datetime | None = None
 
+
+ACTIVITY_SEVERITIES = ("info", "notice", "warning", "critical")  # quiet -> urgent
+ACTIVITY_SOURCES = ("pos", "depot", "admin", "system")
+
+
+@dataclass(frozen=True)
+class ActivityEvent:
+    """One entry of the live activity feed (database/activity_repository.py)."""
+
+    id: int
+    at: datetime
+    kind: str
+    severity: str
+    source: str
+    location_kind: str | None
+    location_code: str | None
+    location_name: str | None
+    actor: str | None
+    data: dict
+
+    @property
+    def rank(self) -> int:
+        return ACTIVITY_SEVERITIES.index(self.severity)
+

@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from database import account_repository, product_repository
+from database import account_repository, activity_repository, product_repository
 from database.connection import connection_scope
 from database.exceptions import (
     DealershipInactiveError,
@@ -115,10 +115,12 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
             ]
             if moved:
                 raise PriceChangedError(moved)
+            levels: dict[str, int] = {}
             for barcode, quantity in wanted.items():
                 available = level_in(conn, location, barcode)
                 if quantity > available:
                     raise InsufficientStockError(barcode, quantity, available, location.label)
+                levels[barcode] = available
 
             cursor = conn.execute(
                 "INSERT INTO transactions (total, dealership_code, cashier, payment_method, client_uuid) "
@@ -151,7 +153,12 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
                     ),
                 )
             for barcode, quantity in wanted.items():
-                change_level(conn, location, barcode, -quantity, change_total=True)
+                left = change_level(conn, location, barcode, -quantity, change_total=True)
+                activity_repository.stock_crossing(conn, location, barcode, levels[barcode], left,
+                                                   source="pos", actor=cashier)
+            activity_repository.record(conn, "sale", source="pos", location=location, actor=cashier,
+                                       id=transaction_id, total=transaction.total, units=sum(wanted.values()),
+                                       method=transaction.payment_method)
 
             created_at_row = conn.execute(
                 "SELECT created_at FROM transactions WHERE id = ?", (transaction_id,)

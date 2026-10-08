@@ -12,11 +12,11 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from database import sale_return_repository, transaction_repository
+from database import activity_repository, sale_return_repository, transaction_repository
 from database.connection import connection_scope
 from shared.auth import Actor, actor_label
 from shared.i18n import UserError
-from shared.models import DayClose, DaySummary
+from shared.models import DayClose, DaySummary, StockLocation
 
 MAX_NOTE_LENGTH = 200
 
@@ -71,6 +71,11 @@ def close(dealership_code: str | None, counted_cash: float, day: date | None = N
                  summary.card_sales, summary.other_sales, summary.cash_refunds, summary.card_refunds, expected,
                  counted, round(counted - expected, 2), note, actor_label(actor)),
             )
+            difference = round(counted - expected, 2)
+            activity_repository.record(
+                conn, "day_close", severity="warning" if difference else "info", source="pos",
+                location=StockLocation.dealership(dealership_code) if dealership_code else None, actor=actor,
+                date=summary.business_date.isoformat(), expected=expected, counted=counted, difference=difference)
         except Exception:
             conn.execute("ROLLBACK")
             raise

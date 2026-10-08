@@ -75,3 +75,27 @@ def test_a_till_left_alone_is_handed_over_as_at_a_shift_change(qapp, cashier, mo
     assert window._idle_lock.check() and switched == [True]
     window._idle_lock.stop()
     window.close()
+
+
+def test_the_till_reloads_what_is_on_screen_when_the_database_changes(qapp, cashier):
+    from pos_app.gui.main_window import MainWindow
+
+    window = MainWindow()
+    window._watcher.stop()
+    window.show()
+    pump(qapp)
+    calls = []
+    window._home_page.reload_badges = lambda: calls.append("badges")
+    window._stock_page.reload = lambda play=True: calls.append(f"stock play={play}")
+    window._navigate("stock")
+    calls.clear()
+    window.refresh_live()
+    assert calls == ["badges", "stock play=False"]  # quietly: no replay of the page animation
+    window._sale_page.has_items = lambda: True
+    sale_reloads = []
+    window._sale_page.reload = lambda: sale_reloads.append(1)
+    window._navigate("sale")
+    sale_reloads.clear()
+    window.refresh_live()
+    assert sale_reloads == []  # never under a sale being rung up
+    window.close()

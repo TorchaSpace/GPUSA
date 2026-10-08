@@ -40,7 +40,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError
-from database import stock_request_repository
+from database import activity_repository, stock_request_repository
 from database.connection import connection_scope
 from datetime import datetime, timedelta
 
@@ -253,6 +253,10 @@ def create(
             if request_ids:
                 stock_request_repository.mark_planned(conn, list(request_ids), shipment_id, dealership_code, actor)
             shipment = _fetch(conn, shipment_id)
+            activity_repository.record(
+                conn, "shipment_created", source="depot", location=StockLocation.dealership(dealership_code),
+                actor=actor, number=shipment.number, origin=origin, units=sum(merged.values()),
+                lines=len(merged), carrier=carrier)
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -295,10 +299,16 @@ def dispatch(shipment_id: int, actor: Actor | None = None) -> Shipment:
         origin = origin_location(shipment)
         require_location(conn, origin)
         for line in shipment.lines:
-            change_level(conn, origin, line.product_barcode, -line.expected_qty, change_total=False)
+            left = change_level(conn, origin, line.product_barcode, -line.expected_qty, change_total=False)
             log_movement(conn, origin, line.product_barcode, "dispatch", line.expected_qty, reason="shipment",
                          reference=shipment.number, note=f"Loaded for {shipment.dealership_name}", actor=actor)
+            activity_repository.stock_crossing(conn, origin, line.product_barcode, left + line.expected_qty, left,
+                                               source="depot", actor=actor)
         _touch(conn, shipment.id, "status = 'in_transit', departed_at = ?, stock_moved = 1", (now_db_timestamp(),))
+        activity_repository.record(
+            conn, "shipment_dispatched", source="depot", location=StockLocation.dealership(shipment.dealership_code),
+            actor=actor, number=shipment.number, origin=shipment.origin,
+            units=sum(l.expected_qty for l in shipment.lines))
 
     return _write(shipment_id, run)
 
@@ -339,6 +349,9 @@ def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
                              reference=shipment.number, note="Returned - shipment cancelled", actor=actor)
         _touch(conn, shipment.id, "status = 'cancelled', stock_moved = 0")
         stock_request_repository.reopen_for_shipment(conn, shipment.id)  # the dealership still needs it
+        activity_repository.record(
+            conn, "shipment_cancelled", severity="notice", source="depot",
+            location=StockLocation.dealership(shipment.dealership_code), actor=actor, number=shipment.number)
 
     return _write(shipment_id, run)
 
@@ -407,6 +420,11 @@ def complete_receipt(shipment_id: int, received: dict[str, int], note: str | Non
                "status = 'delivered', delivered_at = ?, receipt_note = ?, departed_at = COALESCE(departed_at, ?), "
                "stock_moved = 0",
                (now, note, now))
+        missing = sum(l.expected_qty - counts.get(l.product_barcode.upper(), l.expected_qty) for l in shipment.lines)
+        activity_repository.record(
+            conn, "shipment_short" if missing else "shipment_delivered", severity="warning" if missing else "info",
+            source="pos", location=shelf, actor=actor, number=shipment.number, origin=shipment.origin,
+            units=sum(l.expected_qty for l in shipment.lines) - missing, missing=missing, note=note or "")
 
     return _write(shipment_id, run)
 

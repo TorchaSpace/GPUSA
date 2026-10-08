@@ -27,13 +27,16 @@ from PySide6.QtGui import QKeySequence, QShortcut
 from admin_app.gui.motion import fade_in
 from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
-from database import account_repository, purchase_order_repository, settings_repository
+from database import account_repository, activity_repository, purchase_order_repository, settings_repository
 from database.exceptions import DATABASE_ERRORS
 
 import admin_app.gui.icons as icons
 from admin_app.gui.auth_flow import sign_in
 from admin_app.gui.components.compact_button import CompactButton
 from admin_app.gui.components.global_search import GlobalSearchDialog
+from admin_app.gui.components.notification_center import (
+    MAX_TOASTS, TOAST_SEVERITY_RANK, NotificationCenter, NotificationPanel, ToastHost,
+)
 from admin_app.gui.components.sidebar_nav import NavItem, NavSection, SidebarNav
 from admin_app.gui.pages.dealerships_page import DealershipsPage
 from admin_app.gui.pages.distribution_page import DistributionPage
@@ -50,6 +53,7 @@ from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.constants import PURCHASE_REQUEST_POLL_INTERVAL_MS
 from shared.gui_kit.idle_lock import IdleLock
+from shared.gui_kit.live_updates import DataWatcher
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
 
@@ -112,6 +116,7 @@ class MainWindow(QMainWindow):
 
         self._pending_count: int | None = None
         self._approval_buttons: list[CompactButton] = []
+        self._bell_buttons: list[CompactButton] = []
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}
         self._overview_page = OverviewPage()
@@ -151,6 +156,65 @@ class MainWindow(QMainWindow):
         )
         self._pending_poller.result_ready.connect(self._on_pending_polled)
         self._pending_poller.start()
+
+        # Live: a sale, a shipment, a check-in... written by another app shows
+        # up here within about a second, with a bell and toasts for the news.
+        self._center = NotificationCenter(session.badge_id if session else None, parent=self)
+        self._center.unread_changed.connect(self._refresh_bell)
+        self._center.events_arrived.connect(self._toast_new_events)
+        self._toasts = ToastHost(self)
+        self._panel: NotificationPanel | None = None
+        try:
+            activity_repository.prune()
+        except DATABASE_ERRORS:
+            pass
+        self._center.start()
+        self._refresh_bell(self._center.unread)
+        self._watcher = DataWatcher(parent=self)
+        self._watcher.changed.connect(self.refresh_live)
+        self._watcher.start()
+
+    # --- live refresh ------------------------------------------------------
+
+    def refresh_live(self) -> None:
+        """The database changed under us: take in the news and reload what is on screen.
+        Skipped while a dialog is open or on Settings, so nothing typed is disturbed."""
+        if not self.isVisible():
+            return
+        self._center.poll()
+        self._poll_pending_now()
+        if QApplication.activeModalWidget() is not None:
+            return
+        page = self._stack.currentWidget()
+        if page is self._settings_page or page is self._purchase_requests_page:
+            return  # the pending poller keeps the queue current
+        reload = getattr(page, "reload", None)
+        if callable(reload):
+            reload()
+
+    def _poll_pending_now(self) -> None:
+        ids = self._poll_pending_count()
+        if ids is not None:
+            self._on_pending_polled(ids)
+
+    def _toast_new_events(self, events: list) -> None:
+        if not self.isVisible():
+            return
+        loud = [e for e in events if e.rank >= TOAST_SEVERITY_RANK]
+        for event in loud[-MAX_TOASTS:]:
+            self._toasts.show_event(event)
+
+    def _refresh_bell(self, unread: int) -> None:
+        label = tr("header.notifications")
+        for button in self._bell_buttons:
+            button.setText(f"{label}  {unread}" if unread else label)
+
+    def open_notifications(self) -> None:
+        if self._panel is None:
+            self._panel = NotificationPanel(self._center, self)
+        self._panel.show()
+        self._panel.raise_()
+        self._panel.activateWindow()
 
     def _register_page(self, key: str, widget: QWidget) -> None:
         self._pages[key] = widget
@@ -194,6 +258,7 @@ class MainWindow(QMainWindow):
             self.session = session
             current_session.set(self.session)
             self._sidebar.set_user(self.session.name, self.session.role_label)
+            self._center.set_badge(self.session.badge_id)
             self.navigate("overview")  # the next administrator starts at Overview, not where the last one left off
             self._idle_lock.touch()
             self.show()
@@ -271,6 +336,10 @@ class MainWindow(QMainWindow):
             search.setToolTip(tr("header.search_tip"))
             search.clicked.connect(self.open_search)
             page.add_leading_header_action(search)
+            bell = CompactButton(tr("header.notifications"))
+            bell.clicked.connect(self.open_notifications)
+            page.add_leading_header_action(bell)
+            self._bell_buttons.append(bell)
             if key in ("overview", "purchase_requests"):
                 continue
             approvals = CompactButton(tr("header.pending_approvals"))

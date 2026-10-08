@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from database import activity_repository
 from database.connection import connection_scope
 from database.exceptions import (
     DealershipInactiveError,
@@ -131,7 +132,11 @@ def create(dealership_code: str, barcode: str, quantity, note: str | None = None
             "quantity, note, requested_by) VALUES (?, ?, ?, ?, ?, ?, ?)",
             (dealership_code, shop["name"], stored, name, quantity, note, actor_label(actor)),
         )
-        return _fetch(conn, cursor.lastrowid)
+        made = _fetch(conn, cursor.lastrowid)
+        activity_repository.record(conn, "request_new", severity="notice", source="pos",
+                                   location=StockLocation.dealership(dealership_code), actor=actor,
+                                   number=made.number, product=name, quantity=quantity)
+        return made
 
     return _write(run)
 
@@ -190,6 +195,10 @@ def _close(request_id: int, new_status: str, action: str, actor: Actor | None, n
         )
         if cursor.rowcount == 0:
             raise StockRequestStateError(current.number, current.status, action)
+        if new_status == "declined":
+            activity_repository.record(conn, "request_declined", source="depot", actor=actor,
+                                       location=StockLocation.dealership(current.dealership_code),
+                                       number=current.number, product=current.product_name, reason=note or "")
         return _fetch(conn, request_id)
 
     return _write(run)
