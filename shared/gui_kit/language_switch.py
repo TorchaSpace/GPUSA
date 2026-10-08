@@ -36,7 +36,7 @@ def save_language(code: str) -> None:
 class LanguageSwitch(QWidget):
     def __init__(self, palette: dict, parent: QWidget | None = None,
                  restart: Callable[[], None] = restart_app,
-                 save: Callable[[str], None] = save_language):
+                 save: Callable[[str], None] = save_language, rounded: bool = False):
         super().__init__(parent)
         self._restart = restart
         self._save = save
@@ -53,15 +53,23 @@ class LanguageSwitch(QWidget):
             layout.addWidget(button)
             self._buttons[code] = button
         self._palette = palette
+        self._rounded = rounded
         self.refresh()
 
     def refresh(self) -> None:
         p = self._palette
         current = i18n.current_language()
+        codes = list(self._buttons)
         for code, button in self._buttons.items():
             on = code == current
+            if self._rounded:  # a pill split in two: round only the outer corners
+                first, last = code == codes[0], code == codes[-1]
+                corners = f"border-top-left-radius: {14 if first else 0}px; border-bottom-left-radius: {14 if first else 0}px; " \
+                          f"border-top-right-radius: {14 if last else 0}px; border-bottom-right-radius: {14 if last else 0}px;"
+            else:
+                corners = "border-radius: 0;"
             button.setStyleSheet(
-                f"QPushButton {{ border: 1px solid {p['border']}; border-radius: 0; font-size: 12px; font-weight: 700; "
+                f"QPushButton {{ border: 1px solid {p['border']}; {corners} font-size: 12px; font-weight: 700; "
                 f"letter-spacing: 1px; background-color: {p['text_primary'] if on else 'transparent'}; "
                 f"color: {'#ffffff' if on else p['text_secondary']}; }}"
                 f"QPushButton:hover {{ border-color: {p['text_primary']}; }}"

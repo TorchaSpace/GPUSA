@@ -15,7 +15,9 @@ right after.
 
 from __future__ import annotations
 
+import atexit
 import time
+import weakref
 from typing import Callable
 
 from PySide6.QtCore import QEvent, QObject, QTimer, Signal
@@ -23,6 +25,22 @@ from PySide6.QtWidgets import QApplication
 
 _INPUT = {QEvent.MouseButtonPress, QEvent.MouseMove, QEvent.KeyPress, QEvent.Wheel, QEvent.TouchBegin}
 _CHECK_MS = 15_000
+
+# Locks whose filter is installed on the QApplication. They are taken off
+# again before the interpreter tears down: a Python event filter still
+# registered while PySide frees its wrappers crashes the process on exit.
+_ACTIVE: "weakref.WeakSet[IdleLock]" = weakref.WeakSet()
+
+
+def _remove_all_filters() -> None:
+    for lock in list(_ACTIVE):
+        try:
+            lock.stop()
+        except RuntimeError:  # its C++ side is already gone
+            pass
+
+
+atexit.register(_remove_all_filters)
 
 
 class IdleLock(QObject):
@@ -49,11 +67,13 @@ class IdleLock(QObject):
         app = QApplication.instance()
         if app is not None:
             app.installEventFilter(self)
+            _ACTIVE.add(self)
         self.touch()
         self._timer.start(_CHECK_MS)
 
     def stop(self) -> None:
         self._timer.stop()
+        _ACTIVE.discard(self)
         app = QApplication.instance()
         if app is not None:
             app.removeEventFilter(self)
@@ -77,3 +97,4 @@ class IdleLock(QObject):
         self.touch()  # one lock per idle stretch, not one every check
         self.idle.emit()
         return True
+
