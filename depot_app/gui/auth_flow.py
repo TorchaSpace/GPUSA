@@ -30,6 +30,17 @@ def console_sign_in_dialog(warehouse: Warehouse, parent=None) -> SignInDialog:
     )
 
 
+def switch_depot_dialog(home: Warehouse, target: Warehouse, parent=None) -> SignInDialog:
+    """Moving the Floor to another depot: administrators only (a depot manager stays at their own depot)."""
+    return SignInDialog(
+        tr("depot.auth.switch_title"),
+        tr("depot.auth.switch_sub").format(site=target.site_label),
+        lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name(home)),
+        palette=INDUSTRY_PALETTE,
+        parent=parent,
+    )
+
+
 def portal_unlock_dialog(session: Session, parent=None) -> SignInDialog:
     def confirm(_badge: str, pin: str) -> Session:
         account_repository.confirm_pin(session, pin)

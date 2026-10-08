@@ -77,6 +77,8 @@ EN = {
     # sign-in dialogs
     "depot.auth.console_title": "İdari Giriş",
     "depot.auth.console_sub": "{site} · Manager Console. Depot managers and administrators only.",
+    "depot.auth.switch_title": "Switch depot",
+    "depot.auth.switch_sub": "Moving this screen to {site} needs an administrator's badge and PIN.",
     "depot.auth.portal_title": "Manager Portal",
     "depot.auth.portal_sub": "Purchasing and treasury. Confirm it's you, {name} - enter your PIN.",
     # warehouse card
@@ -165,6 +167,8 @@ TR = {
     "depot.banner.left_of_min": "kaldı (min. {minimum})",
     "depot.auth.console_title": "İdari Giriş",
     "depot.auth.console_sub": "{site} · Yönetici Konsolu. Yalnızca depo müdürleri ve yöneticiler.",
+    "depot.auth.switch_title": "Depo değiştir",
+    "depot.auth.switch_sub": "Bu ekranı {site} deposuna geçirmek için yöneticinin badge ve PIN'i gerekir.",
     "depot.auth.portal_title": "Yönetici Portalı",
     "depot.auth.portal_sub": "Satın alma ve hazine. {name}, kimliğinizi doğrulayın - PIN'inizi girin.",
     "depot.card.this_depot": "BU DEPO",

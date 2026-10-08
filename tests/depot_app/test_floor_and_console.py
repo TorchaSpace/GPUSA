@@ -264,3 +264,49 @@ def test_several_low_stock_alerts_slide_in_together_and_extra_ones_wait(floor, q
     assert len(floor._alerts.active()) == MAX_VISIBLE and len(floor._alerts._waiting) == 6 - MAX_VISIBLE
     floor._alerts._dismiss(floor._alerts.active()[0])  # one goes, the next waiting one slides in
     assert len(floor._alerts.active()) == MAX_VISIBLE and len(floor._alerts._waiting) == 6 - MAX_VISIBLE - 1
+
+
+class _FakeDialog:
+    def __init__(self, session):
+        self.session = session
+
+    def exec(self):
+        return 1 if self.session is not None else 0
+
+
+def _pick(floor, code, qapp):
+    from PySide6.QtTest import QTest
+    floor._site_picker.setCurrentIndex(floor._site_picker.findData(code))
+    QTest.qWait(30)
+    pump(qapp)
+
+
+def test_leaving_this_depot_asks_an_administrator_every_time(floor, qapp, monkeypatch):
+    import depot_app.gui.main_window as mw
+
+    asked = []
+    monkeypatch.setattr(mw, "switch_depot_dialog", lambda home, target, parent: (asked.append(target.code), _FakeDialog(None))[1])
+    _pick(floor, "WH-02", qapp)
+    assert asked == ["WH-02"] and floor.warehouse.code == "WH-01"  # declined: nothing moved
+    assert floor._site_picker.currentData() == "WH-01"  # ...and the picker went back
+
+    monkeypatch.setattr(mw, "switch_depot_dialog", lambda home, target, parent: (asked.append(target.code), _FakeDialog(MANAGER))[1])
+    _pick(floor, "WH-02", qapp)
+    assert floor.warehouse.code == "WH-02"
+    _pick(floor, "WH-01", qapp)  # back to this install's own depot: free
+    assert asked == ["WH-02", "WH-02"] and floor.warehouse.code == "WH-01"
+    _pick(floor, "WH-02", qapp)  # and leaving again asks again
+    assert asked == ["WH-02", "WH-02", "WH-02"]
+
+
+def test_a_depot_manager_cannot_approve_a_switch():
+    from database import account_repository, employee_repository
+    from shared import auth
+    from shared.models import Employee
+
+    account_repository.create_first_admin("A-1", "Boss", "482913")
+    employee_repository.create(Employee("M-1", "Murat", "Operations", "Warehouse", "WH-01"))
+    account_repository.create_account("M-1", "depot_manager", "7351")
+    with pytest.raises(Exception):
+        account_repository.authenticate("M-1", "7351", auth.AREA_ADMIN, "Depot WH-01")
+    assert account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "Depot WH-01").role == "admin"

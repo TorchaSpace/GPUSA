@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 import depot_app.gui.icons as icons
-from database import warehouse_repository
+from database import account_repository, warehouse_repository
 from database.exceptions import DATABASE_ERRORS
 from database.stock_repository import critical_at
 from shared.gui_kit.live_updates import DataWatcher
@@ -48,7 +48,7 @@ from depot_app.gui.slide_alerts import SlideAlerts
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.motion import fade_in, toast
-from depot_app.gui.auth_flow import console_sign_in_dialog
+from depot_app.gui.auth_flow import console_sign_in_dialog, switch_depot_dialog
 from shared.gui_kit.language_switch import LanguageSwitch
 from shared import current_session
 from shared.auth import Session
@@ -70,6 +70,7 @@ class MainWindow(QMainWindow):
         self.resize(1360, 860)
         self.setStyleSheet(f"QMainWindow {{ background-color: {p['background']}; }}")
 
+        self._home_warehouse = self.warehouse  # what this install is; leaving it takes an administrator
         self._console_window = None  # lazily created, kept alive here (see _open_console)
 
         self._alerts = SlideAlerts(self)
@@ -170,8 +171,30 @@ class MainWindow(QMainWindow):
             code = picker.currentData()
         except RuntimeError:  # the picker was rebuilt before this ran
             return
-        if code and code != self.warehouse.code:
-            self.switch_warehouse(code)
+        if not code or code == self.warehouse.code:
+            return
+        if code != self._home_warehouse.code and not self._admin_approves_switch(code):
+            self._fill_picker(picker)  # declined: the picker goes back to the depot on screen
+            return
+        if not self.switch_warehouse(code):
+            self._fill_picker(picker)
+
+    def _admin_approves_switch(self, code: str) -> bool:
+        """Going to another depot than this install's own asks an administrator for badge + PIN, every time
+        (a depot manager works at their own depot; an administrator may see them all). Returning to the
+        install's own depot is free."""
+        try:
+            target = warehouse_repository.get_by_code(code)
+        except (ValueError, *DATABASE_ERRORS):
+            return False
+        dialog = switch_depot_dialog(self._home_warehouse, target, self)
+        if not dialog.exec() or dialog.session is None:
+            return False
+        try:
+            account_repository.sign_out(dialog.session)  # this was a one-off approval, not a session
+        except DATABASE_ERRORS:
+            pass
+        return True
 
     def switch_warehouse(self, code: str) -> bool:
         """Show another depot: every panel, the banner and the check-in list follow it. A signed-in
