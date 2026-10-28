@@ -199,6 +199,9 @@ def delete(code: str, by: Actor | None = None) -> None:
             if cursor.rowcount == 0:
                 raise DealershipNotFoundError(code)
             conn.execute("DELETE FROM stock_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,))
+            conn.execute(
+                "DELETE FROM location_reorder_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,)
+            )
             audit_repository.record(conn, by, "deleted", "dealership", code, name)
         except Exception:
             conn.execute("ROLLBACK")

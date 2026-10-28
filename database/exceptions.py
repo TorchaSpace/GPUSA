@@ -317,6 +317,19 @@ class LocationHasStockError(DataAccessError):
         self.units = units
 
 
+class LocationHasOpenOrdersError(DataAccessError):
+    """Refused: deleting a warehouse that open purchase orders (pending / sent / partly received)
+    are still addressed to - they could never be received or found again."""
+
+    def __init__(self, code: str, orders: int):
+        super().__init__(f"Warehouse {code} can't be deleted: {orders} open purchase order{'s' if orders != 1 else ''}. "
+                         "Cancel or finish them first, or deactivate the warehouse instead.")
+        self._localize("err.location_has_orders_one" if orders == 1 else "err.location_has_orders_other",
+                       code=code, n=format_int(orders))
+        self.code = code
+        self.orders = orders
+
+
 # --- sign-in (database/account_repository.py) ------------------------------
 
 class AuthError(DataAccessError):

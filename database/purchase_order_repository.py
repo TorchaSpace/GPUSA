@@ -307,6 +307,15 @@ def list_orders(status: str | None = None, site: str | None = None, limit: int |
     return orders
 
 
+def open_count_for(conn: sqlite3.Connection, warehouse_code: str) -> int:
+    """Orders still waiting on a delivery (held, sent or partly received) for warehouse
+    `warehouse_code` - what stops a warehouse being deleted. Runs inside the caller's transaction."""
+    wanted = site_code(warehouse_code)
+    rows = conn.execute(
+        "SELECT site FROM purchase_orders WHERE status IN ('pending', 'sent', 'partially_received')").fetchall()
+    return sum(1 for row in rows if site_code(row["site"]) == wanted)
+
+
 def list_pending() -> list[PurchaseOrder]:
     """Every order awaiting an admin decision, newest first."""
     return list_orders(status="pending")

@@ -808,6 +808,8 @@ EN_ADMIN = {
     "err.location_has_stock": "{code} still holds {units} units - move them elsewhere before deleting it.",
     "err.location_in_use_one": "{kind} {code} can't be deleted: {n} shipment still scheduled or in transit. Deactivate it instead, or finish/cancel those shipments first.",
     "err.location_in_use_other": "{kind} {code} can't be deleted: {n} shipments still scheduled or in transit. Deactivate it instead, or finish/cancel those shipments first.",
+    "err.location_has_orders_one": "{code} can't be deleted: {n} purchase order is still open. Cancel or finish it first, or deactivate the warehouse instead.",
+    "err.location_has_orders_other": "{code} can't be deleted: {n} purchase orders are still open. Cancel or finish them first, or deactivate the warehouse instead.",
     "err.location_inactive": "Warehouse {code} is inactive - reactivate it before putting stock there.",
     "err.location_required": "Choose where the employee works.",
     "err.location_too_long": "A location can be at most {n} characters.",

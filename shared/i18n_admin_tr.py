@@ -858,6 +858,8 @@ TR_ADMIN = {
     "err.location_has_stock": "{code} hâlâ {units} adet tutuyor - silmeden önce bunları başka yere taşıyın.",
     "err.location_in_use_one": "{kind} {code} silinemez: {n} sevkiyat hâlâ planlı veya yolda. Bunun yerine devre dışı bırakın ya da önce o sevkiyatları tamamlayın/iptal edin.",
     "err.location_in_use_other": "{kind} {code} silinemez: {n} sevkiyat hâlâ planlı veya yolda. Bunun yerine devre dışı bırakın ya da önce o sevkiyatları tamamlayın/iptal edin.",
+    "err.location_has_orders_one": "{code} silinemez: {n} satın alma siparişi hâlâ açık. Önce iptal edin veya tamamlayın, ya da depoyu devre dışı bırakın.",
+    "err.location_has_orders_other": "{code} silinemez: {n} satın alma siparişi hâlâ açık. Önce iptal edin veya tamamlayın, ya da depoyu devre dışı bırakın.",
     "err.location_inactive": "{code} deposu devre dışı - içine stok koymadan önce yeniden etkinleştirin.",
     "err.location_required": "Çalışanın nerede çalıştığını seçin.",
     "err.location_too_long": "Konum en fazla {n} karakter olabilir.",

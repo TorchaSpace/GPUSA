@@ -14,11 +14,12 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository
+from database import audit_repository, purchase_order_repository
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityBelowUsageError,
     DuplicateWarehouseCodeError,
+    LocationHasOpenOrdersError,
     LocationHasStockError,
     LocationInUseError,
     WarehouseNotFoundError,
@@ -146,8 +147,8 @@ def delete(code: str, by: Actor | None = None) -> None:
     """Remove a warehouse that holds no stock and has no open shipments.
     Raises LocationHasStockError if any stock is still there (move it first
     - deleting would lose track of it), LocationInUseError while a
-    scheduled / in-transit shipment leaves from it (deactivate it instead),
-    WarehouseNotFoundError if the code doesn't exist."""
+    scheduled / in-transit shipment leaves from it (deactivate it instead), LocationHasOpenOrdersError while purchase orders
+    are still open for it, WarehouseNotFoundError if the code doesn't exist."""
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -167,9 +168,16 @@ def delete(code: str, by: Actor | None = None) -> None:
             open_shipments = active_count_for(conn, origin_code=code)
             if open_shipments:
                 raise LocationInUseError("warehouse", code, open_shipments)
+            open_orders = purchase_order_repository.open_count_for(conn, code)
+            if open_orders:
+                raise LocationHasOpenOrdersError(code, open_orders)
             conn.execute("DELETE FROM warehouses WHERE code = ?", (code,))
             conn.execute(
                 "DELETE FROM stock_levels WHERE location_kind = 'warehouse' AND location_code = ?", (code,)
+            )
+            # a warehouse later re-created under this code must not inherit the old per-product levels
+            conn.execute(
+                "DELETE FROM location_reorder_levels WHERE location_kind = 'warehouse' AND location_code = ?", (code,)
             )
             audit_repository.record(conn, by, "deleted", "warehouse", code)
         except Exception:
