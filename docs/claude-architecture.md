@@ -50,7 +50,7 @@ Tables: `products`, `transactions`, `transaction_items`, `stock_movements`,
 `ledger_entries`, `ledger_audit` (append-only via triggers), `shipments`,
 `shipment_lines`, `app_settings` (key/value).
 
-Migrations: `PRAGMA user_version`, `LATEST_VERSION = 7`, one `BEGIN IMMEDIATE` per
+Migrations: `PRAGMA user_version`, `LATEST_VERSION = 10`, one `BEGIN IMMEDIATE` per
 startup, safe when all three apps start at once. Schema.sql stays the source of
 truth for new DBs; a new column needs **both** a schema.sql change and a `_to_vN`
 step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
@@ -66,6 +66,7 @@ step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
 | 7 | `transactions.payment_method` ('card' / 'cash'; NULL = from before v7) |
 | 8 | `stock_requests` table (dealership → depot; one open request per shop+product, unique partial index) |
 | 9 | `transactions.client_uuid` (unique when set: a re-sent sale stores once), `sale_returns` + `sale_return_items` (refunds), `day_closes` (till count), `admin_audit` (append-only: deletes, refunds) |
+| 10 | `sale_returns` rebuilt with `CHECK (total >= 0)` (a free item can be refunded). `run_migrations` runs with `PRAGMA foreign_keys=OFF` around the transaction so the rebuild can't cascade-delete `sale_return_items` |
 
 ### The stock invariant (most important rule)
 

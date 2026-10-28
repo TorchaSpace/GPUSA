@@ -1044,6 +1044,7 @@ EN_ADMIN = {
     "err.return_reason": "Write why the goods are coming back.",
     "err.return_reason_long": "The reason can be at most {n} characters.",
     "err.return_lines": "Pick at least one product, with a whole number of units.",
+    "err.sale_lines": "Quantities must be whole numbers of at least 1.",
     "err.close_counted": "Type the cash you counted as a number (0 or more).",
     "err.close_note_long": "The note can be at most {n} characters.",
     "activity.somewhere": "a location",

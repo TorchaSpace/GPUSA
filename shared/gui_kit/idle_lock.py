@@ -7,10 +7,12 @@ owns only the "how long since the last input" mechanic; what locking
 means is the window's call - Admin re-asks for a sign-in, POS hands the
 till over as at a shift change.
 
-It never fires while a modal dialog is open: locking would re-enter the
-window's own sign-in flow underneath whatever that dialog is doing. The
-dialog closing (or any input) restarts the clock, so the lock follows
-right after.
+By default it never fires while a modal dialog is open: locking would
+re-enter the window's own sign-in flow underneath whatever that dialog is
+doing. The dialog closing (or any input) restarts the clock, so the lock
+follows right after. A window that must lock regardless (the POS till: a
+forgotten open dialog would otherwise keep the cashier signed in forever)
+passes lock_under_modal=True and closes the modals itself when `idle` fires.
 """
 
 from __future__ import annotations
@@ -80,8 +82,10 @@ class IdleLock(QObject):
     idle = Signal()
 
     def __init__(self, seconds: float, parent: QObject | None = None,
-                 clock: Callable[[], float] = time.monotonic):
+                 clock: Callable[[], float] = time.monotonic,
+                 lock_under_modal: bool = False):
         super().__init__(parent)
+        self.lock_under_modal = lock_under_modal
         self.seconds = seconds
         self._clock = clock
         self.last = clock()
@@ -111,7 +115,7 @@ class IdleLock(QObject):
     def check(self) -> bool:
         """Emit `idle` (and restart the clock) if the limit has passed.
         Returns whether it fired."""
-        if QApplication.activeModalWidget() is not None:
+        if not self.lock_under_modal and QApplication.activeModalWidget() is not None:
             return False
         if self._clock() - self.last <= self.seconds:
             return False

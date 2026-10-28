@@ -22,10 +22,10 @@ nothing to show (dev-mode run, no sidecar, not yet registered).
 from __future__ import annotations
 
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QTimer
-from PySide6.QtWidgets import QApplication, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository, dealership_repository
-from database.exceptions import DATABASE_ERRORS, DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.auth_flow import switch_dealership_dialog, till_sign_in_dialog
 
 from pos_app.gui.components.organic import toast_style
@@ -57,7 +57,7 @@ class MainWindow(QMainWindow):
         current_session.set(session)
         self.setWindowTitle(tr("pos.window_title"))
         # Till left alone for IDLE_LOCK_SECONDS: hand it over as at a shift change.
-        self._idle_lock = IdleLock(IDLE_LOCK_SECONDS, parent=self)
+        self._idle_lock = IdleLock(IDLE_LOCK_SECONDS, parent=self, lock_under_modal=True)
         self._idle_lock.idle.connect(self._lock_when_idle)
         if session is not None:
             self._idle_lock.start()
@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             account_repository.sign_out(dialog.session)  # a one-off approval, not a session
-        except DataAccessError:
+        except DATABASE_ERRORS:
             pass
         return True
 
@@ -205,8 +205,17 @@ class MainWindow(QMainWindow):
             self._sale_page.reload()
 
     def _lock_when_idle(self) -> None:
-        if self.session is not None and self.isVisible():
-            self.switch_cashier()
+        if self.session is None:  # the sign-in dialog is already up: closing it would quit the app
+            return
+        for _ in range(5):  # a dialog left open must not keep the cashier signed in
+            modal = QApplication.activeModalWidget()
+            if modal is None:
+                break
+            if isinstance(modal, QDialog):
+                modal.reject()
+            else:
+                modal.close()
+        self.switch_cashier()
 
     def switch_cashier(self) -> None:
         """Shift change: sign the current cashier out, clear the open sale,
@@ -214,15 +223,20 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             try:
                 account_repository.sign_out(self.session)
-            except DataAccessError:
+            except DATABASE_ERRORS:
                 pass
         self.session = None
         current_session.clear()
         self._sale_page.clear_cart()
         self.hide()
-        dialog = till_sign_in_dialog(self._dealership_code, self._dealership_name)
+        # The next cashier signs in at this till's OWN shop, even if an administrator was browsing another one.
+        home = self._home_identity
+        dialog = till_sign_in_dialog(home["code"] if home else self._dealership_code,
+                                     home["name"] if home else self._dealership_name)
         if dialog.exec() and dialog.session is not None:
             self.set_session(dialog.session)
+            if home and self._dealership_code != home["code"]:
+                self.switch_dealership(home["code"])  # back to the home shop (keeps self.session)
             self._navigate("home")
             self._idle_lock.touch()
             self.show()

@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
@@ -42,7 +43,7 @@ from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared import current_session
 from shared.auth import AREA_DEPOT_CONSOLE
 from shared.currency import format_money
-from shared.i18n import tr
+from shared.i18n import UserError, tr
 from shared.models import DayClose, SaleReturn, StockLocation, Transaction, UNASSIGNED
 
 RECENT_DAYS = 7
@@ -69,6 +70,7 @@ class ReturnDialog(QDialog):
         self.sale_return: SaleReturn | None = None
         self._requested_by = requested_by
         self._terminal = terminal
+        self._attempt: tuple[tuple, str] | None = None  # (what was submitted, its key): a re-submit stores once
         self._lines = sale_return_repository.returnable_lines(transaction.id)
         self.setWindowTitle(tr("pos.sales.return_title"))
         self.setModal(True)
@@ -139,13 +141,23 @@ class ReturnDialog(QDialog):
     def submit(self) -> bool:
         lines = [(barcode, spin.value(), self.restock_boxes[barcode].isChecked())
                  for barcode, spin in self.quantity_spins.items() if spin.value() > 0]
+        signature = (tuple(lines), self.reason_input.text(), self.badge_input.text().strip())
+        if self._attempt is None or self._attempt[0] != signature:
+            self._attempt = (signature, uuid.uuid4().hex)
         try:
+            # Checked before the approver's PIN is spent: a manager must not be asked to
+            # sign off (and log a pin_confirmed event for) a form that cannot be saved.
+            if not lines:
+                raise UserError("err.return_lines")
+            if not self.reason_input.text().strip():
+                raise UserError("err.return_reason")
             approver = account_repository.authenticate(
                 self.badge_input.text(), self.pin_input.text(), AREA_DEPOT_CONSOLE, self._terminal,
                 event="pin_confirmed",
             ).actor
             self.sale_return = sale_return_repository.create(
-                self.transaction.id, lines, self.reason_input.text(), approver, self._requested_by)
+                self.transaction.id, lines, self.reason_input.text(), approver, self._requested_by,
+                client_uuid=self._attempt[1])
         except (ValueError, *DATABASE_ERRORS) as exc:
             self.pin_input.clear()
             self.error_label.setText(str(exc))
@@ -191,6 +203,12 @@ class DayCloseDialog(QDialog):
                 amount.setStyleSheet("font-weight: 700;")
             grid.addWidget(amount, row, 1)
         layout.addLayout(grid)
+        # Refunds paid out today (for earlier days' sales) can exceed today's cash sales; the till has no
+        # opening float to net that against, so say why the difference will read "over".
+        self.negative_label = QLabel(tr("pos.sales.negative_expected"))
+        self.negative_label.setWordWrap(True)
+        self.negative_label.setVisible(s.expected_cash < 0)
+        layout.addWidget(self.negative_label)
 
         form = QFormLayout()
         self.counted_spin = QDoubleSpinBox()
@@ -343,7 +361,14 @@ class SalesPage(QWidget):
         return self.transactions[rows[0].row()]
 
     def _update_buttons(self) -> None:
-        self.return_button.setEnabled(self.selected_transaction() is not None)
+        sale = self.selected_transaction()
+        returnable = False
+        if sale is not None:
+            try:  # a fully refunded sale has nothing left to take back
+                returnable = any(line.available > 0 for line in sale_return_repository.returnable_lines(sale.id))
+            except DATABASE_ERRORS:
+                returnable = False
+        self.return_button.setEnabled(returnable)
 
     def return_dialog(self) -> ReturnDialog | None:
         sale = self.selected_transaction()

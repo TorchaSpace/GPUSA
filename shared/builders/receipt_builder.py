@@ -11,6 +11,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from shared.constants import RECEIPT_WIDTH_CHARS, STORE_ADDRESS_LINES, STORE_NAME
+from shared.currency import format_money
+from shared.formatting import format_amount
+from shared.i18n import tr
 from shared.models import Transaction
 
 
@@ -57,9 +60,14 @@ def _wrap(text: str, width: int) -> list[str]:
 
 def _line_item_lines(item) -> list[str]:
     lines = _wrap(item.product_name_at_sale, RECEIPT_WIDTH_CHARS)
-    qty_price = f"{item.quantity} x {item.unit_price_at_sale:.2f}"
-    lines.append(_two_column(qty_price, f"{item.line_total:.2f}"))
+    qty_price = f"{item.quantity} x {format_amount(item.unit_price_at_sale)}"
+    lines.append(_two_column(qty_price, format_amount(item.line_total)))
     return lines
+
+
+def _method_label(method: str) -> str:
+    label = tr(f"pos.sale.{method}")
+    return method.capitalize() if label == f"pos.sale.{method}" else label
 
 
 def build_receipt(transaction: Transaction, store_name: str | None = None,
@@ -79,7 +87,7 @@ def build_receipt(transaction: Transaction, store_name: str | None = None,
     lines.append(divider)
 
     if transaction.id is not None:
-        lines.append(f"Receipt #{transaction.id}")
+        lines.append(tr("pos.receipt.number").format(id=transaction.id))
     if transaction.created_at is not None:
         lines.append(transaction.created_at.strftime("%Y-%m-%d %H:%M:%S"))
     lines.append(divider)
@@ -88,7 +96,7 @@ def build_receipt(transaction: Transaction, store_name: str | None = None,
         lines.extend(_line_item_lines(item))
     lines.append(divider)
 
-    lines.append(_two_column("TOTAL", f"{transaction.total:.2f}"))
+    lines.append(_two_column(tr("pos.receipt.total"), format_money(transaction.total)))
     if transaction.payment_method:
-        lines.append(_two_column("PAID", transaction.payment_method.capitalize()))
+        lines.append(_two_column(tr("pos.receipt.paid"), _method_label(transaction.payment_method)))
     return ReceiptDocument(lines=lines)

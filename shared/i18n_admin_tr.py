@@ -1099,6 +1099,7 @@ TR_ADMIN = {
     "err.return_reason": "Ürünlerin neden geri geldiğini yazın.",
     "err.return_reason_long": "Sebep en fazla {n} karakter olabilir.",
     "err.return_lines": "En az bir ürün seçin, adet tam sayı olsun.",
+    "err.sale_lines": "Adetler en az 1 olan tam sayılar olmalı.",
     "err.close_counted": "Saydığınız nakit tutarını sayı olarak yazın (0 veya daha fazla).",
     "err.close_note_long": "Not en fazla {n} karakter olabilir.",
     "activity.somewhere": "bir konum",

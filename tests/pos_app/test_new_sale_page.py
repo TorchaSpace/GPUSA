@@ -3,7 +3,7 @@ from the database before charging, and refreshed when the page reloads."""
 
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytest
 
@@ -241,3 +241,84 @@ def test_a_dealership_switched_off_after_the_precheck_is_refused_by_the_database
     assert boxes["warning"] and "switched off" in boxes["warning"][0]
     assert boxes["info"] == []
     assert stock_repository.quantity_at(SHELF, "OIL") == 10
+
+
+def _sales_stored():
+    return transaction_repository.list_between(datetime.now() - timedelta(days=1), datetime.now() + timedelta(days=1))
+
+
+def _lose_the_first_answer(monkeypatch, module, sent):
+    """The first charge commits but the till never hears back; later ones go through normally."""
+    import sqlite3
+
+    def flaky(pending, location, cashier=None):
+        sent.append(pending.client_uuid)
+        stored = transaction_repository.finalize_transaction(pending, location, cashier)
+        if len(sent) == 1:
+            raise sqlite3.OperationalError("database is locked")
+        return stored
+
+    monkeypatch.setattr(module, "complete_sale", flaky)
+
+
+def test_pressing_pay_again_after_a_lost_answer_stores_the_sale_once(page, boxes, monkeypatch):
+    import pos_app.gui.pages.new_sale_page as module
+
+    sent = []
+    _lose_the_first_answer(monkeypatch, module, sent)
+    page._add_to_cart(_tile_for(page, "OIL"))
+    page._checkout("Cash")
+    assert len(boxes["warning"]) == 1 and page.has_items()
+    page._checkout("Cash")
+    assert len(_sales_stored()) == 1 and not page.has_items()
+    assert boxes["info"] and sent[0] == sent[1] and sent[0]
+    assert stock_repository.quantity_at(SHELF, "OIL") == 9
+
+
+def test_a_changed_cart_is_a_new_sale_with_a_new_key(page, boxes, monkeypatch):
+    import pos_app.gui.pages.new_sale_page as module
+
+    sent = []
+    _lose_the_first_answer(monkeypatch, module, sent)
+    page._add_to_cart(_tile_for(page, "OIL"))
+    page._checkout("Cash")
+    page._add_to_cart(_tile_for(page, "RICE"))  # the cart changed before the retry
+    page._checkout("Cash")
+    assert len(_sales_stored()) == 2 and sent[0] != sent[1]
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("ince", "TR-1"), ("İnce", "TR-1"), ("ışık", "TR-2"), ("Işık", "TR-2"), ("seker", "TR-3"), ("şeker", "TR-3"),
+])
+def test_search_finds_turkish_names_however_they_are_typed(page, query, expected):
+    from shared import i18n
+
+    for barcode, name in (("TR-1", "İnce Bulgur"), ("TR-2", "IŞIK Lamba"), ("TR-3", "Şeker")):
+        product_repository.create(Product(barcode, name, 5.0, 5, 1))
+        stock_repository.transfer(UNASSIGNED, SHELF, barcode, 5)
+    previous = i18n.current_language()
+    i18n.set_language("tr")
+    try:
+        page.reload()
+        page._search_input.setText(query)
+        assert expected in page._cards
+        assert len(page._cards) == 1
+    finally:
+        i18n.set_language(previous)
+
+
+def test_scanning_an_unknown_or_sold_out_code_says_so(page, monkeypatch):
+    notices = []
+    monkeypatch.setattr(page, "_notify", notices.append)
+    product_repository.create(Product("GONE", "Gone", 3.0, 5, 1))  # nothing on this shelf
+    page.reload()
+    page._search_input.setText("ZZZ-404")
+    page._on_search_enter()
+    assert notices == ["No product with code ZZZ-404"] and not page.has_items()
+    assert page._search_input.selectedText() == "ZZZ-404"
+    page._search_input.setText("GONE")
+    page._on_search_enter()
+    assert notices[-1] == "Gone is out of stock" and not page.has_items()
+    page._search_input.setText("OIL")
+    page._on_search_enter()
+    assert page.has_items() and len(notices) == 2  # a good scan stays quiet
