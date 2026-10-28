@@ -70,7 +70,8 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     shared.models.PAYMENT_METHODS) is stored as given; anything else is a
     ValueError before the database is touched.
 
-    Returns the same Transaction with `id` and `created_at` populated.
+    Returns the same Transaction with `id` and `created_at` (LOCAL time, like
+    list_between) populated.
     """
     if not transaction.items:
         raise ValueError("Cannot finalize a transaction with no line items")
@@ -171,7 +172,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
 
     return Transaction(
         id=transaction_id,
-        created_at=_parse_timestamp(created_at_row["created_at"]),
+        created_at=_as_local(_parse_timestamp(created_at_row["created_at"])),
         items=sold,
         dealership_code=None if location.is_unassigned else location.code,
         cashier=actor_label(cashier),
@@ -216,7 +217,7 @@ def get_by_id(transaction_id: int) -> Transaction:
         )
         for item in item_rows
     ]
-    return Transaction(id=header["id"], created_at=_parse_timestamp(header["created_at"]), items=items,
+    return Transaction(id=header["id"], created_at=_as_local(_parse_timestamp(header["created_at"])), items=items,
                        dealership_code=header["dealership_code"], cashier=header["cashier"],
                        payment_method=header["payment_method"], client_uuid=header["client_uuid"])
 
