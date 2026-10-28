@@ -77,6 +77,7 @@ from shared.currency import format_money
 from shared.gui_kit.motion import Level, animations_enabled, blend, count_up, fade_in, stagger_in, toast
 from shared.i18n import plural, tr
 from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, Product, StockLocation, Transaction
+from shared.search import fold
 from shared import current_session
 from shared.textcase import upper
 from shared.warehousing import tr_or
@@ -431,11 +432,11 @@ class NewSalePage(QWidget):
 
     def _on_search_enter(self) -> None:
         """A barcode scanner types the code and presses Enter: the exact match goes straight into the sale."""
-        code = self._search_input.text().strip().lower()
+        code = fold(self._search_input.text().strip())
         if not code:
             return
         for product in self._all_products:
-            if product.is_active and product.barcode.lower() == code and product.stock_quantity > 0:
+            if product.is_active and fold(product.barcode) == code and product.stock_quantity > 0:
                 self._add_to_cart(product)
                 self._search_input.clear()
                 return
@@ -450,11 +451,11 @@ class NewSalePage(QWidget):
             self._grid_layout.setRowStretch(self._stretch_row, 0)
         self._cards = {}
 
-        query = self._search_input.text().strip().lower()
+        query = fold(self._search_input.text().strip())  # Turkish-aware: ince finds İnce, ışık finds IŞIK
         # Deactivated products can't be sold (and the search matches a scanned barcode as well as names).
         visible = [
             product for product in self._all_products
-            if product.is_active and (query in product.name.lower() or query in product.barcode.lower())
+            if product.is_active and (query in fold(product.name) or query in fold(product.barcode))
         ]
         order = {product.barcode: index for index, product in enumerate(self._all_products)}
 

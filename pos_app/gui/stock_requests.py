@@ -39,6 +39,7 @@ from shared import current_session
 from shared.formatting import parse_db_timestamp
 from shared.i18n import enum_label, tr
 from shared.models import Product, StockRequest, suggested_request_qty
+from shared.search import fold
 
 _ACCENT_600, _ACCENT_700 = "#b2622d", "#8c491a"
 _NEUTRAL_800 = "#3a3631"
@@ -84,7 +85,7 @@ class RequestStockDialog(QDialog):
         # What this shelf carries, emptiest first; the rest of the catalogue after it.
         self._products = sorted((p for p in products if p.is_active),
                                 key=lambda p: (not (p.stocked_here or p.stock_quantity > 0),
-                                               order[stock_status(p)], p.name.lower()))
+                                               order[stock_status(p)], fold(p.name)))
         self.request: StockRequest | None = None
         self.setWindowTitle(tr("pos.request.title"))
         self.setModal(True)

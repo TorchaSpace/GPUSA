@@ -285,3 +285,23 @@ def test_a_changed_cart_is_a_new_sale_with_a_new_key(page, boxes, monkeypatch):
     page._add_to_cart(_tile_for(page, "RICE"))  # the cart changed before the retry
     page._checkout("Cash")
     assert len(_sales_stored()) == 2 and sent[0] != sent[1]
+
+
+@pytest.mark.parametrize("query,expected", [
+    ("ince", "TR-1"), ("İnce", "TR-1"), ("ışık", "TR-2"), ("Işık", "TR-2"), ("seker", "TR-3"), ("şeker", "TR-3"),
+])
+def test_search_finds_turkish_names_however_they_are_typed(page, query, expected):
+    from shared import i18n
+
+    for barcode, name in (("TR-1", "İnce Bulgur"), ("TR-2", "IŞIK Lamba"), ("TR-3", "Şeker")):
+        product_repository.create(Product(barcode, name, 5.0, 5, 1))
+        stock_repository.transfer(UNASSIGNED, SHELF, barcode, 5)
+    previous = i18n.current_language()
+    i18n.set_language("tr")
+    try:
+        page.reload()
+        page._search_input.setText(query)
+        assert expected in page._cards
+        assert len(page._cards) == 1
+    finally:
+        i18n.set_language(previous)
