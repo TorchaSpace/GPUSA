@@ -60,6 +60,7 @@ from shared.auth import Actor, actor_label, normalize_badge_id
 from shared.costing import weighted_average_cost
 from shared.formatting import round_money
 from shared.models import RECEIVABLE_STATUSES, PriceRange, PurchaseOrder, StockLocation, hold_reason_for
+from shared.warehousing import site_code
 
 # Largest quantity on one order - a typo guard (an extra zero), not a business rule.
 MAX_QUANTITY = 1_000_000
@@ -283,8 +284,7 @@ def get(order_id: int) -> PurchaseOrder:
 @_wrap_sqlite
 def list_orders(status: str | None = None, site: str | None = None, limit: int | None = None) -> list[PurchaseOrder]:
     """Orders newest first, optionally filtered by status and/or site
-    (compared case-insensitively, so rows saved before sites were
-    normalised still match)."""
+    (compared by warehouse code, so a renamed warehouse keeps its orders)."""
     clauses, params = [], []
     if status is not None:
         clauses.append("status = ?")
@@ -300,8 +300,8 @@ def list_orders(status: str | None = None, site: str | None = None, limit: int |
         rows = conn.execute(sql, params).fetchall()
     orders = [_row_to_order(row) for row in rows]
     if site is not None:
-        wanted = normalise_site(site)
-        orders = [o for o in orders if normalise_site(o.site) == wanted]
+        wanted = site_code(site)
+        orders = [o for o in orders if site_code(o.site) == wanted]
         if limit is not None:
             orders = orders[:limit]
     return orders
@@ -465,7 +465,7 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
         if location.kind == "warehouse":
             site_row = conn.execute("SELECT code, name FROM warehouses WHERE code = ?", (location.code,)).fetchone()
             if site_row is not None:
-                site = normalise_site(f"{site_row['code']} · {site_row['name']}")
+                site = site_row["code"].upper()
                 received_by = actor_label(actor) if actor is not None else None
                 if not received_by or not received_by.strip(" ·"):
                     received_by = f"Floor · {location.code}"
@@ -475,7 +475,7 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
                 for row in candidates:
                     if left <= 0:
                         break
-                    if normalise_site(row["site"]) != site:
+                    if site_code(row["site"]) != site:
                         continue
                     take = min(left, int(row["quantity"]) - int(row["received_qty"]))
                     if take <= 0:

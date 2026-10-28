@@ -41,6 +41,7 @@ from database.exceptions import (
 from shared.auth import Actor, actor_label
 from shared.formatting import round_money
 from shared.models import LEDGER_DIRECTIONS, LEDGER_DOC_TYPES, LedgerAuditRecord, LedgerEntry
+from shared.warehousing import site_code
 
 
 def _wrap_sqlite(func):
@@ -127,8 +128,8 @@ def get(entry_id: int) -> LedgerEntry:
 @_wrap_sqlite
 def list_entries(direction: str | None = None, site: str | None = None) -> list[LedgerEntry]:
     """Entries ordered by due date (soonest first), optionally filtered
-    by direction and/or site (compared case-insensitively, so rows saved
-    before sites were normalised still match)."""
+    by direction and/or site (compared by warehouse code, so a renamed
+    warehouse keeps its entries)."""
     clauses, params = [], []
     if direction is not None:
         clauses.append("direction = ?")
@@ -141,8 +142,8 @@ def list_entries(direction: str | None = None, site: str | None = None) -> list[
         rows = conn.execute(sql, params).fetchall()
     entries = [_row_to_entry(row) for row in rows]
     if site is not None:
-        wanted = normalise_site(site)
-        entries = [e for e in entries if normalise_site(e.site) == wanted]
+        wanted = site_code(site)
+        entries = [e for e in entries if site_code(e.site) == wanted]
     return entries
 
 

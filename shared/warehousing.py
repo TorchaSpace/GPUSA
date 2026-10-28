@@ -92,6 +92,13 @@ def normalise_code(code, what: str = "code") -> str:
     return text
 
 
+def site_code(site: str | None) -> str | None:
+    """"WH-01" out of the "WH-01 · İstanbul Merkez" label purchase orders and ledger entries are
+    stamped with (so renaming the warehouse doesn't orphan them); a label without a "·" is its own
+    code; blank -> None (a company-level document)."""
+    return (site or "").split("·")[0].strip().upper() or None
+
+
 def tr_or(key: str, english: str) -> str:
     """tr(key), or `english` while the key isn't in the string tables yet
     (tr() itself falls back to the bare key, which reads badly)."""
