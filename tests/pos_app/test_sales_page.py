@@ -108,3 +108,19 @@ def test_closing_the_day_stores_the_count_against_the_sales(page):
     assert (saved.difference, saved.note, saved.closed_by) == (-2.0, "coin jar", "Selin Kaya · B-2")
     dialog.close()
     dialog.deleteLater()
+
+
+def test_a_free_item_can_be_returned_from_the_till(page):
+    product_repository.create(Product("GIFT", "Free sample", 0.0, 5, 1))
+    stock_repository.transfer(UNASSIGNED, SHELF, "GIFT", 5)
+    free = sales.finalize_transaction(
+        Transaction(items=[LineItem("GIFT", "Free sample", 0.0, 1)], payment_method="cash"), SHELF, CASHIER)
+    from pos_app.gui.sales_page import ReturnDialog
+
+    dialog = ReturnDialog(free, CASHIER, "Till 1")
+    dialog.quantity_spins["GIFT"].setValue(1)
+    dialog.reason_input.setText("Changed mind")
+    dialog.badge_input.setText("B-1")
+    dialog.pin_input.setText("482913")
+    assert dialog.submit() and dialog.sale_return.total == 0.0
+    assert stock_repository.quantity_at(SHELF, "GIFT") == 5

@@ -120,3 +120,15 @@ def test_reports_read_the_sale_net_of_refunds(sale):
     assert sales.list_between(*window) == []  # nothing left of that sale
     assert [r.number for r in returns.list_between(*window)] == ["RF-00001", "RF-00002"]
     assert sales.get_by_id(sale.id).total == 38.0  # the receipt itself is untouched
+
+
+def test_a_free_item_can_be_taken_back(sale):
+    product_repository.create(Product("GIFT", "Free sample", 0.0, 5, 1))
+    stock_repository.transfer(UNASSIGNED, SHELF, "GIFT", 5)
+    free = sales.finalize_transaction(
+        Transaction(items=[LineItem("GIFT", "Free sample", 0.0, 1)], payment_method="cash"), SHELF, CASHIER)
+    assert _shelf("GIFT") == 4
+    refund = returns.create(free.id, [("GIFT", 1, True)], "Changed mind", MANAGER, CASHIER)
+    assert refund.total == 0.0
+    assert _shelf("GIFT") == 5
+    assert_totals_consistent()
