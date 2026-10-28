@@ -65,6 +65,12 @@ class MainWindow(QMainWindow):
         self.setStyleSheet(f"QMainWindow {{ background-color: {ORGANIC_PALETTE['background']}; }}")
 
         self._home_identity = load_dealership_identity()  # what this install was set up as (None in a dev run)
+        if self._home_identity:
+            # The code as the database stores it (legacy lower-case rows included).
+            try:
+                self._home_identity["code"] = dealership_repository.canonical_code(self._home_identity["code"])
+            except DATABASE_ERRORS:
+                pass
         self._build_shell(self._home_identity)
 
         # Live: stock sent by the depot, a request answered, a sale rung up at

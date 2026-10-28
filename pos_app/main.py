@@ -8,7 +8,8 @@ from PySide6.QtWidgets import QApplication
 from pos_app.gui.main_window import MainWindow
 from pos_app.theme import ORGANIC_PALETTE
 from pos_app.gui.auth_flow import till_sign_in_dialog
-from database import settings_repository
+from database import dealership_repository, settings_repository
+from database.exceptions import DATABASE_ERRORS
 from shared import currency, i18n
 from shared.dealership_bootstrap import load_dealership_identity, register_pending_dealership
 from shared.theme import apply_theme
@@ -32,6 +33,11 @@ def main() -> int:
     # A cashier signs in before the till opens (pos_app/gui/auth_flow.py).
     identity = load_dealership_identity()
     code = identity["code"] if identity else None
+    if code:
+        try:
+            code = dealership_repository.canonical_code(code)
+        except DATABASE_ERRORS:
+            pass
     dialog = till_sign_in_dialog(code, identity["name"] if identity else "GPUSA")
     if not dialog.exec() or dialog.session is None:
         return 0
