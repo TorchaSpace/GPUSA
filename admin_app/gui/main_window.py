@@ -25,7 +25,16 @@ import sys
 
 from PySide6.QtGui import QKeySequence, QShortcut
 from admin_app.gui.motion import fade_in
-from PySide6.QtWidgets import QApplication, QDialog, QHBoxLayout, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QDialog,
+    QHBoxLayout,
+    QMainWindow,
+    QMessageBox,
+    QStackedWidget,
+    QVBoxLayout,
+    QWidget,
+)
 
 from database import account_repository, activity_repository, purchase_order_repository, settings_repository
 from database.exceptions import DATABASE_ERRORS
@@ -180,6 +189,11 @@ class MainWindow(QMainWindow):
         """The database changed under us: take in the news and reload what is on screen.
         Skipped while a dialog is open or on Settings, so nothing typed is disturbed."""
         if not self.isVisible():
+            return
+        if self.session is not None and not account_repository.is_session_valid(self.session, assume_on_error=True):
+            # Demoted or switched off on another machine: this window must not keep its power.
+            QMessageBox.warning(self, tr("admin.main.session_ended"), tr("err.session_invalid"))
+            self.sign_out()
             return
         self._center.poll()
         self._poll_pending_now()

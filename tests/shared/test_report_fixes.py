@@ -162,6 +162,7 @@ def test_excel_numeric_cells_are_numbers_and_text_stays_safe_text():
         previous=[_sale(date(2026, 8, 2), 100.0)],
     )
     report.sections.append(ReportSection("Plain", [("0012345", "=cmd()", "12", "3.50", "+8.4%", "-3.2%", "no prior data")]))
+    report.sections.append(ReportSection("Named", [("N1", "1907", "0.50", "-2+3 Kalem")]))
     with mock.patch("admin_app.export.excel_report_exporter.store_name", lambda: "=Store"):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "r.xlsx"
@@ -172,7 +173,7 @@ def test_excel_numeric_cells_are_numbers_and_text_stays_safe_text():
         label = row[0].value
         if label is not None:
             cells.setdefault(label, row)
-    assert sheet["A1"].value == "'=Store"
+    assert sheet["A1"].value == "=Store" and sheet["A1"].data_type == "s"  # shown as typed, never evaluated
     rev = cells["Revenue"][1]
     assert rev.value == 150.5 and isinstance(rev.value, float) and rev.number_format == "#,##0.00"
     sales = cells["Sales"][1]
@@ -181,8 +182,9 @@ def test_excel_numeric_cells_are_numbers_and_text_stays_safe_text():
     assert change.value == 0.505 and "%" in change.number_format
     plain = cells["0012345"]
     assert plain[0].data_type == "s" and plain[0].value == "0012345"  # first column stays text
-    assert plain[1].value == "'=cmd()"  # text is still formula-defused
-    assert plain[2].value == 12 and plain[3].value == 3.5 and plain[4].value == 0.084 and plain[5].value == -0.032
+    assert plain[1].value == "=cmd()" and plain[1].data_type == "s"  # a string cell: nothing to defuse, nothing runs
+    # plain strings stay text, however numeric they look; only the builders' NumericText becomes a number
+    assert [(c.value, c.data_type) for c in plain[2:6]] == [("12", "s"), ("3.50", "s"), ("+8.4%", "s"), ("-3.2%", "s")]
     assert plain[6].value == "no prior data"
 
 
@@ -255,3 +257,29 @@ def test_bundled_fonts_exist_and_ship_with_every_build():
     shipped = {rel for rel, _ in BUNDLED_DATA_FILES}
     assert {"shared/assets/fonts/DejaVuSans.ttf", "shared/assets/fonts/DejaVuSans-Bold.ttf"} <= shipped
     assert (files[0].parent / "LICENSE-DejaVu.txt").is_file()
+
+
+def test_excel_names_that_look_like_numbers_or_formulas_stay_plain_text(tmp_path):
+    from openpyxl import load_workbook
+
+    from admin_app.export.csv_report_exporter import export_to_csv
+    from admin_app.export.excel_report_exporter import export_to_excel
+    from shared.builders.report_builder import amount_text, count_text
+
+    names = ("1907", "0.50", '=HYPERLINK("http://x","y")', "-2+3 Kalem", "Çay\x07 Şeker")
+    report = ReportDocument("R", datetime(2026, 9, 3, 12, 0), [
+        ReportSection("Per-Product Breakdown", [(f"B{i}", name, count_text(3), amount_text(12.5)) for i, name in enumerate(names)]),
+    ])
+    with mock.patch("admin_app.export.excel_report_exporter.store_name", lambda: "Shop"):
+        export_to_excel(report, tmp_path / "r.xlsx")
+    export_to_csv(report, tmp_path / "r.csv")
+
+    rows = {r[0].value: r for r in load_workbook(tmp_path / "r.xlsx").active.iter_rows() if r[0].value}
+    cells = [rows[f"B{i}"][1] for i in range(len(names))]
+    assert [(c.value, c.data_type) for c in cells] == [
+        ("1907", "s"), ("0.50", "s"), ('=HYPERLINK("http://x","y")', "s"), ("-2+3 Kalem", "s"), ("Çay Şeker", "s"),
+    ]  # no leading apostrophe, control characters dropped
+    units, revenue = rows["B0"][2], rows["B0"][3]
+    assert (units.value, units.number_format) == (3, "#,##0") and units.data_type == "n"
+    assert (revenue.value, revenue.number_format) == (12.5, "#,##0.00") and revenue.data_type == "n"
+    assert "'=HYPERLINK" in (tmp_path / "r.csv").read_text(encoding="utf-8-sig")  # CSV keeps its defence

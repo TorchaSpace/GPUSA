@@ -23,6 +23,7 @@ from database.exceptions import (
 from database.stock_repository import change_level, level_in, require_location
 from shared.auth import AREA_POS, Actor, actor_label
 from shared.formatting import to_db_timestamp
+from shared.i18n import UserError
 from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, StockLocation, Transaction
 
 
@@ -43,6 +44,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     a dealership can change between that check and the charge. Inside the
     one BEGIN IMMEDIATE transaction it re-reads everything and refuses,
     writing nothing, with:
+    - UserError                if a quantity is not a whole number of at least 1;
     - DealershipInactiveError  if `location` is a dealership switched off in Admin;
     - SessionInvalidError      if `cashier` no longer has an active account
                                that may use POS (switched off, employee
@@ -70,12 +72,19 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     shared.models.PAYMENT_METHODS) is stored as given; anything else is a
     ValueError before the database is touched.
 
-    Returns the same Transaction with `id` and `created_at` populated.
+    Returns the same Transaction with `id` and `created_at` (LOCAL time, like
+    list_between) populated.
     """
     if not transaction.items:
         raise ValueError("Cannot finalize a transaction with no line items")
     if transaction.payment_method is not None and transaction.payment_method not in PAYMENT_METHODS:
         raise ValueError(f"Unknown payment method: {transaction.payment_method!r}")
+
+    for item in transaction.items:  # whole units, at least 1 - never 0, negative, fractional or True
+        if isinstance(item.quantity, bool) or int(item.quantity) != item.quantity or item.quantity <= 0:
+            raise UserError("err.sale_lines")
+    transaction = dataclasses.replace(
+        transaction, items=[dataclasses.replace(item, quantity=int(item.quantity)) for item in transaction.items])
 
     client_uuid = (transaction.client_uuid or "").strip() or uuid.uuid4().hex
     wanted: dict[str, int] = {}
@@ -171,7 +180,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
 
     return Transaction(
         id=transaction_id,
-        created_at=_parse_timestamp(created_at_row["created_at"]),
+        created_at=_as_local(_parse_timestamp(created_at_row["created_at"])),
         items=sold,
         dealership_code=None if location.is_unassigned else location.code,
         cashier=actor_label(cashier),
@@ -216,7 +225,7 @@ def get_by_id(transaction_id: int) -> Transaction:
         )
         for item in item_rows
     ]
-    return Transaction(id=header["id"], created_at=_parse_timestamp(header["created_at"]), items=items,
+    return Transaction(id=header["id"], created_at=_as_local(_parse_timestamp(header["created_at"])), items=items,
                        dealership_code=header["dealership_code"], cashier=header["cashier"],
                        payment_method=header["payment_method"], client_uuid=header["client_uuid"])
 

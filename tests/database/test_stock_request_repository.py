@@ -186,3 +186,51 @@ def test_only_one_open_request_is_enforced_by_the_database_too(world):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO stock_requests (dealership_code, dealership_name, product_barcode, "
                          "product_name, quantity) VALUES ('001', 'Harbor Point', 'oil', 'Oil', 2)")
+
+
+def test_a_shipment_without_the_requested_product_is_refused(world):
+    request = requests.create("001", "OIL", 17)
+    with pytest.raises(ValueError) as excinfo:
+        _ship([request.id], lines=(("RICE", 5),))
+    assert request.number in str(excinfo.value)
+    assert requests.get(request.id).status == "open" and requests.get(request.id).shipment_id is None
+    assert ships.list_shipments() == []  # the shipment was rolled back with it
+
+
+def test_the_product_match_ignores_letter_case(world):
+    request = requests.create("001", "OIL", 17)
+    shipment = _ship([request.id], lines=(("oil", 3),))
+    assert requests.get(request.id).status == "planned" and requests.get(request.id).shipment_id == shipment.id
+
+def _admin_actor() -> Actor:
+    from database import account_repository
+
+    return account_repository.create_first_admin("A-1", "Aylin Admin", "482913").actor
+
+
+def test_removing_a_dealership_cancels_its_open_requests_and_a_new_one_with_the_code_starts_clean(world):
+    dealership_repository.create(Dealership(code="D1", name="Old Shop", region="Metro", city="X"))
+    open_request = requests.create("D1", "RICE", 5, None, CASHIER)
+    admin = _admin_actor()
+
+    dealership_repository.delete("D1", admin)
+
+    closed = requests.get(open_request.id)
+    assert closed.status == "cancelled" and closed.decided_by == admin.label
+    assert closed.decision_note == "Dealership removed"
+    dealership_repository.create(Dealership(code="D1", name="New Shop", region="Metro", city="X"))
+    assert requests.list_open() == [] or all(r.dealership_code != "D1" for r in requests.list_open())
+    assert requests.count_open("D1") == 0
+    assert requests.create("D1", "RICE", 2, None, CASHIER).status == "open"  # no clash with the old one
+
+
+def test_removing_a_product_cancels_its_open_requests(world):
+    product_repository.create(Product("ZZ", "Zzz", 1, 0, 0))
+    open_request = requests.create("001", "ZZ", 4, None, CASHIER)
+    admin = _admin_actor()
+
+    product_repository.delete("ZZ", admin)
+
+    closed = requests.get(open_request.id)
+    assert closed.status == "cancelled" and closed.decided_by == admin.label
+    assert closed.decision_note == "Product removed"

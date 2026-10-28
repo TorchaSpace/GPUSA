@@ -53,3 +53,17 @@ def test_sale_tile_decor_tracks_size(home):
     assert r == 130
     assert cx * tile.width() == pytest.approx(tile.width() - 60)
     assert cy * tile.height() == pytest.approx(60)
+
+
+def test_a_locked_database_does_not_break_the_badges(home, monkeypatch):
+    import sqlite3
+
+    import pos_app.gui.pages.home_page as module
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(module.stock_repository, "products_at", locked)
+    monkeypatch.setattr(module.shipment_repository, "count_incoming", locked)
+    home.reload_badges()  # keeps the page up instead of raising
+    assert home._out_badge.text().startswith("0")

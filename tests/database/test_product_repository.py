@@ -113,3 +113,22 @@ def test_delete_removes_product():
 def test_delete_missing_raises():
     with pytest.raises(ProductNotFoundError):
         product_repository.delete("does-not-exist")
+
+
+def test_cart_issue_messages_follow_the_language():
+    from shared import i18n
+
+    lines = [("A", 5.0, 1), ("B", 5.0, 9), ("C", 5.0, 1)]
+    current = {"A": Product("A", "Un", 6.0, 10, 1), "B": Product("B", "Yağ", 5.0, 3, 1), "C": None}
+    previous = i18n.current_language()
+    try:
+        i18n.set_language("en")
+        en = [i.message for i in product_repository.cart_issues(lines, current)]
+        assert en == ["The price of Un changed from $5.00 to $6.00.", "Only 3 of Yağ left on this shelf.",
+                      "C is no longer sold - it was removed or deactivated."]
+        i18n.set_language("tr")
+        tr_ = [i.message for i in product_repository.cart_issues(lines, current)]
+        assert tr_ == ["Un fiyatı $5,00 iken $6,00 oldu.", "Bu rafta Yağ ürününden yalnızca 3 adet kaldı.",
+                       "C artık satılmıyor - kaldırıldı veya devre dışı bırakıldı."]
+    finally:
+        i18n.set_language(previous)

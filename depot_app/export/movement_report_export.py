@@ -5,6 +5,7 @@ every row) or PDF (reportlab: the summary table, then the movements)."""
 from __future__ import annotations
 
 from pathlib import Path
+from xml.sax.saxutils import escape
 
 from shared import i18n
 from shared.builders.movement_report_builder import MovementReport
@@ -106,12 +107,12 @@ def export_pdf(report: MovementReport, path: Path) -> None:
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
     ])
     story = [
-        Paragraph(report.title, styles["Title"]),
+        Paragraph(escape(report.title), styles["Title"]),
         Paragraph(
-            tr("depot.rep.pdf_summary").format(
+            escape(tr("depot.rep.pdf_summary").format(  # Paragraph reads its text as markup
                 period=report.period_text, units_in=f"{report.units_in:,}", units_out=f"{report.units_out:,}",
                 net=f"{report.net:+,}", count=f"{len(report.movements):,}",
-            ),
+            )),
             styles["Normal"],
         ),
         Spacer(1, 0.4 * cm),
@@ -120,15 +121,15 @@ def export_pdf(report: MovementReport, path: Path) -> None:
         summary = Table([summary_headers(report)] + summary_rows(report), repeatRows=1)
         summary.setStyle(style)
         summary.setStyle(TableStyle([("FONTNAME", (0, -1), (-1, -1), bold)]))
-        story += [summary, Spacer(1, 0.6 * cm), Paragraph(tr("depot.rep.sheet_movements"), styles["Heading2"])]
+        story += [summary, Spacer(1, 0.6 * cm), Paragraph(escape(tr("depot.rep.sheet_movements")), styles["Heading2"])]
         cell = styles["Normal"].clone("cell", fontSize=7, leading=8)
         rows = [movement_headers()] + [
-            [Paragraph(str(v), cell) if i in (3, 6) else v for i, v in enumerate(movement_row(m))]
+            [Paragraph(escape(str(v)), cell) if i in (3, 6) else v for i, v in enumerate(movement_row(m))]
             for m in report.movements
         ]
         detail = Table(rows, repeatRows=1, colWidths=[2.8 * cm, 1.8 * cm, 2.4 * cm, 5.2 * cm, 1.2 * cm, 3 * cm, 6.5 * cm, 3.6 * cm])
         detail.setStyle(style)
         story.append(detail)
     else:
-        story.append(Paragraph(tr("depot.rep.pdf_none"), styles["Normal"]))
+        story.append(Paragraph(escape(tr("depot.rep.pdf_none")), styles["Normal"]))
     doc.build(story)

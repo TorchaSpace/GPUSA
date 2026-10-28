@@ -165,3 +165,52 @@ def test_deactivated_products_are_not_offered_for_a_shipment(page):
     page.reload_choices()
     codes = [page._product_input.itemData(i) for i in range(page._product_input.count())]
     assert "PLT-4410" not in codes and "BOX-2218" in codes
+
+
+def _request_for(barcode, quantity=5):
+    from database import stock_request_repository
+
+    return stock_request_repository.create("001", barcode, quantity)
+
+
+def test_removing_a_requested_line_leaves_the_request_open(page):
+    from database import stock_request_repository
+
+    request = _request_for("BOX-2218")
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    page._lines_table.selectRow(0)
+    page._remove_line()
+    page._carrier_input.setText("Ridgeline Freight")
+    page._product_input.setCurrentIndex(page._product_input.findData("PLT-4410"))
+    page._add_line()
+    page._create()
+
+    [shipment] = ships.list_shipments()
+    assert [l.product_barcode for l in shipment.lines] == ["PLT-4410"]
+    assert stock_request_repository.get(request.id).status == "open"
+
+
+def test_a_request_still_goes_along_with_its_line(page):
+    from database import stock_request_repository
+
+    request = _request_for("BOX-2218")
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    page._carrier_input.setText("Ridgeline Freight")
+    page._create()
+    assert stock_request_repository.get(request.id).status == "planned"
+
+
+def test_a_request_raises_an_existing_smaller_line_to_what_it_asked(page):
+    page._product_input.setCurrentIndex(page._product_input.findData("BOX-2218"))
+    page._qty_input.setValue(1)
+    page._add_line()
+    request = _request_for("BOX-2218", 5)
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    assert page.draft() == [("BOX-2218", 5)]
+    # a bigger line is left alone
+    page._product_input.setCurrentIndex(page._product_input.findData("PLT-4410"))
+    page._qty_input.setValue(9)
+    page._add_line()
+    other = _request_for("PLT-4410", 4)
+    page.prefill("001", [("PLT-4410", "Pallet wrap", 4)], [other.id])
+    assert dict(page.draft())["PLT-4410"] == 9

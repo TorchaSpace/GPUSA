@@ -228,10 +228,12 @@ def create(
             if origin_code:
                 require_location(conn, StockLocation.warehouse(origin_code))
             dealership = conn.execute(
-                "SELECT name FROM dealerships WHERE code = ?", (dealership_code,)
+                "SELECT name, is_active FROM dealerships WHERE code = ?", (dealership_code,)
             ).fetchone()
             if dealership is None:
                 raise DealershipNotFoundError(dealership_code)
+            if not dealership["is_active"]:
+                raise UserError("err.shipment_dealership_inactive", name=dealership["name"])
             names = {}
             canonical: dict[str, int] = {}
             for barcode, qty in merged.items():

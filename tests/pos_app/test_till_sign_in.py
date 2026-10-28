@@ -153,3 +153,73 @@ def test_an_open_sale_blocks_switching_shop(qapp, cashier, monkeypatch):
     window._switch_checked("D-X")
     assert called == [] and window._dealership_code is None
     window.close()
+
+
+def test_a_locked_database_on_sign_out_does_not_block_the_shift_change(qapp, cashier, monkeypatch):
+    import sqlite3
+
+    import pos_app.gui.main_window as mw
+
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    window._idle_lock.stop()
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(account_repository, "sign_out", locked)
+    monkeypatch.setattr(mw, "till_sign_in_dialog", lambda *a, **k: _FakeDialog(None))
+    monkeypatch.setattr(mw.QApplication, "quit", staticmethod(lambda: None))
+    window.switch_cashier()  # must reach the sign-in dialog rather than raise
+    assert window.session is None
+    window.close()
+
+
+def test_the_next_cashier_signs_in_at_the_home_shop_and_the_till_goes_back_to_it(qapp, cashier, monkeypatch):
+    from database import dealership_repository
+    from shared.models import Dealership
+    import pos_app.gui.main_window as mw
+
+    for code in ("D-A", "D-B"):
+        dealership_repository.create(Dealership(code=code, name=f"Shop {code}", region="Metro", city="Town"))
+    monkeypatch.setattr(mw, "load_dealership_identity",
+                        lambda: {"code": "D-A", "name": "Shop D-A", "location_line": "Town · Metro"})
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    window._idle_lock.stop()
+    assert window.switch_dealership("D-B") and window._dealership_code == "D-B"
+
+    asked = []
+    nxt = account_repository.authenticate("A-1", "482913", auth.AREA_POS, "POS")
+    monkeypatch.setattr(mw, "till_sign_in_dialog", lambda code, name, *a, **k: (asked.append((code, name)), _FakeDialog(nxt))[1])
+    window.switch_cashier()
+    assert asked == [("D-A", "Shop D-A")]
+    assert window._dealership_code == "D-A" and window.session == nxt
+    assert window._header._cashier_label.text() == "Erol"
+
+def test_a_lower_case_setup_code_still_sells_and_receives(qapp, cashier, monkeypatch):
+    """The sidecar may say "ist-01"; the shop is stored as IST-01 and the till must still find it."""
+    from database import dealership_repository, product_repository, stock_repository
+    from pos_app.gui import main_window as pos_main_window
+    from shared.models import Dealership, Product, StockLocation
+    from tests.stock_invariant import assert_totals_consistent
+
+    dealership_repository.create(Dealership(code="ist-01", name="Kadikoy", region="Coastal", city="Istanbul"))
+    product_repository.create(Product("P1", "Oil", 5.0, 0, 1))
+    monkeypatch.setattr(
+        pos_main_window, "load_dealership_identity",
+        lambda: {"code": "ist-01", "name": "Kadikoy", "location_line": "Istanbul"},
+    )
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = pos_main_window.MainWindow(session)
+    window.show()
+    pump(qapp)
+
+    assert window._dealership_code == "IST-01"
+    shelf = StockLocation.dealership(window._dealership_code)
+    stock_repository.receive(shelf, "P1", 5)
+    assert stock_repository.quantity_at(shelf, "P1") == 5
+    assert_totals_consistent()
+    window.close()

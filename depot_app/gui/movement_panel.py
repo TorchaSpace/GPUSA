@@ -44,6 +44,7 @@ from shared.models import UNASSIGNED, StockLocation
 from shared.i18n import tr
 from shared.textcase import upper
 from shared.warehousing import tr_or
+from shared.formatting import local_time_text
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.floor_style import floor_table, input_style, labelled, notice_style
 from depot_app.gui.components.industry_button import IndustryButton
@@ -237,7 +238,9 @@ class MovementPanel(QWidget):
         actor = None
         if operator_badge:
             try:
-                actor = attendance_repository.operator_actor(operator_badge)
+                actor = attendance_repository.operator_actor(
+                    operator_badge,
+                    warehouse_code=self._location.code if self._location.kind == "warehouse" else None)
             except DATABASE_ERRORS as exc:  # unknown badge / not checked in / deactivated
                 self._show_error(str(exc))
                 return
@@ -340,8 +343,7 @@ class MovementPanel(QWidget):
         sign = "+" if self._direction == "receive" else "\u2212"
         qty_color = QColor(p["accent_900"] if self._direction == "receive" else p["text_primary"])
         for row, movement in enumerate(movements):
-            time_text = movement["created_at"].split("T")[-1][:8] if "T" in movement["created_at"] else movement["created_at"]
-            when = QTableWidgetItem(time_text)
+            when = QTableWidgetItem(local_time_text(movement["created_at"]))  # stored UTC -> this PC's clock
             when.setForeground(QColor(p["text_secondary"]))
             self._table.setItem(row, 0, when)
             sku = QTableWidgetItem(f"{movement['barcode']}  \u00b7  {movement['product_name']}")

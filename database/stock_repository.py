@@ -191,6 +191,17 @@ def receive_in(conn: sqlite3.Connection, location: StockLocation, barcode: str, 
     return new
 
 
+def _alert(conn: sqlite3.Connection, location: StockLocation, barcode: str, before: int, after: int,
+           actor: Actor | None) -> None:
+    """Low/out notification when stock LEAVES a real place (not the unplaced pile) and crosses
+    its reorder level; the Admin bell and the Depot slide-in cards read these."""
+    if location.is_unassigned:
+        return
+    from database import activity_repository  # local: activity_repository reads the same tables
+    activity_repository.stock_crossing(conn, location, barcode, before, after,
+                                       source="depot" if location.kind == "warehouse" else "admin", actor=actor)
+
+
 def _write(fn):
     """Run fn(conn) inside one BEGIN IMMEDIATE transaction."""
     with connection_scope() as conn:
@@ -241,6 +252,7 @@ def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | N
         new = change_level(conn, location, code, -quantity, change_total=True)
         log_movement(conn, location, code, "dispatch", quantity, reason="dispatch", note=_clean(note),
                      reference=_clean(reference), actor=actor, bin_code=bin_code)
+        _alert(conn, location, code, new + quantity, new, actor)
         return new
 
     return _write(run)
@@ -262,13 +274,14 @@ def transfer(
         require_location(conn, destination)
         code = resolve_product(conn, barcode)[0]
         require_can_hold(conn, destination, quantity)
-        change_level(conn, source, code, -quantity, change_total=False)
+        left = change_level(conn, source, code, -quantity, change_total=False)
         change_level(conn, destination, code, quantity, change_total=False)
         note_text = _clean(note)
         log_movement(conn, source, code, "dispatch", quantity, reason="transfer", note=note_text,
                      reference=destination.label, actor=actor)
         log_movement(conn, destination, code, "receive", quantity, reason="transfer", note=note_text,
                      reference=source.label, actor=actor)
+        _alert(conn, source, code, left + quantity, left, actor)
 
     _write(run)
 
@@ -296,6 +309,7 @@ def distribute(source: StockLocation, barcode: str, allocations: list[tuple[Stoc
         code = resolve_product(conn, barcode)[0]
         note_text = _clean(note)
         total = 0
+        before = level_in(conn, source, code)
         for destination, qty in legs:
             require_location(conn, destination)
             require_can_hold(conn, destination, qty)
@@ -306,6 +320,7 @@ def distribute(source: StockLocation, barcode: str, allocations: list[tuple[Stoc
             log_movement(conn, destination, code, "receive", qty, reason="transfer", note=note_text,
                          reference=source.label, actor=actor)
             total += qty
+        _alert(conn, source, code, before, before - total, actor)
         return total
 
     return _write(run)
@@ -337,6 +352,8 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
                 change_level(conn, location, code, diff - absorbed, change_total=True)
             log_movement(conn, location, code, "receive" if diff > 0 else "dispatch", abs(diff),
                          reason="count", note=_clean(note) or f"Counted {counted}", actor=actor)
+            if diff < 0:
+                _alert(conn, location, code, counted - diff, counted, actor)
         return diff
 
     return _write(run)

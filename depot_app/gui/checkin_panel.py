@@ -142,6 +142,10 @@ class CheckInPanel(BlueprintFrame):
         self.reload()
         self.attendance_changed.emit()
 
+    def _code(self) -> str | None:
+        """This depot's warehouse code: only its own people may punch here (None = unscoped)."""
+        return self._warehouse.code if self._warehouse is not None else None
+
     def _on_check_in(self) -> None:
         self._punch(self._do_in)
 
@@ -149,11 +153,11 @@ class CheckInPanel(BlueprintFrame):
         self._punch(self._do_out)
 
     def _do_in(self, badge_id: str) -> None:
-        attendance_repository.check_in(badge_id)
+        attendance_repository.check_in(badge_id, warehouse_code=self._code())
         self._say(tr("depot.checkin.checked_in_msg").format(badge=badge_id, time=datetime.now().strftime("%H:%M")), ok=True)
 
     def _do_out(self, badge_id: str) -> None:
-        attendance_repository.check_out(badge_id)
+        attendance_repository.check_out(badge_id, warehouse_code=self._code())
         self._say(tr("depot.checkin.checked_out_msg").format(badge=badge_id, time=datetime.now().strftime("%H:%M")), ok=True)
 
     def _say(self, text: str, ok: bool) -> None:

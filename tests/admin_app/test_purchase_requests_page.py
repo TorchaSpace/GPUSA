@@ -12,6 +12,8 @@ from database import product_repository, purchase_order_repository as po_repo
 from shared import current_session
 from shared.auth import Actor
 from shared.models import PriceRange, Product
+from tests.ledger_support import ensure_admin_account
+from tests.po_support import seed_admin
 
 ADMIN = Actor(badge_id="A-1", name="Ada Admin")
 
@@ -24,11 +26,16 @@ def _isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _signed_in(monkeypatch):
-    monkeypatch.setattr(current_session, "actor", lambda: ADMIN)
+    def actor():
+        ensure_admin_account(ADMIN)  # admin writes re-check the actor against the database (idempotent)
+        return ADMIN
+
+    monkeypatch.setattr(current_session, "actor", actor)
 
 
 @pytest.fixture
 def held_orders():
+    seed_admin()  # approve()/reject() check the decider's role in the database
     product_repository.create(Product("PLT-4410", "Pallet wrap 500mm", 900, 5, 10))
     po_repo.set_price_range(PriceRange("PLT-4410", 520, 680))
     first = po_repo.submit("PLT-4410", "Kuzey", 40, 742.5, "WH-01")

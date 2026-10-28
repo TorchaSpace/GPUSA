@@ -475,7 +475,9 @@ class PurchaseRequestsPage(AdminPage):
 
     def _save_range(self) -> None:
         try:
-            purchase_order_repository.set_price_range(self._range_popup.result_range())
+            purchase_order_repository.set_price_range(
+                self._range_popup.result_range(), by=current_session.actor()
+            )
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._ranges_hint.setText(tr("admin.purchase.msg_save_failed").format(error=exc))
             return
@@ -488,7 +490,7 @@ class PurchaseRequestsPage(AdminPage):
             self._ranges_hint.setText(tr("admin.purchase.select_range"))
             return
         try:
-            purchase_order_repository.delete_price_range(band.product_barcode)
+            purchase_order_repository.delete_price_range(band.product_barcode, by=current_session.actor())
         except DATABASE_ERRORS as exc:
             self._ranges_hint.setText(tr("admin.purchase.remove_failed").format(error=exc))
             return

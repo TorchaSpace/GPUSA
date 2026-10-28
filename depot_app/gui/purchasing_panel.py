@@ -76,6 +76,7 @@ from shared.currency import format_money
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import tr
+from shared.warehousing import site_code
 from shared.models import PriceRange, Product, PurchaseOrder, StockLocation, hold_reason_for
 from shared.textcase import upper
 from shared import current_session
@@ -97,7 +98,7 @@ _ROW_HEIGHT = 52  # room for the action buttons
 
 def warehouse_code_of(site: str) -> str:
     """"WH-01" out of the "WH-01 · İstanbul Merkez" label orders are stamped with."""
-    return (site or "").split("·")[0].strip().upper()
+    return site_code(site) or ""
 
 
 def _order_total(price: float, quantity: int) -> float:

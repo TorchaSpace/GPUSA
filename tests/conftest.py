@@ -46,6 +46,17 @@ def _fast_pin_hashing(monkeypatch):
 
 
 @pytest.fixture(autouse=True)
+def _database_not_pinned():
+    """database.connection pins the file per process once an app's main() ran;
+    a test that boots main() must not leave the next test on its file."""
+    import database.connection as connection
+
+    connection._pinned = None
+    yield
+    connection._pinned = None
+
+
+@pytest.fixture(autouse=True)
 def _nobody_signed_in():
     """shared.current_session is process-wide; don't let one test's
     sign-in leak into the next."""

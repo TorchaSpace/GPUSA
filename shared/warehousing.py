@@ -84,12 +84,26 @@ def normalise_barcode(barcode) -> str:
     return text
 
 
+def clean_code(code) -> str:
+    """A warehouse/dealership code as stored: trimmed, upper-case ("ist-01 " is
+    "IST-01"). Plain str.upper on purpose - codes are identifiers, not UI text,
+    so Turkish casing (i -> İ) must not apply. Blank stays blank."""
+    return str(code or "").strip().upper()
+
+
 def normalise_code(code, what: str = "code") -> str:
     """Warehouse/dealership codes: trimmed, upper-case. ValueError if blank."""
-    text = str(code or "").strip().upper()
+    text = clean_code(code)
     if not text:
         raise UserError("err.code_required", what=enum_label("kind", what))
     return text
+
+
+def site_code(site: str | None) -> str | None:
+    """"WH-01" out of the "WH-01 · İstanbul Merkez" label purchase orders and ledger entries are
+    stamped with (so renaming the warehouse doesn't orphan them); a label without a "·" is its own
+    code; blank -> None (a company-level document)."""
+    return (site or "").split("·")[0].strip().upper() or None
 
 
 def tr_or(key: str, english: str) -> str:

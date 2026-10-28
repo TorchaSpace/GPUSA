@@ -214,16 +214,45 @@ def decline(request_id: int, note: str | None = None, actor: Actor | None = None
     return _close(request_id, "declined", "declined", actor, note)
 
 
+def cancel_open_for_dealership(conn: sqlite3.Connection, dealership_code: str, actor: Actor | None = None) -> int:
+    """Inside the transaction that removes a dealership: its still-open
+    requests are closed as cancelled (a new shop that later reuses the code
+    must not inherit them). Planned ones stay - their shipment owns them.
+    Returns how many were cancelled."""
+    return conn.execute(
+        "UPDATE stock_requests SET status = 'cancelled', decided_by = ?, decision_note = 'Dealership removed', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE dealership_code = ? AND status = 'open'",
+        (actor_label(actor), dealership_code),
+    ).rowcount
+
+
+def cancel_open_for_product(conn: sqlite3.Connection, barcode: str, actor: Actor | None = None) -> int:
+    """Inside the transaction that removes a product: open requests for it
+    are closed as cancelled instead of dangling on a barcode that no longer
+    exists. Returns how many were cancelled."""
+    return conn.execute(
+        "UPDATE stock_requests SET status = 'cancelled', decided_by = ?, decision_note = 'Product removed', "
+        "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE product_barcode = ? COLLATE NOCASE "
+        "AND status = 'open'",
+        (actor_label(actor), barcode),
+    ).rowcount
+
+
 def mark_planned(conn: sqlite3.Connection, request_ids: list[int], shipment_id: int, dealership_code: str,
                  actor: Actor | None = None) -> None:
     """Inside the caller's transaction (shipment_repository.create): tie
     open requests to the shipment just planned. Each must be open and from
-    the shipment's dealership, or the whole shipment is refused."""
+    the shipment's dealership and have its product on a shipment line, or the whole
+    shipment is refused."""
     for request_id in dict.fromkeys(request_ids):
         current = _fetch(conn, request_id)
         if current.dealership_code != dealership_code:
             raise UserError("err.stock_request_other_dealership", number=current.number,
                             dealership=current.dealership_name)
+        if conn.execute("SELECT 1 FROM shipment_lines WHERE shipment_id = ? AND product_barcode = ? COLLATE NOCASE",
+                        (shipment_id, current.product_barcode)).fetchone() is None:
+            raise UserError("err.stock_request_product_missing", number=current.number,
+                            product=current.product_name)
         cursor = conn.execute(
             "UPDATE stock_requests SET status = 'planned', shipment_id = ?, decided_by = ?, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND status = 'open'",

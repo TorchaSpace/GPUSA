@@ -44,3 +44,17 @@ def test_sale_after_local_midnight_counts_on_the_local_day(istanbul):
     fourth = transaction_repository.list_between(datetime(2026, 10, 4), datetime(2026, 10, 5))
     assert len(fifth) == 1 and fourth == []
     assert fifth[0].created_at == datetime(2026, 10, 5, 1, 30)
+
+
+def test_a_finalized_and_a_reloaded_sale_carry_local_time_not_utc(istanbul):
+    from database import product_repository
+    from shared.builders.receipt_builder import build_receipt
+    from shared.models import LineItem, Product, Transaction
+
+    product_repository.create(Product("SKU-1", "Widget", 5.00, 10, 2))
+    sale = transaction_repository.finalize_transaction(Transaction(items=[LineItem("SKU-1", "Widget", 5.00, 1)]))
+    stored = transaction_repository.get_by_id(sale.id)
+    now = datetime.now()
+    assert abs((sale.created_at - now).total_seconds()) < 60  # UTC would be 3 h off in Istanbul
+    assert stored.created_at == sale.created_at
+    assert sale.created_at.strftime("%Y-%m-%d %H:%M:%S") in build_receipt(stored).lines

@@ -216,3 +216,85 @@ def test_admin_left_alone_signs_out_and_asks_again(qapp, monkeypatch):
     assert window._idle_lock.check() and signed_out == [True]
     window._idle_lock.stop()
     window.close()
+
+
+def test_a_session_ended_elsewhere_signs_the_window_out_on_the_next_refresh(qapp, monkeypatch):
+    from PySide6.QtWidgets import QMessageBox
+
+    from admin_app.gui.main_window import MainWindow
+
+    boss = account_repository.create_first_admin("A-1", "Erol", "482913")
+    employee_repository.create(Employee("B-2", "Selin Kaya", "Management", "Dealership", "HQ"))
+    account_repository.create_account("B-2", "admin", "246813")
+    session = account_repository.authenticate("B-2", "246813", auth.AREA_ADMIN, "Admin")
+    window = MainWindow(session)
+    window._watcher.stop()
+    window.show()
+    pump(qapp)
+    signed_out, warnings = [], []
+    monkeypatch.setattr(window, "sign_out", lambda: signed_out.append(True))
+    monkeypatch.setattr(QMessageBox, "warning", lambda *args: warnings.append(args[2]))
+
+    window.refresh_live()
+    assert signed_out == []  # still a live administrator
+
+    account_repository.set_role("B-2", "cashier", by=boss.actor)
+    window.refresh_live()
+    assert signed_out == [True] and len(warnings) == 1
+    window._idle_lock.stop()
+    window.close()
+
+
+def test_a_locked_database_does_not_sign_anybody_out(qapp, monkeypatch):
+    session = account_repository.create_first_admin("A-1", "Erol", "482913")
+
+    def locked():
+        raise __import__("sqlite3").OperationalError("database is locked")
+
+    monkeypatch.setattr(account_repository, "connection_scope", locked)
+    assert account_repository.is_session_valid(session) is False
+    assert account_repository.is_session_valid(session, assume_on_error=True) is True
+
+
+def _boot(monkeypatch, qapp, module):
+    from PySide6.QtWidgets import QMessageBox
+
+    from unittest import mock
+
+    shown = []
+    # A stand-in application: the real one is shared by the whole session and must not be re-themed.
+    monkeypatch.setattr(module, "QApplication", lambda argv: mock.MagicMock())
+    monkeypatch.setattr(module, "apply_theme", lambda *a, **k: None)
+    if hasattr(module, "install_dialog_fade"):
+        monkeypatch.setattr(module, "install_dialog_fade", lambda app: None)
+    monkeypatch.setattr(QMessageBox, "critical", lambda *args: shown.append(args))
+    monkeypatch.setattr(module, "daily_backup", lambda: None)
+    return shown
+
+
+@pytest.mark.parametrize("module_name", ["admin_app.main", "pos_app.main", "depot_app.main"])
+def test_a_damaged_database_file_shows_a_dialog_instead_of_crashing(qapp, tmp_path, monkeypatch, module_name):
+    import importlib
+
+    module = importlib.import_module(module_name)
+    (tmp_path / "t.db").write_bytes(b"this is not a sqlite database " * 50)
+    shown = _boot(monkeypatch, qapp, module)
+
+    assert module.main() == 1
+    assert len(shown) == 1
+    assert "t.db" in shown[0][2] and "backups" in shown[0][2]
+
+
+def test_a_locked_database_at_sign_in_shows_the_dialog_too(qapp, monkeypatch):
+    import sqlite3
+
+    import admin_app.main as admin_main
+
+    shown = _boot(monkeypatch, qapp, admin_main)
+
+    def locked():
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(admin_main, "sign_in", locked)
+    assert admin_main.main() == 1
+    assert len(shown) == 1 and "database is locked" in shown[0][2]

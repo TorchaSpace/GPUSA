@@ -51,7 +51,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database import dealership_repository, shipment_repository, stock_repository
+from database import dealership_repository, shipment_repository, stock_repository, stock_request_repository
 from database.exceptions import DATABASE_ERRORS, InsufficientStockError
 from depot_app.gui.components.blueprint_frame import BlueprintFrame
 from depot_app.gui.components.industry_button import IndustryButton
@@ -310,9 +310,10 @@ class ShipmentsPage(QWidget):
                 product_index = self._product_input.findData(barcode)
                 shown = self._product_input.itemText(product_index) if product_index >= 0 else label
                 self._draft_lines.append((barcode, shown, qty))
-            elif not request_ids:  # a shortage top-up adds to the line
+            else:
                 b, shown, old = self._draft_lines[existing]
-                self._draft_lines[existing] = (b, shown, old + qty)
+                # a shortage top-up adds to the line; a request needs at least what it asked for
+                self._draft_lines[existing] = (b, shown, max(old, qty) if request_ids else old + qty)
         self._draft_request_ids = list(dict.fromkeys(self._draft_request_ids + list(request_ids)))
         self._render_draft()
 
@@ -322,8 +323,26 @@ class ShipmentsPage(QWidget):
     def _remove_line(self) -> None:
         rows = self._lines_table.selectionModel().selectedRows()
         if rows:
-            del self._draft_lines[rows[0].row()]
+            removed = self._draft_lines.pop(rows[0].row())[0]
+            # a request for the removed product has nothing to ride on any more
+            self._draft_request_ids = self._requests_with_a_line(self._draft_request_ids, exclude=removed)
             self._render_draft()
+
+    def _requests_with_a_line(self, request_ids: list[int], exclude: str | None = None) -> list[int]:
+        """The ids whose product still has a line in the draft (and isn't `exclude`)."""
+        have = {barcode.upper() for barcode, _label, _qty in self._draft_lines}
+        if exclude is not None:
+            have.discard(exclude.upper())
+        kept = []
+        for request_id in request_ids:
+            try:
+                product = stock_request_repository.get(request_id).product_barcode
+            except (ValueError, *DATABASE_ERRORS):
+                kept.append(request_id)  # unknown here: let the repository judge it
+                continue
+            if product.upper() in have:
+                kept.append(request_id)
+        return kept
 
     def _render_draft(self) -> None:
         self._lines_table.setRowCount(len(self._draft_lines))
@@ -353,7 +372,8 @@ class ShipmentsPage(QWidget):
                 eta=_from_qdatetime(self._eta_input.dateTime()),
                 lines=[(barcode, qty) for barcode, _label, qty in self._draft_lines],
                 # The requests only go along while the form still goes to the shop that asked.
-                request_ids=self._draft_request_ids if code == self._draft_request_dealership else None,
+                request_ids=(self._requests_with_a_line(self._draft_request_ids)
+                             if code == self._draft_request_dealership else None),
                 actor=current_session.actor(),
             )
         except (ValueError, *DATABASE_ERRORS) as exc:  # blank carrier, bad ETA, inactive product, ...

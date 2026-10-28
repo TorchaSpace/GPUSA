@@ -120,3 +120,32 @@ def test_delete_removes_dealership():
 def test_delete_missing_raises():
     with pytest.raises(DealershipNotFoundError):
         dealership_repository.delete("does-not-exist")
+
+
+def _raw_insert(code: str) -> None:
+    with connection.connection_scope() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        conn.execute(
+            "INSERT INTO dealerships (code, name, region, city, is_active) VALUES (?, 'Legacy', 'Coastal', 'X', 1)",
+            (code,),
+        )
+        conn.execute("COMMIT")
+
+
+def test_canonical_code_returns_the_stored_code():
+    _raw_insert("ist-01")  # a row saved before codes were upper-cased
+    dealership_repository.create(_make_dealership("CST-04"))
+
+    assert dealership_repository.canonical_code("IST-01") == "ist-01"
+    assert dealership_repository.canonical_code(" cst-04 ") == "CST-04"
+    assert dealership_repository.canonical_code("nope-9") == "NOPE-9"  # unknown: just normalised
+
+
+def test_delete_finds_a_legacy_lower_case_row_by_any_case():
+    _raw_insert("ist-01")
+
+    dealership_repository.delete("IST-01")
+
+    assert dealership_repository.list_all() == []
+    with pytest.raises(DealershipNotFoundError):
+        dealership_repository.delete("IST-01")

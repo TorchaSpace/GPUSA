@@ -61,9 +61,10 @@ Version 1 - per-location stock (the Warehouse slice):
 
 from __future__ import annotations
 
+import re
 import sqlite3
 
-LATEST_VERSION = 9
+LATEST_VERSION = 10
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -328,25 +329,89 @@ def _to_v9(conn: sqlite3.Connection) -> None:
                  "WHERE client_uuid IS NOT NULL")
 
 
-_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9}
+_SALE_RETURNS_V10 = """
+CREATE TABLE sale_returns_v10 (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    transaction_id  INTEGER NOT NULL REFERENCES transactions(id),
+    dealership_code TEXT,
+    total           REAL NOT NULL CHECK (total >= 0),
+    payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash')),
+    reason          TEXT NOT NULL,
+    requested_by    TEXT,
+    approved_by     TEXT,
+    client_uuid     TEXT
+)"""
+
+_SALE_RETURN_INDEXES = (
+    "CREATE INDEX IF NOT EXISTS idx_sale_returns_transaction_id ON sale_returns(transaction_id)",
+    "CREATE INDEX IF NOT EXISTS idx_sale_returns_created_at ON sale_returns(created_at)",
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_sale_returns_client_uuid ON sale_returns(client_uuid) "
+    "WHERE client_uuid IS NOT NULL",
+)
+
+
+def _sale_returns_reject_free_refunds(conn: sqlite3.Connection) -> bool:
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'sale_returns'").fetchone()
+    return row is not None and re.search(r"total\s*>\s*0", row[0] or "") is not None
+
+
+def _to_v10(conn: sqlite3.Connection) -> None:
+    """Version 10 - a refund of a free (price 0) item has total 0, which the
+    v9 CHECK (total > 0) refused. Rebuild sale_returns with CHECK (total >= 0).
+    run_migrations() switches foreign keys off around the whole transaction
+    (the pragma is a no-op inside one), otherwise dropping the old table would
+    cascade-delete every sale_return_items row."""
+    if not _sale_returns_reject_free_refunds(conn):
+        return
+    old_columns = [row[1] for row in conn.execute("PRAGMA table_info(sale_returns)")]
+    seq_row = conn.execute("SELECT seq FROM sqlite_sequence WHERE name = 'sale_returns'").fetchone()
+    conn.execute("DROP TABLE IF EXISTS sale_returns_v10")
+    conn.execute(_SALE_RETURNS_V10)
+    new_columns = {row[1] for row in conn.execute("PRAGMA table_info(sale_returns_v10)")}
+    names = ", ".join(c for c in old_columns if c in new_columns)
+    conn.execute(f"INSERT INTO sale_returns_v10 ({names}) SELECT {names} FROM sale_returns")
+    conn.execute("DROP TABLE sale_returns")
+    conn.execute("ALTER TABLE sale_returns_v10 RENAME TO sale_returns")
+    if seq_row is not None:  # ids of deleted rows must never be handed out again
+        conn.execute("UPDATE sqlite_sequence SET seq = MAX(seq, ?) WHERE name = 'sale_returns'", (int(seq_row[0]),))
+    for statement in _SALE_RETURN_INDEXES:
+        conn.execute(statement)
+    broken = conn.execute("PRAGMA foreign_key_check(sale_return_items)").fetchall()  # the only child
+    if broken:
+        raise sqlite3.IntegrityError(f"migration v10 left {len(broken)} dangling foreign key row(s)")
+
+
+_STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9,
+          10: _to_v10}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:
     """Apply every step above the database's current version. Safe to call
     on every startup; a no-op once the database is current."""
     if _version(conn) < LATEST_VERSION:
-        conn.execute("BEGIN IMMEDIATE")
+        # Table rebuilds (v10) must not cascade into child tables; the pragma only
+        # takes effect outside a transaction, so it brackets the whole step.
+        conn.execute("PRAGMA foreign_keys = OFF")
         try:
-            version = _version(conn)  # re-read under the write lock
-            for step in range(version + 1, LATEST_VERSION + 1):
-                _STEPS[step](conn)
-            if version < LATEST_VERSION:
-                conn.execute(f"PRAGMA user_version = {LATEST_VERSION}")
-        except Exception:
-            conn.execute("ROLLBACK")
-            raise
-        else:
-            conn.execute("COMMIT")
+            _migrate(conn)
+        finally:
+            conn.execute("PRAGMA foreign_keys = ON")
     for statement in _INDEXES:
         conn.execute(statement)
     _ensure_barcode_nocase_index(conn)
+
+
+def _migrate(conn: sqlite3.Connection) -> None:
+    conn.execute("BEGIN IMMEDIATE")
+    try:
+        version = _version(conn)  # re-read under the write lock
+        for step in range(version + 1, LATEST_VERSION + 1):
+            _STEPS[step](conn)
+        if version < LATEST_VERSION:
+            conn.execute(f"PRAGMA user_version = {LATEST_VERSION}")
+    except Exception:
+        conn.execute("ROLLBACK")
+        raise
+    else:
+        conn.execute("COMMIT")

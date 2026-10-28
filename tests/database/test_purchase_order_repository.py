@@ -14,6 +14,7 @@ from database.exceptions import (
 )
 from shared.auth import Actor
 from shared.models import PriceRange, Product, hold_reason_for
+from tests.po_support import seed_admin
 
 
 @pytest.fixture(autouse=True)
@@ -25,6 +26,7 @@ def _isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def wrap():
+    seed_admin()  # approve()/reject() check the decider's role in the database
     product_repository.create(Product(barcode="PLT-4410", name="Pallet wrap 500mm", price=900, stock_quantity=5))
     po_repo.set_price_range(PriceRange("PLT-4410", 520, 680, "Kuzey Ambalaj A.Ş."))
     return "PLT-4410"
@@ -352,3 +354,57 @@ def test_order_total_rounds_half_up_via_decimal():
     assert total(1.005, 3) == 3.02  # float math gives 3.0149999... -> 3.01
     assert total(600, 40) == 24000
     assert total(19.99, 3) == 59.97
+
+
+# --- who may decide -------------------------------------------------------------
+
+
+@pytest.mark.parametrize("decide", ["approve", "reject"])
+@pytest.mark.parametrize("who", ["manager", "stranger"])
+def test_only_an_administrator_can_decide_an_order(wrap, decide, who):
+    from database import account_repository, employee_repository
+    from shared.models import Employee
+
+    employee_repository.create(Employee("D-1", "Deniz Depo", "Operations", "Warehouse", "WH-01"))
+    account_repository.create_account("D-1", "depot_manager", "5831")
+    actor = Actor("D-1", "Deniz Depo") if who == "manager" else Actor("X-9", "No Account")
+    held = _submit(wrap, 742.5)
+    with pytest.raises(ValueError):
+        getattr(po_repo, decide)(held.id, decided_by=actor)
+    after = po_repo.get(held.id)
+    assert (after.status, after.decided_by) == ("pending", None)
+
+
+def test_the_decision_and_its_event_stand_or_fall_together(wrap, monkeypatch):
+    from database import activity_repository
+
+    held = _submit(wrap, 742.5)
+
+    def boom(*a, **k):
+        raise RuntimeError("event write failed")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(po_repo.activity_repository, "record", boom)
+        with pytest.raises(RuntimeError):
+            po_repo.approve(held.id, decided_by=ADMIN)
+    assert po_repo.get(held.id).status == "pending"  # rolled back with the failed event
+    assert po_repo.approve(held.id, decided_by=ADMIN).status == "sent"
+    assert "po_approved" in [e.kind for e in activity_repository.list_since(0)]
+
+
+# --- the product an order names ------------------------------------------------
+
+
+def test_submit_stores_the_products_own_barcode_and_name_whatever_case_was_typed(wrap):
+    order = po_repo.submit("plt-4410", "Kuzey Ambalaj A.Ş.", 10, 600, "WH-01")
+    assert (order.product_barcode, order.product_name) == ("PLT-4410", "Pallet wrap 500mm")
+    assert order.status == "sent"  # judged against PLT-4410's band, not "no range" for the lower-case text
+
+
+def test_submit_refuses_a_deactivated_product(wrap):
+    from database.exceptions import ProductInactiveError
+
+    product_repository.set_active(wrap, False)
+    with pytest.raises(ProductInactiveError):
+        _submit(wrap, 600)
+    assert po_repo.list_orders() == []

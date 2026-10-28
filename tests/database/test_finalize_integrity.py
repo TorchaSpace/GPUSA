@@ -5,6 +5,7 @@ transaction, and a refused sale writes nothing."""
 from __future__ import annotations
 
 import threading
+from datetime import datetime
 
 import pytest
 
@@ -370,3 +371,21 @@ def test_a_cart_cannot_smuggle_in_its_own_cost(shop):
     line = LineItem("OIL", "Oil", 10.0, 1, unit_cost_at_sale=0.01, cost_known=True)
     done = sales.finalize_transaction(Transaction(items=[line]), SHELF, CASHIER)
     assert (done.items[0].unit_cost_at_sale, done.items[0].cost_known) == (6.5, True)
+
+
+@pytest.mark.parametrize("quantity", [0, -1, 1.5, True])
+def test_a_quantity_that_is_not_a_whole_number_of_at_least_one_is_refused(shop, quantity):
+    from shared.i18n import UserError
+    from tests.stock_invariant import assert_totals_consistent
+
+    with pytest.raises(UserError):
+        sales.finalize_transaction(_sale(_oil(1), _rice(quantity)), SHELF, CASHIER)
+    assert sales.list_between(datetime(2000, 1, 1), datetime(2100, 1, 1)) == []
+    assert stock_repository.quantity_at(SHELF, "OIL") == 10 and stock_repository.quantity_at(SHELF, "RICE") == 10
+    assert_totals_consistent()
+
+
+def test_a_whole_float_quantity_is_stored_as_an_int(shop):
+    sale = sales.finalize_transaction(_sale(_oil(2.0)), SHELF, CASHIER)
+    assert sale.items[0].quantity == 2 and isinstance(sale.items[0].quantity, int)
+    assert stock_repository.quantity_at(SHELF, "OIL") == 8

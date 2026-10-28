@@ -120,3 +120,38 @@ def test_reports_read_the_sale_net_of_refunds(sale):
     assert sales.list_between(*window) == []  # nothing left of that sale
     assert [r.number for r in returns.list_between(*window)] == ["RF-00001", "RF-00002"]
     assert sales.get_by_id(sale.id).total == 38.0  # the receipt itself is untouched
+
+
+def test_a_free_item_can_be_taken_back(sale):
+    product_repository.create(Product("GIFT", "Free sample", 0.0, 5, 1))
+    stock_repository.transfer(UNASSIGNED, SHELF, "GIFT", 5)
+    free = sales.finalize_transaction(
+        Transaction(items=[LineItem("GIFT", "Free sample", 0.0, 1)], payment_method="cash"), SHELF, CASHIER)
+    assert _shelf("GIFT") == 4
+    refund = returns.create(free.id, [("GIFT", 1, True)], "Changed mind", MANAGER, CASHIER)
+    assert refund.total == 0.0
+    assert _shelf("GIFT") == 5
+    assert_totals_consistent()
+
+
+def test_a_refund_into_a_deleted_shop_pays_out_and_restocks_as_unassigned(sale):
+    stock_repository.transfer(SHELF, UNASSIGNED, "OIL", 7)  # leave the shelf empty so the shop can go
+    stock_repository.transfer(SHELF, UNASSIGNED, "RICE", 8)
+    dealership_repository.delete("001")
+    before = stock_repository.quantity_at(UNASSIGNED, "OIL")
+    refund = returns.create(sale.id, [("OIL", 2, True)], "Wrong size", MANAGER, CASHIER)
+    assert refund.total == 20.0
+    assert stock_repository.quantity_at(UNASSIGNED, "OIL") == before + 2
+    [entry] = audit_repository.list_recent(kind="sale")
+    assert "restocked as unassigned" in entry.detail
+    assert_totals_consistent()
+
+
+def test_a_self_approved_refund_is_flagged(sale):
+    from database import activity_repository
+
+    returns.create(sale.id, [("OIL", 1, True)], "Own call", MANAGER, MANAGER)
+    returns.create(sale.id, [("OIL", 1, True)], "Cashier asked", MANAGER, CASHIER)
+    plain, own = [e for e in activity_repository.list_recent() if e.kind == "refund"]  # newest first
+    assert (plain.severity, own.severity) == ("notice", "warning")
+    assert "self-approved" in audit_repository.list_recent(kind="sale")[1].detail

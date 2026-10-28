@@ -558,7 +558,7 @@ CREATE TABLE IF NOT EXISTS sale_returns (
     created_at      TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
     transaction_id  INTEGER NOT NULL REFERENCES transactions(id),
     dealership_code TEXT,
-    total           REAL NOT NULL CHECK (total > 0),
+    total           REAL NOT NULL CHECK (total >= 0),  -- 0: a free item can be taken back (v10)
     payment_method  TEXT CHECK (payment_method IS NULL OR payment_method IN ('card', 'cash')),
     reason          TEXT NOT NULL,
     requested_by    TEXT,

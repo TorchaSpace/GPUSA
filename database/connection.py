@@ -32,6 +32,32 @@ _SCHEMA_PATH = resource_path("database", "schema.sql")
 _init_lock = Lock()
 _initialized = False
 
+# The file this process works on once pin_db_path() has run (each app does it
+# at start-up). Without it, "Change folder" in Admin Settings would switch a
+# RUNNING app to a different file halfway through a session while the other
+# apps still use the old one; with it the new location takes effect at the
+# next start, for every app alike.
+_pinned: Path | None = None
+
+
+def pin_db_path() -> Path:
+    """Remember the database file as resolved right now; from here on every
+    connection of this process uses it, whatever the settings say later."""
+    global _pinned
+    _pinned = Path(get_db_path())
+    return _pinned
+
+
+def pinned_db_path() -> Path | None:
+    """The pinned file, or None before pin_db_path() has run."""
+    return _pinned
+
+
+def active_db_path() -> Path:
+    """The database file this process is working on: the pinned one, else
+    whatever shared.paths resolves now."""
+    return _pinned if _pinned is not None else Path(get_db_path())
+
 
 def _configure(conn: sqlite3.Connection) -> None:
     conn.execute("PRAGMA journal_mode = WAL;")
@@ -70,7 +96,7 @@ def get_connection(db_path: Path | None = None) -> sqlite3.Connection:
     agree on regardless of where either was installed (see
     shared/paths.py for how that's configured).
     """
-    path = db_path if db_path is not None else get_db_path()
+    path = db_path if db_path is not None else active_db_path()
     conn = sqlite3.connect(path, isolation_level=None)  # autocommit; repos manage transactions explicitly
     _configure(conn)
     _ensure_schema(conn)
@@ -93,6 +119,14 @@ def connection_scope(db_path: Path | None = None):
         yield conn
     finally:
         conn.close()
+
+
+def check_database() -> None:
+    """Open the database once (applying the schema and migrations) so a
+    damaged, unreadable or locked file raises HERE, at start-up, rather than
+    being swallowed screen by screen. Raises sqlite3.Error / DataAccessError."""
+    with connection_scope():
+        pass
 
 
 def copy_database_to(destination: Path) -> None:

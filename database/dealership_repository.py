@@ -21,10 +21,11 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository
+from database import audit_repository, authz
 from database.connection import connection_scope
 from database.exceptions import DealershipNotFoundError, DuplicateDealershipCodeError, LocationHasStockError
 from shared.models import DEALERSHIP_REGIONS, Dealership
+from shared.warehousing import clean_code
 
 
 MAX_CODE_LENGTH = 24
@@ -37,7 +38,16 @@ def normalize_code(code: str | None) -> str:
     """A typed dealership code as stored: trimmed, upper-case ("cst-04 " is
     "CST-04"). Rows saved before this rule may be lower-case; lookups
     match those too (see _find_row)."""
-    return (code or "").strip().upper()
+    return clean_code(code)
+
+
+def canonical_code(code: str | None) -> str:
+    """The code as STORED for the dealership `code` names (any letter case,
+    so a legacy lower-case row answers with its lower-case code), or the
+    normalised input when there is no such row."""
+    with connection_scope() as conn:
+        row = _find_row(conn, code or "")
+    return row["code"] if row is not None else normalize_code(code)
 
 
 def _find_row(conn, code: str) -> sqlite3.Row | None:
@@ -178,11 +188,17 @@ def delete(code: str, by: Actor | None = None) -> None:
     LocationInUseError while a scheduled / in-transit shipment is headed
     there (deactivate it instead)."""
     from database.exceptions import LocationInUseError  # local: keeps this edit clear of the file's imports
+    from database import stock_request_repository
     from database.shipment_repository import active_count_for
 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            authz.require_live_admin(conn, by)
+            row = _find_row(conn, code)
+            if row is None:
+                raise DealershipNotFoundError(normalize_code(code))
+            code = row["code"]
             held = conn.execute(
                 "SELECT COALESCE(SUM(quantity), 0) FROM stock_levels "
                 "WHERE location_kind = 'dealership' AND location_code = ?",
@@ -193,12 +209,15 @@ def delete(code: str, by: Actor | None = None) -> None:
             open_shipments = active_count_for(conn, dealership_code=code)
             if open_shipments:
                 raise LocationInUseError("dealership", code, open_shipments)
-            found = conn.execute("SELECT name FROM dealerships WHERE code = ?", (code,)).fetchone()
-            name = found["name"] if found else None
+            name = row["name"]
             cursor = conn.execute("DELETE FROM dealerships WHERE code = ?", (code,))
             if cursor.rowcount == 0:
                 raise DealershipNotFoundError(code)
             conn.execute("DELETE FROM stock_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,))
+            conn.execute(
+                "DELETE FROM location_reorder_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,)
+            )
+            stock_request_repository.cancel_open_for_dealership(conn, code, by)
             audit_repository.record(conn, by, "deleted", "dealership", code, name)
         except Exception:
             conn.execute("ROLLBACK")

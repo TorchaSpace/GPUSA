@@ -28,6 +28,7 @@ Real vs. placeholder, explicitly:
 from __future__ import annotations
 
 import csv
+from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QColor
@@ -352,9 +353,9 @@ class InventoryPage(AdminPage):
         editing = self._popup.is_editing()
         try:
             if editing:
-                product_repository.update(product)
+                product_repository.update(product, current_session.actor())
                 if self._popup.cost_changed():
-                    product_repository.set_cost(product.barcode, product.cost_price)
+                    product_repository.set_cost(product.barcode, product.cost_price, current_session.actor())
             else:
                 product_repository.create(product)
         except (ValueError, *DATABASE_ERRORS) as exc:
@@ -371,7 +372,7 @@ class InventoryPage(AdminPage):
             QMessageBox.information(self, tr("admin.inventory.none_selected"), tr("admin.inventory.select_first"))
             return
         try:
-            product_repository.set_active(product.barcode, not product.is_active)
+            product_repository.set_active(product.barcode, not product.is_active, current_session.actor())
         except (ValueError, *DATABASE_ERRORS) as exc:
             QMessageBox.warning(self, tr("admin.inventory.save_failed"), str(exc))
             return
@@ -404,8 +405,15 @@ class InventoryPage(AdminPage):
         )
         if not path_str:
             return
+        path = Path(path_str)
+        if path.suffix.lower() != ".csv":
+            path = path.with_name(path.name + ".csv")  # "prices" -> "prices.csv", "list 2026.10" -> "list 2026.10.csv"
+            if path.exists() and QMessageBox.question(
+                self, tr("admin.reports.replace_title"), tr("admin.reports.replace_body").format(name=path.name)
+            ) != QMessageBox.Yes:
+                return
         try:
-            with open(path_str, "w", newline="", encoding="utf-8") as handle:
+            with open(path, "w", newline="", encoding="utf-8-sig") as handle:  # BOM: Excel reads Turkish letters
                 writer = csv.writer(handle)
                 writer.writerow(["Barcode", "Name", "Price", "Stock", "Reorder At", "Cost", "Margin %"])
                 for product in self._all_products:
@@ -419,4 +427,4 @@ class InventoryPage(AdminPage):
         except OSError as exc:
             QMessageBox.warning(self, tr("admin.inventory.export_failed"), str(exc))
             return
-        QMessageBox.information(self, tr("admin.export_done_title"), tr("admin.export_done_body").format(path=path_str))
+        QMessageBox.information(self, tr("admin.export_done_title"), tr("admin.export_done_body").format(path=path))

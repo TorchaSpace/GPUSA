@@ -45,7 +45,7 @@ import sqlite3
 from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
-from database import account_repository, activity_repository, stock_repository
+from database import account_repository, activity_repository, audit_repository, authz, stock_repository
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
@@ -60,6 +60,7 @@ from shared.auth import Actor, actor_label, normalize_badge_id
 from shared.costing import weighted_average_cost
 from shared.formatting import round_money
 from shared.models import RECEIVABLE_STATUSES, PriceRange, PurchaseOrder, StockLocation, hold_reason_for
+from shared.warehousing import site_code
 
 # Largest quantity on one order - a typo guard (an extra zero), not a business rule.
 MAX_QUANTITY = 1_000_000
@@ -129,35 +130,76 @@ def list_price_ranges() -> list[PriceRange]:
 
 
 @_wrap_sqlite
-def set_price_range(price_range: PriceRange) -> None:
+def set_price_range(price_range: PriceRange, by: Actor | None = None) -> None:
     """Create or replace a product's band. Raises ProductNotFoundError for
     an unknown barcode, ValueError for negative/inverted prices. Existing
-    orders keep the band they were judged against (see schema.sql)."""
+    orders keep the band they were judged against (see schema.sql). `by`,
+    when given, must still be an active administrator (SessionInvalidError);
+    a band that really changed is recorded in the admin audit trail."""
     low, high = _validate_range(price_range)
     supplier = (price_range.default_supplier or "").strip() or None
     with connection_scope() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM products WHERE barcode = ?", (price_range.product_barcode,)
-        ).fetchone()
-        if exists is None:
-            raise ProductNotFoundError(price_range.product_barcode)
-        conn.execute(
-            "INSERT INTO purchase_price_ranges "
-            "(product_barcode, min_unit_price, max_unit_price, default_supplier) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(product_barcode) DO UPDATE SET "
-            "min_unit_price = excluded.min_unit_price, max_unit_price = excluded.max_unit_price, "
-            "default_supplier = excluded.default_supplier, "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            (price_range.product_barcode, low, high, supplier),
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            authz.require_live_admin(conn, by)
+            exists = conn.execute(
+                "SELECT 1 FROM products WHERE barcode = ?", (price_range.product_barcode,)
+            ).fetchone()
+            if exists is None:
+                raise ProductNotFoundError(price_range.product_barcode)
+            old = conn.execute(
+                "SELECT min_unit_price, max_unit_price, default_supplier FROM purchase_price_ranges "
+                "WHERE product_barcode = ?",
+                (price_range.product_barcode,),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO purchase_price_ranges "
+                "(product_barcode, min_unit_price, max_unit_price, default_supplier) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(product_barcode) DO UPDATE SET "
+                "min_unit_price = excluded.min_unit_price, max_unit_price = excluded.max_unit_price, "
+                "default_supplier = excluded.default_supplier, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                (price_range.product_barcode, low, high, supplier),
+            )
+            if old is None or (old["min_unit_price"], old["max_unit_price"], old["default_supplier"]) != (
+                low, high, supplier
+            ):
+                before = "" if old is None else f"{old['min_unit_price']:g}-{old['max_unit_price']:g} -> "
+                audit_repository.record(
+                    conn, by, "created" if old is None else "changed", "price_band",
+                    price_range.product_barcode, f"{before}{low:g}-{high:g}",
+                )
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
 
 @_wrap_sqlite
-def delete_price_range(barcode: str) -> None:
+def delete_price_range(barcode: str, by: Actor | None = None) -> None:
     """Remove a product's band (a no-op if it had none). Orders for that
-    product are then held as "no_range" until a new band is set."""
+    product are then held as "no_range" until a new band is set. `by`, when
+    given, must still be an active administrator (SessionInvalidError); the
+    removal is recorded in the admin audit trail."""
     with connection_scope() as conn:
-        conn.execute("DELETE FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            authz.require_live_admin(conn, by)
+            old = conn.execute(
+                "SELECT min_unit_price, max_unit_price FROM purchase_price_ranges WHERE product_barcode = ?",
+                (barcode,),
+            ).fetchone()
+            conn.execute("DELETE FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,))
+            if old is not None:
+                audit_repository.record(
+                    conn, by, "deleted", "price_band", barcode, f"{old['min_unit_price']:g}-{old['max_unit_price']:g}"
+                )
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
 
 # --- Purchase orders -----------------------------------------------------
@@ -198,7 +240,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     Raises ValueError for a blank supplier/site, a quantity that isn't a
     whole number between 1 and MAX_QUANTITY, or a price that isn't finite,
     rounds (half-up, to cents) to less than 0.01 or exceeds MAX_AMOUNT;
-    ProductNotFoundError for an unknown barcode. The site is stored
+    ProductNotFoundError for an unknown barcode, ProductInactiveError for a
+    deactivated product (any letter case is fine). The site is stored
     stripped and upper-cased.
 
     BEGIN IMMEDIATE so the band that's read and the order that's written
@@ -225,11 +268,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            product = conn.execute(
-                "SELECT name FROM products WHERE barcode = ?", (barcode,)
-            ).fetchone()
-            if product is None:
-                raise ProductNotFoundError(barcode)
+            # stored spelling + name (any letter case typed), and no new orders for a deactivated product
+            barcode, product_name = stock_repository.resolve_product(conn, barcode, active_only=True)
 
             range_row = conn.execute(
                 "SELECT * FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,)
@@ -244,7 +284,7 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     barcode,
-                    product["name"],
+                    product_name,
                     supplier,
                     quantity,
                     unit_price,
@@ -261,7 +301,7 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
             ).fetchone()
             activity_repository.record(
                 conn, "po_pending" if hold_reason else "po_sent", severity="warning" if hold_reason else "info",
-                source="depot", actor=raised_by, number=_row_to_order(row).number, product=product["name"],
+                source="depot", actor=raised_by, number=_row_to_order(row).number, product=product_name,
                 quantity=quantity, total=round(quantity * unit_price, 2), site=site)
         except Exception:
             conn.execute("ROLLBACK")
@@ -283,8 +323,7 @@ def get(order_id: int) -> PurchaseOrder:
 @_wrap_sqlite
 def list_orders(status: str | None = None, site: str | None = None, limit: int | None = None) -> list[PurchaseOrder]:
     """Orders newest first, optionally filtered by status and/or site
-    (compared case-insensitively, so rows saved before sites were
-    normalised still match)."""
+    (compared by warehouse code, so a renamed warehouse keeps its orders)."""
     clauses, params = [], []
     if status is not None:
         clauses.append("status = ?")
@@ -300,11 +339,20 @@ def list_orders(status: str | None = None, site: str | None = None, limit: int |
         rows = conn.execute(sql, params).fetchall()
     orders = [_row_to_order(row) for row in rows]
     if site is not None:
-        wanted = normalise_site(site)
-        orders = [o for o in orders if normalise_site(o.site) == wanted]
+        wanted = site_code(site)
+        orders = [o for o in orders if site_code(o.site) == wanted]
         if limit is not None:
             orders = orders[:limit]
     return orders
+
+
+def open_count_for(conn: sqlite3.Connection, warehouse_code: str) -> int:
+    """Orders still waiting on a delivery (held, sent or partly received) for warehouse
+    `warehouse_code` - what stops a warehouse being deleted. Runs inside the caller's transaction."""
+    wanted = site_code(warehouse_code)
+    rows = conn.execute(
+        "SELECT site FROM purchase_orders WHERE status IN ('pending', 'sent', 'partially_received')").fetchall()
+    return sum(1 for row in rows if site_code(row["site"]) == wanted)
 
 
 def list_pending() -> list[PurchaseOrder]:
@@ -336,7 +384,12 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
     if not decider or not decider.strip(" ·"):
         raise UserError("err.decision_needs_admin")
     note = (note or "").strip() or None
-    with connection_scope() as conn:
+
+    def run(conn):
+        row = _order_row(conn, order_id)  # PurchaseOrderNotFoundError
+        # Only an administrator decides, read from the account in the database like cancel_order does.
+        if account_repository.live_role(conn, decided_by.badge_id) != "admin":
+            raise UserError("err.po_decide_admin_only")
         # The `AND status = 'pending'` is what makes this safe with two
         # admins on two machines: only the first decision matches a row;
         # the second sees rowcount 0 and is told the order was already
@@ -348,17 +401,16 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
             "WHERE id = ? AND status = 'pending'",
             (new_status, note, decider, order_id),
         )
-        row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
-    if row is None:
-        raise PurchaseOrderNotFoundError(order_id)
-    order = _row_to_order(row)
-    if cursor.rowcount == 0:
-        raise PurchaseOrderAlreadyDecidedError(order.number, order.status)
-    with connection_scope() as conn:
+        order = _row_to_order(_order_row(conn, order_id))
+        if cursor.rowcount == 0:
+            raise PurchaseOrderAlreadyDecidedError(_row_to_order(row).number, order.status)
+        # Same transaction as the decision, so the event exists iff the decision was kept.
         activity_repository.record(conn, "po_approved" if new_status == "sent" else "po_rejected", source="admin",
                                    actor=decided_by, number=order.number, product=order.product_name,
                                    quantity=order.quantity)
-    return order
+        return order
+
+    return _in_transaction(run)
 
 
 def approve(order_id: int, note: str | None = None, decided_by: Actor | None = None) -> PurchaseOrder:
@@ -465,7 +517,7 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
         if location.kind == "warehouse":
             site_row = conn.execute("SELECT code, name FROM warehouses WHERE code = ?", (location.code,)).fetchone()
             if site_row is not None:
-                site = normalise_site(f"{site_row['code']} · {site_row['name']}")
+                site = site_row["code"].upper()
                 received_by = actor_label(actor) if actor is not None else None
                 if not received_by or not received_by.strip(" ·"):
                     received_by = f"Floor · {location.code}"
@@ -475,7 +527,7 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
                 for row in candidates:
                     if left <= 0:
                         break
-                    if normalise_site(row["site"]) != site:
+                    if site_code(row["site"]) != site:
                         continue
                     take = min(left, int(row["quantity"]) - int(row["received_qty"]))
                     if take <= 0:

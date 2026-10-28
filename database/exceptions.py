@@ -317,6 +317,19 @@ class LocationHasStockError(DataAccessError):
         self.units = units
 
 
+class LocationHasOpenOrdersError(DataAccessError):
+    """Refused: deleting a warehouse that open purchase orders (pending / sent / partly received)
+    are still addressed to - they could never be received or found again."""
+
+    def __init__(self, code: str, orders: int):
+        super().__init__(f"Warehouse {code} can't be deleted: {orders} open purchase order{'s' if orders != 1 else ''}. "
+                         "Cancel or finish them first, or deactivate the warehouse instead.")
+        self._localize("err.location_has_orders_one" if orders == 1 else "err.location_has_orders_other",
+                       code=code, n=format_int(orders))
+        self.code = code
+        self.orders = orders
+
+
 # --- sign-in (database/account_repository.py) ------------------------------
 
 class AuthError(DataAccessError):
@@ -395,6 +408,17 @@ class EmployeeInactiveError(DataAccessError):
         self.badge_id = badge_id
 
 
+class EmployeeOtherSiteError(DataAccessError):
+    """Raised by attendance_repository when a badge belongs to another site than the depot it was
+    used at (check-in/out on the Floor, or as a movement operator)."""
+
+    def __init__(self, badge_id: str, site: str):
+        super().__init__(f"{badge_id} doesn't work at {site}.")
+        self._localize("err.employee_other_site", badge_id=badge_id, site=site)
+        self.badge_id = badge_id
+        self.site = site
+
+
 class SessionInvalidError(AuthError):
     """The signed-in account was switched off, its employee deactivated,
     removed, or its role changed since sign-in."""
@@ -409,7 +433,8 @@ class SelfActionError(AuthError):
 
     def __init__(self, action: str):
         super().__init__(f"You can't {action} your own account - ask another administrator.")
-        key = {"change the role of": "err.self_role", "switch off": "err.self_off", "remove": "err.self_remove"}.get(action)
+        key = {"change the role of": "err.self_role", "switch off": "err.self_off", "remove": "err.self_remove",
+               "reset": "err.self_reset"}.get(action)
         if key:
             self._localize(key)
         self.action = action

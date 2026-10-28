@@ -39,6 +39,14 @@ def seed_people() -> None:
         account_repository.create_account(actor.badge_id, role, pin)
 
 
+def seed_admin() -> None:
+    """Just the administrator (A-1): approve()/reject() read the decider's role from the database."""
+    from shared.models import Employee
+
+    employee_repository.create(Employee(ADMIN.badge_id, ADMIN.name, "Management", "Warehouse", "WH-01"))
+    account_repository.create_account(ADMIN.badge_id, "admin", "482913")
+
+
 def seed_world(*, capacity: int | None = 1000, stock: int = 0, cost: float = 0.0) -> None:
     """WH-01, product PLT-4410 (price 900, `stock` units unassigned at `cost`), a safe band 520-680."""
     warehouse_repository.create(Warehouse(code="WH-01", name="İstanbul Merkez", city="Tuzla",

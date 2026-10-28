@@ -3,9 +3,8 @@
 import sys
 
 from PySide6.QtCore import QTimer
-from PySide6.QtWidgets import QApplication, QMessageBox
+from PySide6.QtWidgets import QApplication
 
-from shared.i18n import tr
 from admin_app.gui.app_style import admin_extra_qss
 from admin_app.gui.auth_flow import sign_in
 from admin_app.gui.main_window import MainWindow
@@ -14,8 +13,10 @@ from admin_app.theme import CLASSICAL_PALETTE
 from shared.dealership_bootstrap import register_sidecars_beside_this_exe
 from shared.warehouse_bootstrap import register_warehouse_sidecars_beside_this_exe
 from database import settings_repository
-from database.exceptions import DataAccessError
+from database.connection import check_database, pin_db_path
+from database.exceptions import DATABASE_ERRORS
 from shared import currency, i18n
+from shared.gui_kit.db_error import show_database_error
 from shared.theme import apply_theme
 from database.backups import daily_backup
 
@@ -24,6 +25,9 @@ BACKUP_CHECK_MS = 60 * 60 * 1000
 
 
 def main() -> int:
+    # From here on this process keeps using THIS database file, even if Settings later points the
+    # installation elsewhere (that takes effect at the next start, for every app alike).
+    pin_db_path()
     # Apply every POS_N.dealership.json the setup wizard left in this
     # folder, so the POS terminals from that setup run show up as active
     # dealerships the moment Admin opens - without anyone having to launch
@@ -42,13 +46,14 @@ def main() -> int:
     # Nobody sees Admin without signing in (see admin_app/gui/auth_flow.py):
     # the first administrator is created here on a fresh system.
     try:
+        check_database()
         session = sign_in()
-    except DataAccessError as exc:
-        QMessageBox.critical(None, i18n.tr("admin.main.db_error"), str(exc))
+        if session is None:
+            return 0
+        window = MainWindow(session)
+    except DATABASE_ERRORS as exc:  # a damaged or locked file: say so, never crash without a window
+        show_database_error(exc)
         return 1
-    if session is None:
-        return 0
-    window = MainWindow(session)
     window.show()
     # Today's backup now, then an hourly check so a till left open for days still makes one a day.
     daily_backup()
