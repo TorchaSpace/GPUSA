@@ -17,7 +17,6 @@ pytestmark = pytest.mark.skipif(os.name != "posix", reason="POSIX permission bit
 @pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "t.db")
-    monkeypatch.setattr(backups, "get_db_path", lambda: tmp_path / "t.db")
     monkeypatch.setattr(connection, "_initialized", False)
 
 

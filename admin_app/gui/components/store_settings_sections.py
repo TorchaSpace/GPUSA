@@ -106,10 +106,20 @@ class GeneralSection(Section):
         index = self._language_input.findData(settings_repository.safe_language())
         self._language_input.setCurrentIndex(max(0, index))
         saved_currency = settings_repository.safe_currency()
+        self._offer_unset_currency(saved_currency is None)
         self._currency_input.setCurrentIndex(max(0, self._currency_input.findData(saved_currency)))
         self._error.setText("")
         self._status.setText("")
         self._baseline = self._current()
+
+    def _offer_unset_currency(self, offer: bool) -> None:
+        """"Not chosen" is only a choice until one is made: once a currency is stored it cannot be
+        un-chosen (saving would silently keep the old one), so the entry goes away."""
+        index = self._currency_input.findData(None)
+        if offer and index < 0:
+            self._currency_input.insertItem(0, tr("settings.currency_unset"), None)
+        elif not offer and index >= 0:
+            self._currency_input.removeItem(index)
 
     def save(self) -> bool:
         try:
@@ -205,6 +215,11 @@ class DataLocationSection(Section):
         self._path_label.setStyleSheet(f"font-size: 13px; color: {CLASSICAL_PALETTE['text_primary']};")
         form = _form_host(self)
         form.addRow(self._path_label)
+        self._next_label = QLabel()  # where the apps will look after the next restart (only when it differs)
+        self._next_label.setWordWrap(True)
+        self._next_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        self._next_label.setStyleSheet(f"font-size: 13px; color: {CLASSICAL_PALETTE['accent']};")
+        form.addRow(self._next_label)
         form.addRow(_note(tr("admin.settings.data_note")))
         change = CompactButton(tr("settings.change_folder"))
         change.clicked.connect(self.choose_folder)
@@ -212,10 +227,16 @@ class DataLocationSection(Section):
         self.reload()
 
     def reload(self) -> None:
-        self._path_label.setText(str(paths.get_db_path()))
+        # What this running process works on (pinned at start-up) - a moved folder only applies after a restart.
+        active = connection.active_db_path()
+        self._path_label.setText(str(active))
+        configured = paths.get_db_path()
+        differs = connection.pinned_db_path() is not None and configured.resolve() != active.resolve()
+        self._next_label.setVisible(differs)
+        self._next_label.setText(tr("admin.settings.data_next_start").format(path=configured) if differs else "")
 
     def choose_folder(self) -> None:
-        folder = QFileDialog.getExistingDirectory(self, tr("admin.settings.choose_folder"), str(paths.get_db_path().parent))
+        folder = QFileDialog.getExistingDirectory(self, tr("admin.settings.choose_folder"), str(connection.active_db_path().parent))
         if folder:
             self.move_to(Path(folder))
 

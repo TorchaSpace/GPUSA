@@ -76,3 +76,70 @@ def test_language_choice_is_saved(qapp, monkeypatch):
     assert section._status.text()  # and says the save happened
     assert settings_repository.safe_language() == "tr"
     assert GeneralSection()._language_input.currentData() == "tr"
+
+
+def test_a_moved_data_folder_applies_after_a_restart_not_to_the_running_app(qapp, tmp_path, monkeypatch):
+    """Split brain guard: after "Change folder" the running Admin keeps using the pinned file (as the POS and
+    Depot processes do) and only says where it will look next time."""
+    import sqlite3
+
+    from PySide6.QtWidgets import QMessageBox
+
+    from admin_app.gui.components.store_settings_sections import DataLocationSection
+    from database import product_repository
+    from shared.models import Product
+
+    old = tmp_path / "old" / "shared_backend.db"
+    old.parent.mkdir()
+    config = {"db_path": str(old)}
+    monkeypatch.setattr(paths, "_load_config", lambda: dict(config))
+    monkeypatch.setattr(paths, "_save_config", lambda c: config.update(c))
+    monkeypatch.setattr(connection, "get_db_path", paths.get_db_path)  # the real lookup, not the test shortcut
+    monkeypatch.setattr(QMessageBox, "information", lambda *a, **k: None)
+    connection.pin_db_path()  # what every app's main() does at start-up
+    product_repository.create(Product("BEFORE", "x", 1, 0, 0))
+
+    section = DataLocationSection()
+    assert section._next_label.isHidden() and section._path_label.text() == str(old)
+    new_folder = tmp_path / "new"
+    new_folder.mkdir()
+    assert section.move_to(new_folder)
+
+    product_repository.create(Product("AFTER", "y", 1, 0, 0))  # still the OLD file, like the other apps
+    in_old = {r[0] for r in sqlite3.connect(old).execute("SELECT barcode FROM products")}
+    in_new = {r[0] for r in sqlite3.connect(new_folder / "shared_backend.db").execute("SELECT barcode FROM products")}
+    assert "AFTER" in in_old and "AFTER" not in in_new
+    assert section._path_label.text() == str(old)
+    assert not section._next_label.isHidden()
+    assert str(new_folder / "shared_backend.db") in section._next_label.text()
+
+    connection._pinned = None  # the next start of the app
+    product_repository.create(Product("RESTARTED", "z", 1, 0, 0))
+    in_new = {r[0] for r in sqlite3.connect(new_folder / "shared_backend.db").execute("SELECT barcode FROM products")}
+    assert "RESTARTED" in in_new
+
+
+def test_once_a_currency_is_saved_not_chosen_is_no_longer_offered(qapp, monkeypatch):
+    from admin_app.gui.components.store_settings_sections import GeneralSection
+    from shared import currency
+
+    monkeypatch.setattr(GeneralSection, "_confirm_restart", lambda self: False)
+    monkeypatch.setattr(currency, "set_currency", lambda code: None)  # keep the process-wide setting untouched
+    section = GeneralSection()
+    section._name_input.setText("Magaza")
+    assert section._currency_input.findData(None) >= 0  # nothing chosen yet: it is the starting point
+
+    section._currency_input.setCurrentIndex(section._currency_input.findData("TRY"))
+    assert section.save()
+    section.reload()
+
+    assert section._currency_input.findData(None) < 0
+    assert section._currency_input.currentData() == "TRY"
+    assert settings_repository.safe_currency() == "TRY"
+
+
+def test_saving_without_a_currency_keeps_the_stored_one(qapp):
+    profile = settings_repository.load_store_profile()
+    settings_repository.save_general(profile, "en", "EUR")
+    settings_repository.save_general(profile, "en", None)
+    assert settings_repository.safe_currency() == "EUR"

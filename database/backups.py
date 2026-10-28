@@ -22,16 +22,16 @@ import sqlite3
 from datetime import date
 from pathlib import Path
 
-from database.connection import copy_database_to
+from database.connection import active_db_path, copy_database_to
 from database.exceptions import DataAccessError
-from shared.paths import get_db_path, restrict_to_owner
+from shared.paths import restrict_to_owner
 
 DAILY_BACKUPS_KEPT = 14
 BACKUP_DIR_NAME = "backups"
 
 
 def backup_dir() -> Path:
-    return Path(get_db_path()).parent / BACKUP_DIR_NAME
+    return active_db_path().parent / BACKUP_DIR_NAME
 
 
 def _name_for(db_path: Path, day: date) -> str:
@@ -43,11 +43,19 @@ def _dated_backups(folder: Path, db_path: Path) -> list[Path]:
     return sorted(p for p in folder.iterdir() if pattern.match(p.name))  # ISO dates sort by name
 
 
+def _date_of(path: Path) -> date | None:
+    match = re.search(r"-(\d{4})-(\d{2})-(\d{2})" + re.escape(path.suffix) + "$", path.name)
+    try:
+        return date(*(int(part) for part in match.groups())) if match else None
+    except ValueError:
+        return None
+
+
 def daily_backup(today: date | None = None, keep: int = DAILY_BACKUPS_KEPT) -> Path | None:
     """Make today's backup if it isn't there yet and prune old ones.
     Returns today's backup path, or None if it could not be written."""
     try:
-        db_path = Path(get_db_path())
+        db_path = active_db_path()
         folder = backup_dir()
         folder.mkdir(parents=True, exist_ok=True)
         restrict_to_owner(folder)
@@ -58,8 +66,13 @@ def daily_backup(today: date | None = None, keep: int = DAILY_BACKUPS_KEPT) -> P
             copy_database_to(temporary)
             os.replace(temporary, target)
             restrict_to_owner(target)
-        for old in _dated_backups(folder, db_path)[:-keep] if keep > 0 else []:
-            old.unlink(missing_ok=True)
-        return target
+        # Prune only copies dated up to today: a wrong (too early) clock must neither delete
+        # newer-dated copies nor, worse, today's own file. Today's copy is never pruned.
+        day = today or date.today()
+        past = [p for p in _dated_backups(folder, db_path) if (_date_of(p) or day) <= day]
+        for old in past[:-keep] if keep > 0 else []:
+            if old != target:
+                old.unlink(missing_ok=True)
+        return target if target.exists() else None
     except (OSError, sqlite3.Error, DataAccessError):
         return None
