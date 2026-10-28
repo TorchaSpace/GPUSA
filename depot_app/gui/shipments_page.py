@@ -310,9 +310,10 @@ class ShipmentsPage(QWidget):
                 product_index = self._product_input.findData(barcode)
                 shown = self._product_input.itemText(product_index) if product_index >= 0 else label
                 self._draft_lines.append((barcode, shown, qty))
-            elif not request_ids:  # a shortage top-up adds to the line
+            else:
                 b, shown, old = self._draft_lines[existing]
-                self._draft_lines[existing] = (b, shown, old + qty)
+                # a shortage top-up adds to the line; a request needs at least what it asked for
+                self._draft_lines[existing] = (b, shown, max(old, qty) if request_ids else old + qty)
         self._draft_request_ids = list(dict.fromkeys(self._draft_request_ids + list(request_ids)))
         self._render_draft()
 

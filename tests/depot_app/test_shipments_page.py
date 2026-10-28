@@ -198,3 +198,19 @@ def test_a_request_still_goes_along_with_its_line(page):
     page._carrier_input.setText("Ridgeline Freight")
     page._create()
     assert stock_request_repository.get(request.id).status == "planned"
+
+
+def test_a_request_raises_an_existing_smaller_line_to_what_it_asked(page):
+    page._product_input.setCurrentIndex(page._product_input.findData("BOX-2218"))
+    page._qty_input.setValue(1)
+    page._add_line()
+    request = _request_for("BOX-2218", 5)
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    assert page.draft() == [("BOX-2218", 5)]
+    # a bigger line is left alone
+    page._product_input.setCurrentIndex(page._product_input.findData("PLT-4410"))
+    page._qty_input.setValue(9)
+    page._add_line()
+    other = _request_for("PLT-4410", 4)
+    page.prefill("001", [("PLT-4410", "Pallet wrap", 4)], [other.id])
+    assert dict(page.draft())["PLT-4410"] == 9
