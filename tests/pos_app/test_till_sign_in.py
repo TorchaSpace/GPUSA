@@ -153,3 +153,24 @@ def test_an_open_sale_blocks_switching_shop(qapp, cashier, monkeypatch):
     window._switch_checked("D-X")
     assert called == [] and window._dealership_code is None
     window.close()
+
+
+def test_a_locked_database_on_sign_out_does_not_block_the_shift_change(qapp, cashier, monkeypatch):
+    import sqlite3
+
+    import pos_app.gui.main_window as mw
+
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    window._idle_lock.stop()
+
+    def locked(*args, **kwargs):
+        raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(account_repository, "sign_out", locked)
+    monkeypatch.setattr(mw, "till_sign_in_dialog", lambda *a, **k: _FakeDialog(None))
+    monkeypatch.setattr(mw.QApplication, "quit", staticmethod(lambda: None))
+    window.switch_cashier()  # must reach the sign-in dialog rather than raise
+    assert window.session is None
+    window.close()

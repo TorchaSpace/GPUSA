@@ -27,7 +27,7 @@ from PySide6.QtWidgets import (
 )
 
 from database import shipment_repository, stock_repository
-from database.exceptions import DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from pos_app.gui import icons
 from pos_app.gui.components.organic import OrganicCard
 from pos_app.gui.product_status import stock_status
@@ -328,7 +328,7 @@ class HomePage(QWidget):
         try:
             products = [p for p in stock_repository.products_at(self._location)
                         if p.stocked_here or p.stock_quantity > 0]
-        except DataAccessError:
+        except DATABASE_ERRORS:
             products = []
         out_count = sum(1 for product in products if stock_status(product) == "out")
         low_count = sum(1 for product in products if stock_status(product) == "low")
@@ -336,6 +336,6 @@ class HomePage(QWidget):
         count_up(self._low_badge, tr("pos.home.badge_low").format(n=low_count))
         try:
             arriving = shipment_repository.count_incoming(self._dealership_code)
-        except DataAccessError:
+        except DATABASE_ERRORS:
             arriving = 0
         count_up(self._receive_badge, tr("pos.home.badge_arriving").format(n=arriving))

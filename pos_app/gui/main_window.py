@@ -25,7 +25,7 @@ from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
 from database import account_repository, dealership_repository
-from database.exceptions import DATABASE_ERRORS, DataAccessError
+from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.auth_flow import switch_dealership_dialog, till_sign_in_dialog
 
 from pos_app.gui.components.organic import toast_style
@@ -170,7 +170,7 @@ class MainWindow(QMainWindow):
             return False
         try:
             account_repository.sign_out(dialog.session)  # a one-off approval, not a session
-        except DataAccessError:
+        except DATABASE_ERRORS:
             pass
         return True
 
@@ -223,7 +223,7 @@ class MainWindow(QMainWindow):
         if self.session is not None:
             try:
                 account_repository.sign_out(self.session)
-            except DataAccessError:
+            except DATABASE_ERRORS:
                 pass
         self.session = None
         current_session.clear()
