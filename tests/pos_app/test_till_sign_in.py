@@ -174,3 +174,28 @@ def test_a_locked_database_on_sign_out_does_not_block_the_shift_change(qapp, cas
     window.switch_cashier()  # must reach the sign-in dialog rather than raise
     assert window.session is None
     window.close()
+
+
+def test_the_next_cashier_signs_in_at_the_home_shop_and_the_till_goes_back_to_it(qapp, cashier, monkeypatch):
+    from database import dealership_repository
+    from shared.models import Dealership
+    import pos_app.gui.main_window as mw
+
+    for code in ("D-A", "D-B"):
+        dealership_repository.create(Dealership(code=code, name=f"Shop {code}", region="Metro", city="Town"))
+    monkeypatch.setattr(mw, "load_dealership_identity",
+                        lambda: {"code": "D-A", "name": "Shop D-A", "location_line": "Town · Metro"})
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    window._idle_lock.stop()
+    assert window.switch_dealership("D-B") and window._dealership_code == "D-B"
+
+    asked = []
+    nxt = account_repository.authenticate("A-1", "482913", auth.AREA_POS, "POS")
+    monkeypatch.setattr(mw, "till_sign_in_dialog", lambda code, name, *a, **k: (asked.append((code, name)), _FakeDialog(nxt))[1])
+    window.switch_cashier()
+    assert asked == [("D-A", "Shop D-A")]
+    assert window._dealership_code == "D-A" and window.session == nxt
+    assert window._header._cashier_label.text() == "Erol"
+    window.close()

@@ -229,9 +229,14 @@ class MainWindow(QMainWindow):
         current_session.clear()
         self._sale_page.clear_cart()
         self.hide()
-        dialog = till_sign_in_dialog(self._dealership_code, self._dealership_name)
+        # The next cashier signs in at this till's OWN shop, even if an administrator was browsing another one.
+        home = self._home_identity
+        dialog = till_sign_in_dialog(home["code"] if home else self._dealership_code,
+                                     home["name"] if home else self._dealership_name)
         if dialog.exec() and dialog.session is not None:
             self.set_session(dialog.session)
+            if home and self._dealership_code != home["code"]:
+                self.switch_dealership(home["code"])  # back to the home shop (keeps self.session)
             self._navigate("home")
             self._idle_lock.touch()
             self.show()
