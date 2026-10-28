@@ -186,3 +186,18 @@ def test_only_one_open_request_is_enforced_by_the_database_too(world):
         with pytest.raises(sqlite3.IntegrityError):
             conn.execute("INSERT INTO stock_requests (dealership_code, dealership_name, product_barcode, "
                          "product_name, quantity) VALUES ('001', 'Harbor Point', 'oil', 'Oil', 2)")
+
+
+def test_a_shipment_without_the_requested_product_is_refused(world):
+    request = requests.create("001", "OIL", 17)
+    with pytest.raises(ValueError) as excinfo:
+        _ship([request.id], lines=(("RICE", 5),))
+    assert request.number in str(excinfo.value)
+    assert requests.get(request.id).status == "open" and requests.get(request.id).shipment_id is None
+    assert ships.list_shipments() == []  # the shipment was rolled back with it
+
+
+def test_the_product_match_ignores_letter_case(world):
+    request = requests.create("001", "OIL", 17)
+    shipment = _ship([request.id], lines=(("oil", 3),))
+    assert requests.get(request.id).status == "planned" and requests.get(request.id).shipment_id == shipment.id

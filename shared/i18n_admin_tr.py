@@ -1162,6 +1162,7 @@ TR_ADMIN = {
     "err.stock_request_qty": "Miktar 1 ile {n} arasında bir tam sayı olmalı.",
     "err.stock_request_note_long": "Not en fazla {n} karakter olabilir.",
     "err.stock_request_other_dealership": "{number} {dealership} bayisine ait, bu sevkiyatın gittiği bayiye değil.",
+    "err.stock_request_product_missing": "{number} ({product}) bu sevkiyata bağlanamaz - sevkiyatta bu ürün için satır yok.",
     "enum.stock_request_status.open": "bekliyor",
     "enum.stock_request_status.planned": "planlandı",
     "enum.stock_request_status.declined": "reddedildi",

@@ -165,3 +165,36 @@ def test_deactivated_products_are_not_offered_for_a_shipment(page):
     page.reload_choices()
     codes = [page._product_input.itemData(i) for i in range(page._product_input.count())]
     assert "PLT-4410" not in codes and "BOX-2218" in codes
+
+
+def _request_for(barcode, quantity=5):
+    from database import stock_request_repository
+
+    return stock_request_repository.create("001", barcode, quantity)
+
+
+def test_removing_a_requested_line_leaves_the_request_open(page):
+    from database import stock_request_repository
+
+    request = _request_for("BOX-2218")
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    page._lines_table.selectRow(0)
+    page._remove_line()
+    page._carrier_input.setText("Ridgeline Freight")
+    page._product_input.setCurrentIndex(page._product_input.findData("PLT-4410"))
+    page._add_line()
+    page._create()
+
+    [shipment] = ships.list_shipments()
+    assert [l.product_barcode for l in shipment.lines] == ["PLT-4410"]
+    assert stock_request_repository.get(request.id).status == "open"
+
+
+def test_a_request_still_goes_along_with_its_line(page):
+    from database import stock_request_repository
+
+    request = _request_for("BOX-2218")
+    page.prefill("001", [("BOX-2218", "Carton", 5)], [request.id])
+    page._carrier_input.setText("Ridgeline Freight")
+    page._create()
+    assert stock_request_repository.get(request.id).status == "planned"

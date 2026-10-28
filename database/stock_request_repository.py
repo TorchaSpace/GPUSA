@@ -218,12 +218,17 @@ def mark_planned(conn: sqlite3.Connection, request_ids: list[int], shipment_id: 
                  actor: Actor | None = None) -> None:
     """Inside the caller's transaction (shipment_repository.create): tie
     open requests to the shipment just planned. Each must be open and from
-    the shipment's dealership, or the whole shipment is refused."""
+    the shipment's dealership and have its product on a shipment line, or the whole
+    shipment is refused."""
     for request_id in dict.fromkeys(request_ids):
         current = _fetch(conn, request_id)
         if current.dealership_code != dealership_code:
             raise UserError("err.stock_request_other_dealership", number=current.number,
                             dealership=current.dealership_name)
+        if conn.execute("SELECT 1 FROM shipment_lines WHERE shipment_id = ? AND product_barcode = ? COLLATE NOCASE",
+                        (shipment_id, current.product_barcode)).fetchone() is None:
+            raise UserError("err.stock_request_product_missing", number=current.number,
+                            product=current.product_name)
         cursor = conn.execute(
             "UPDATE stock_requests SET status = 'planned', shipment_id = ?, decided_by = ?, "
             "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ? AND status = 'open'",

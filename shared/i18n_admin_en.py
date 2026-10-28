@@ -1107,6 +1107,7 @@ EN_ADMIN = {
     "err.stock_request_qty": "The quantity must be a whole number from 1 to {n}.",
     "err.stock_request_note_long": "The note can be at most {n} characters.",
     "err.stock_request_other_dealership": "{number} is from {dealership}, not the dealership this shipment goes to.",
+    "err.stock_request_product_missing": "{number} ({product}) can't be planned on this shipment - it has no line for that product.",
     "enum.stock_request_status.open": "waiting",
     "enum.stock_request_status.planned": "planned",
     "enum.stock_request_status.declined": "declined",
