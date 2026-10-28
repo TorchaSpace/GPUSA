@@ -436,10 +436,17 @@ class NewSalePage(QWidget):
         if not code:
             return
         for product in self._all_products:
-            if product.is_active and fold(product.barcode) == code and product.stock_quantity > 0:
-                self._add_to_cart(product)
-                self._search_input.clear()
+            if product.is_active and fold(product.barcode) == code:
+                if product.stock_quantity > 0:
+                    self._add_to_cart(product)
+                    self._search_input.clear()
+                else:
+                    self._notify(tr("pos.sale.scan_out").format(name=product.name))
+                    self._search_input.selectAll()
                 return
+        if not self._cards:  # no code and no name matches: say so rather than leave a silent scanner
+            self._notify(tr("pos.sale.scan_unknown").format(code=self._search_input.text().strip()))
+            self._search_input.selectAll()
 
     def _render_grid(self) -> None:
         while self._grid_layout.count():

@@ -305,3 +305,20 @@ def test_search_finds_turkish_names_however_they_are_typed(page, query, expected
         assert len(page._cards) == 1
     finally:
         i18n.set_language(previous)
+
+
+def test_scanning_an_unknown_or_sold_out_code_says_so(page, monkeypatch):
+    notices = []
+    monkeypatch.setattr(page, "_notify", notices.append)
+    product_repository.create(Product("GONE", "Gone", 3.0, 5, 1))  # nothing on this shelf
+    page.reload()
+    page._search_input.setText("ZZZ-404")
+    page._on_search_enter()
+    assert notices == ["No product with code ZZZ-404"] and not page.has_items()
+    assert page._search_input.selectedText() == "ZZZ-404"
+    page._search_input.setText("GONE")
+    page._on_search_enter()
+    assert notices[-1] == "Gone is out of stock" and not page.has_items()
+    page._search_input.setText("OIL")
+    page._on_search_enter()
+    assert page.has_items() and len(notices) == 2  # a good scan stays quiet
