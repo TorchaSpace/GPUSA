@@ -330,3 +330,18 @@ def test_a_shop_running_low_slides_an_alert_into_the_console_and_a_click_opens_s
     card = console._alerts.active()[0]
     card.mousePressEvent(None)
     assert console._stack.currentWidget() is console._pages["Shipments"] and console._alerts.active() == []
+
+
+def test_a_badge_from_another_site_cannot_credit_a_movement_here(floor):
+    from database import attendance_repository, employee_repository
+    from shared.models import Employee
+
+    employee_repository.create(Employee("W-2", "Elsewhere", "Operations", "Warehouse", "WH-09"))
+    attendance_repository.check_in("W-2")  # unscoped punch (Admin side)
+    inbound = floor._receive_panel
+    inbound._sku_input.setText("BOX")
+    inbound._qty_input.setValue(1)
+    inbound._operator_input.setText("W-2")
+    inbound._on_submit()
+    assert "W-2" in inbound._error_label.text()
+    assert stock_repository.quantity_at(WH1, "BOX") == 0

@@ -25,10 +25,13 @@ from database.exceptions import (
     AlreadyCheckedInError,
     EmployeeInactiveError,
     EmployeeNotFoundError,
+    EmployeeOtherSiteError,
     NoOpenAttendanceRecordError,
 )
 from shared.auth import Actor
 from shared.formatting import parse_db_timestamp, to_db_timestamp
+from shared.models import Warehouse
+from shared.warehousing import works_at
 
 # An open shift older than this is almost certainly a forgotten check-out:
 # the roster still shows the person Present, but flags it (`long_open`).
@@ -47,13 +50,25 @@ def _employee(conn, badge_id: str):
     return row
 
 
-def check_in(badge_id: str, note: str | None = None) -> int:
+def _require_site(conn, employee_row, warehouse_code: str | None) -> None:
+    """Depot punches are scoped: with `warehouse_code`, the employee must work at that warehouse
+    (the same works_at rule the roster uses) or EmployeeOtherSiteError. None = no scoping (Admin)."""
+    if warehouse_code is None:
+        return
+    site = conn.execute("SELECT code, name FROM warehouses WHERE code = ? COLLATE NOCASE", (warehouse_code,)).fetchone()
+    warehouse = Warehouse(code=site["code"], name=site["name"]) if site else Warehouse(code=warehouse_code, name="")
+    if not works_at(employee_row["location_type"], employee_row["location_name"], warehouse):
+        raise EmployeeOtherSiteError(employee_row["badge_id"], warehouse.site_label if site else warehouse_code)
+
+
+def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None) -> int:
     """Open a new attendance record for `badge_id` (any letter case).
     Returns the new record's id. Raises EmployeeNotFoundError for an
     unknown badge, EmployeeInactiveError for an employee switched off in
     Workforce, AlreadyCheckedInError if that employee already has an open
     record (writing nothing) - a badge can't check in twice without
-    checking out first.
+    checking out first. With `warehouse_code` (the depot Floor) the employee must work at that
+    warehouse, else EmployeeOtherSiteError.
     """
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -61,6 +76,7 @@ def check_in(badge_id: str, note: str | None = None) -> int:
             employee_row = _employee(conn, badge_id)
             if not employee_row["is_active"]:
                 raise EmployeeInactiveError(employee_row["badge_id"])
+            _require_site(conn, employee_row, warehouse_code)
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -83,7 +99,7 @@ def check_in(badge_id: str, note: str | None = None) -> int:
     return new_id
 
 
-def check_out(badge_id: str, note: str | None = None) -> int:
+def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None) -> int:
     """Close `badge_id`'s open attendance record. Returns the record's id.
     Raises EmployeeNotFoundError for an unknown badge, NoOpenAttendanceRecordError
     if that employee has no open record to close. `note`, when given,
@@ -95,6 +111,7 @@ def check_out(badge_id: str, note: str | None = None) -> int:
         conn.execute("BEGIN IMMEDIATE")
         try:
             employee_row = _employee(conn, badge_id)
+            _require_site(conn, employee_row, warehouse_code)
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -133,14 +150,16 @@ def close_open_shifts(conn, employee_id: int, note: str) -> int:
     return cursor.rowcount
 
 
-def operator_actor(badge_id: str) -> Actor:
+def operator_actor(badge_id: str, *, warehouse_code: str | None = None) -> Actor:
     """Who a Floor movement is credited to: the employee with this badge,
-    who must be active and CHECKED IN right now. Raises
-    EmployeeNotFoundError / EmployeeInactiveError / NoOpenAttendanceRecordError."""
+    who must be active and CHECKED IN right now (and, with `warehouse_code`,
+    work at that warehouse). Raises EmployeeNotFoundError / EmployeeInactiveError /
+    EmployeeOtherSiteError / NoOpenAttendanceRecordError."""
     with connection_scope() as conn:
         row = _employee(conn, badge_id)
         if not row["is_active"]:
             raise EmployeeInactiveError(row["badge_id"])
+        _require_site(conn, row, warehouse_code)
         open_row = conn.execute(
             "SELECT 1 FROM attendance_records WHERE employee_id = ? AND check_out_at IS NULL", (row["id"],)
         ).fetchone()

@@ -395,6 +395,17 @@ class EmployeeInactiveError(DataAccessError):
         self.badge_id = badge_id
 
 
+class EmployeeOtherSiteError(DataAccessError):
+    """Raised by attendance_repository when a badge belongs to another site than the depot it was
+    used at (check-in/out on the Floor, or as a movement operator)."""
+
+    def __init__(self, badge_id: str, site: str):
+        super().__init__(f"{badge_id} doesn't work at {site}.")
+        self._localize("err.employee_other_site", badge_id=badge_id, site=site)
+        self.badge_id = badge_id
+        self.site = site
+
+
 class SessionInvalidError(AuthError):
     """The signed-in account was switched off, its employee deactivated,
     removed, or its role changed since sign-in."""

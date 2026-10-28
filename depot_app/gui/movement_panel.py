@@ -237,7 +237,9 @@ class MovementPanel(QWidget):
         actor = None
         if operator_badge:
             try:
-                actor = attendance_repository.operator_actor(operator_badge)
+                actor = attendance_repository.operator_actor(
+                    operator_badge,
+                    warehouse_code=self._location.code if self._location.kind == "warehouse" else None)
             except DATABASE_ERRORS as exc:  # unknown badge / not checked in / deactivated
                 self._show_error(str(exc))
                 return

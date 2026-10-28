@@ -841,6 +841,7 @@ TR_ADMIN = {
     "err.duplicate_warehouse": "{code} kodlu bir depo zaten var",
     "err.employee_delete_history": "{badge} silinemez: devam geçmişi var. Bunun yerine pasif yapın.",
     "err.employee_inactive": "{badge_id} Personel'de pasif işaretli ve giriş yapamaz.",
+    "err.employee_other_site": "{badge_id} {site} deposunda çalışmıyor.",
     "err.employee_name_required": "Çalışanın adını girin.",
     "err.employee_not_found": "{badge_id} rozet numaralı çalışan bulunamadı",
     "err.endorse_only": "Yalnızca alınmış bir çek veya senet ciro edilebilir.",

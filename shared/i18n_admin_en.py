@@ -791,6 +791,7 @@ EN_ADMIN = {
     "err.duplicate_warehouse": "A warehouse with code {code} already exists",
     "err.employee_delete_history": "Cannot delete {badge}: it has attendance history. Set it inactive instead.",
     "err.employee_inactive": "{badge_id} is marked inactive in Workforce and can't check in.",
+    "err.employee_other_site": "{badge_id} doesn't work at {site}.",
     "err.employee_name_required": "Enter the employee's name.",
     "err.employee_not_found": "No employee found with badge id {badge_id}",
     "err.endorse_only": "Only a received check or promissory note can be endorsed.",
