@@ -345,3 +345,22 @@ def test_a_badge_from_another_site_cannot_credit_a_movement_here(floor):
     inbound._on_submit()
     assert "W-2" in inbound._error_label.text()
     assert stock_repository.quantity_at(WH1, "BOX") == 0
+
+
+def test_movement_log_times_are_shown_in_local_time(floor, monkeypatch):
+    import time
+
+    from database.connection import connection_scope
+
+    monkeypatch.setenv("TZ", "Europe/Istanbul")
+    time.tzset()
+    try:
+        stock_repository.receive(WH1, "BOX", 2)
+        with connection_scope() as conn:
+            conn.execute("UPDATE stock_movements SET created_at = '2026-10-08T21:30:00.000Z'")
+        inbound = floor._receive_panel
+        inbound.reload()
+        assert inbound._table.item(0, 0).text() == "00:30"  # UTC+3, not the stored 21:30
+    finally:
+        monkeypatch.undo()
+        time.tzset()
