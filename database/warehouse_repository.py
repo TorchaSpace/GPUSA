@@ -14,7 +14,7 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository
+from database import audit_repository, authz
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityBelowUsageError,
@@ -151,6 +151,7 @@ def delete(code: str, by: Actor | None = None) -> None:
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            authz.require_live_admin(conn, by)
             row = conn.execute(
                 "SELECT code FROM warehouses WHERE code = ? COLLATE NOCASE ORDER BY code = ? DESC", (code, code)
             ).fetchone()

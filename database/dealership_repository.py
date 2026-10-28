@@ -21,7 +21,7 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository
+from database import audit_repository, authz
 from database.connection import connection_scope
 from database.exceptions import DealershipNotFoundError, DuplicateDealershipCodeError, LocationHasStockError
 from shared.models import DEALERSHIP_REGIONS, Dealership
@@ -188,11 +188,13 @@ def delete(code: str, by: Actor | None = None) -> None:
     LocationInUseError while a scheduled / in-transit shipment is headed
     there (deactivate it instead)."""
     from database.exceptions import LocationInUseError  # local: keeps this edit clear of the file's imports
+    from database import stock_request_repository
     from database.shipment_repository import active_count_for
 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            authz.require_live_admin(conn, by)
             row = _find_row(conn, code)
             if row is None:
                 raise DealershipNotFoundError(normalize_code(code))
@@ -212,6 +214,7 @@ def delete(code: str, by: Actor | None = None) -> None:
             if cursor.rowcount == 0:
                 raise DealershipNotFoundError(code)
             conn.execute("DELETE FROM stock_levels WHERE location_kind = 'dealership' AND location_code = ?", (code,))
+            stock_request_repository.cancel_open_for_dealership(conn, code, by)
             audit_repository.record(conn, by, "deleted", "dealership", code, name)
         except Exception:
             conn.execute("ROLLBACK")

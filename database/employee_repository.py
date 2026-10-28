@@ -20,6 +20,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError, enum_label, tr
+from database import audit_repository, authz
 from database.connection import connection_scope
 from database.exceptions import DuplicateBadgeIdError, EmployeeNotFoundError, SelfActionError
 from shared.auth import Actor, normalize_badge_id
@@ -220,6 +221,7 @@ def update(employee: Employee, *, by: Actor | None = None, check_location: bool 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            authz.require_live_admin(conn, by)
             row = find_row(conn, employee.badge_id)
             if row is None:
                 raise EmployeeNotFoundError(employee.badge_id)
@@ -263,13 +265,26 @@ def delete(badge_id: str, by: Actor | None = None) -> None:
     `attendance_records` - deactivate via update() instead), LastAdminError,
     and SelfActionError when `by` is the employee being removed."""
     with connection_scope() as conn:
-        row = find_row(conn, badge_id)
-        if row is None:
-            raise EmployeeNotFoundError(normalize_badge_id(badge_id))
-        if by is not None and normalize_badge_id(by.badge_id) == normalize_badge_id(row["badge_id"]):
-            raise SelfActionError("remove")
-        _guard_row_last_admin(conn, row["id"])
+        conn.execute("BEGIN IMMEDIATE")
         try:
-            conn.execute("DELETE FROM employees WHERE id = ?", (row["id"],))
-        except sqlite3.IntegrityError as exc:
-            raise UserError("err.employee_delete_history", badge=repr(row["badge_id"])) from exc
+            authz.require_live_admin(conn, by)
+            row = find_row(conn, badge_id)
+            if row is None:
+                raise EmployeeNotFoundError(normalize_badge_id(badge_id))
+            if by is not None and normalize_badge_id(by.badge_id) == normalize_badge_id(row["badge_id"]):
+                raise SelfActionError("remove")
+            _guard_row_last_admin(conn, row["id"])
+            had_account = conn.execute("SELECT 1 FROM accounts WHERE employee_id = ?", (row["id"],)).fetchone()
+            try:
+                conn.execute("DELETE FROM employees WHERE id = ?", (row["id"],))
+            except sqlite3.IntegrityError as exc:
+                raise UserError("err.employee_delete_history", badge=repr(row["badge_id"])) from exc
+            audit_repository.record(
+                conn, by, "deleted", "employee", row["badge_id"],
+                row["name"] + (" · sign-in account removed" if had_account else ""),
+            )
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")

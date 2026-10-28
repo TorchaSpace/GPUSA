@@ -11,7 +11,7 @@ import pytest
 import database.connection as connection
 from database import ledger_repository as ledger, migrations
 from shared.models import LedgerEntry
-from tests.ledger_support import ACTOR
+from tests.ledger_support import ACTOR, ensure_admin_account
 
 # ledger_entries exactly as v4 left it: no created_by / settled_by / updated_by, no audit table.
 _OLD_LEDGER = """
@@ -76,6 +76,7 @@ def test_legacy_rows_survive_with_no_actor_and_can_still_be_worked(tmp_path):
     assert all(e.created_by is None and e.settled_by is None and e.updated_by is None for e in entries)
     assert all(ledger.list_audit(e.id) == [] for e in entries)  # nothing recorded before auditing began
 
+    ensure_admin_account(ACTOR)
     old = next(e for e in entries if e.doc_no == "OLD-1")
     cleared = ledger.mark_cleared(old.id, ACTOR)
     assert cleared.created_by is None and cleared.settled_by == ACTOR.label
@@ -128,6 +129,7 @@ def test_migration_is_idempotent_and_the_step_is_safe_to_rerun(tmp_path):
         migrations._to_v5(conn)
         columns = [r[1] for r in conn.execute("PRAGMA table_info(ledger_entries)")]
         assert len(columns) == len(set(columns))
+    ensure_admin_account(ACTOR)
     ledger.create(LedgerEntry("in", "check", "NEW-1", "X", date(2026, 9, 1), date(2026, 9, 2), 5), ACTOR)
     with connection.connection_scope() as conn:  # a second open: nothing to do, nothing lost
         migrations.run_migrations(conn)

@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository
+from database import audit_repository, authz
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBarcodeError,
@@ -169,7 +169,21 @@ def create(product: Product) -> None:
             conn.execute("COMMIT")
 
 
-def update(product: Product) -> None:
+def _locked(fn):
+    """Run fn(conn) in one BEGIN IMMEDIATE transaction."""
+    with connection_scope() as conn:
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            result = fn(conn)
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
+    return result
+
+
+def update(product: Product, by: Actor | None = None) -> None:
     """Update an existing product's fields (name/price/critical_stock_level),
     with the same validation as create().
 
@@ -181,9 +195,13 @@ def update(product: Product) -> None:
     Active/inactive is changed with set_active(), not here. The cost is not
     touched either (it moves with purchase-order receipts, so a form open
     for a minute must not write back a stale one): use set_cost().
+    `by` (the signed-in administrator), when given, is re-checked against the
+    database inside the transaction (SessionInvalidError if no longer one).
     """
     p = _validated(product)
-    with connection_scope() as conn:
+
+    def work(conn):
+        authz.require_live_admin(conn, by)
         row = _find(conn, p.barcode)
         if row is None:
             raise ProductNotFoundError(product.barcode)
@@ -194,15 +212,20 @@ def update(product: Product) -> None:
             (p.name, p.price, p.critical_stock_level, row["barcode"]),
         )
 
+    _locked(work)
 
-def set_cost(barcode: str, cost: float) -> float:
+
+def set_cost(barcode: str, cost: float, by: Actor | None = None) -> float:
     """Set a product's unit cost by hand (Admin's product form). `cost` is a
     number >= 0 (0 = unknown), at most MAX_AMOUNT, rounded half-up to cents;
     raises ValueError (UserError) otherwise and ProductNotFoundError for an
     unknown barcode. Returns the stored cost. Sales already made keep the
-    cost they were snapshotted with."""
+    cost they were snapshotted with. `by`, when given, must still be an
+    active administrator (SessionInvalidError)."""
     cost = clean_cost(cost)
-    with connection_scope() as conn:
+
+    def work(conn):
+        authz.require_live_admin(conn, by)
         row = _find(conn, barcode)
         if row is None:
             raise ProductNotFoundError(barcode)
@@ -211,6 +234,8 @@ def set_cost(barcode: str, cost: float) -> float:
             "WHERE barcode = ?",
             (cost, row["barcode"]),
         )
+
+    _locked(work)
     return cost
 
 
@@ -239,11 +264,14 @@ def costs_for(barcodes, conn: sqlite3.Connection | None = None) -> dict[str, tup
         return read(own)
 
 
-def set_active(barcode: str, active: bool) -> None:
+def set_active(barcode: str, active: bool, by: Actor | None = None) -> None:
     """Deactivate (False) or reactivate (True) a product. Stock and history
     are untouched; it just stops being sellable / receivable / shippable.
-    Raises ProductNotFoundError."""
-    with connection_scope() as conn:
+    Raises ProductNotFoundError. `by`, when given, must still be an active
+    administrator (SessionInvalidError)."""
+
+    def work(conn):
+        authz.require_live_admin(conn, by)
         row = _find(conn, barcode)
         if row is None:
             raise ProductNotFoundError(barcode)
@@ -252,6 +280,8 @@ def set_active(barcode: str, active: bool) -> None:
             "WHERE barcode = ?",
             (int(bool(active)), row["barcode"]),
         )
+
+    _locked(work)
 
 
 def delete(barcode: str, by: Actor | None = None) -> None:
@@ -265,6 +295,7 @@ def delete(barcode: str, by: Actor | None = None) -> None:
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            authz.require_live_admin(conn, by)
             row = _find(conn, barcode)
             if row is None:
                 raise ProductNotFoundError(barcode)
@@ -283,6 +314,9 @@ def delete(barcode: str, by: Actor | None = None) -> None:
             ):
                 if conn.execute(f"SELECT 1 FROM {table} WHERE product_barcode = ? LIMIT 1", (code,)).fetchone():
                     raise ProductInUseError(code, what, what_key)
+            from database import stock_request_repository  # lazy: it imports stock_repository, like this module
+
+            stock_request_repository.cancel_open_for_product(conn, code, by)
             conn.execute("DELETE FROM stock_levels WHERE product_barcode = ?", (code,))
             conn.execute("DELETE FROM products WHERE barcode = ?", (code,))
             audit_repository.record(conn, by, "deleted", "product", code, row["name"])

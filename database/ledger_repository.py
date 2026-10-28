@@ -31,6 +31,7 @@ import sqlite3
 from datetime import date
 
 from shared.i18n import UserError
+from database import authz
 from database.connection import connection_scope
 from database.exceptions import (
     DataAccessError,
@@ -38,7 +39,7 @@ from database.exceptions import (
     LedgerEntryNotFoundError,
     LedgerEntryStateError,
 )
-from shared.auth import Actor, actor_label
+from shared.auth import AREA_ADMIN, AREA_DEPOT_CONSOLE, Actor, actor_label
 from shared.formatting import round_money
 from shared.models import LEDGER_DIRECTIONS, LEDGER_DOC_TYPES, LedgerAuditRecord, LedgerEntry
 
@@ -212,6 +213,7 @@ def create(entry: LedgerEntry, actor: Actor | None = None) -> LedgerEntry:
     label = actor_label(actor)
 
     def work(conn):
+        authz.require_live_role(conn, actor, AREA_DEPOT_CONSOLE)
         try:
             cursor = conn.execute(
                 "INSERT INTO ledger_entries (direction, doc_type, doc_no, counterparty, detail, site, "
@@ -253,6 +255,7 @@ def update(entry: LedgerEntry, actor: Actor | None = None) -> LedgerEntry:
     entry = _clean(entry)
 
     def work(conn):
+        authz.require_live_role(conn, actor, AREA_ADMIN)
         before = _snapshot(_row(conn, entry.id))
         try:
             cursor = conn.execute(
@@ -304,6 +307,7 @@ def delete(entry_id: int, actor: Actor | None = None) -> None:
     actor = _require_actor(actor)
 
     def work(conn):
+        authz.require_live_role(conn, actor, AREA_ADMIN)
         before = _snapshot(_row(conn, entry_id))
         cursor = conn.execute("DELETE FROM ledger_entries WHERE id = ? AND status = 'pending'", (entry_id,))
         if cursor.rowcount == 0:
@@ -325,6 +329,7 @@ def _transition(entry_id: int, new_status: str, allowed_from: tuple[str, ...], a
     marks = ", ".join("?" for _ in allowed_from)
 
     def work(conn):
+        authz.require_live_role(conn, actor, AREA_ADMIN)
         before = _snapshot(_row(conn, entry_id))
         cursor = conn.execute(
             f"UPDATE ledger_entries SET status = ?, settled_at = {settled}, settled_by = ?, "

@@ -13,13 +13,15 @@ from database import ledger_repository as ledger
 from database.exceptions import DataAccessError, DuplicateLedgerDocumentError, LedgerEntryStateError
 from shared.auth import Actor
 from shared.models import LedgerEntry
-from tests.ledger_support import ACTOR, OTHER
+from tests.ledger_support import ACTOR, OTHER, ensure_admin_account
 
 
 @pytest.fixture(autouse=True)
 def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "t.db")
     monkeypatch.setattr(connection, "_initialized", False)
+    ensure_admin_account(ACTOR)  # ledger writes re-check the actor against the database
+    ensure_admin_account(OTHER)
 
 
 def _entry(**overrides) -> LedgerEntry:
@@ -257,6 +259,7 @@ def test_erase_all_data_can_wipe_the_audit_table_and_keeps_it_append_only(tmp_pa
     ledger.create(_entry(), ACTOR)
     connection.erase_all_data("ERASE")
     assert _count("ledger_audit") == 0 and _count("ledger_entries") == 0
+    ensure_admin_account(ACTOR)  # the wipe took the accounts too
     created = ledger.create(_entry(), ACTOR)
     with connection.connection_scope() as conn:
         with pytest.raises(sqlite3.DatabaseError):

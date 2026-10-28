@@ -260,3 +260,13 @@ def test_a_switched_off_dealership_closes_its_till(qapp):
     off.is_active = True
     dealership_repository.update(off)
     assert till_dealership_problem("001") is None
+
+
+def test_reset_pin_on_your_own_row_goes_through_change_my_pin(settings, monkeypatch):
+    settings.select("A-1")
+    calls = []
+    monkeypatch.setattr(account_repository, "set_pin", lambda *a, **k: calls.append("set_pin"))
+    monkeypatch.setattr(settings, "change_my_pin", lambda: calls.append("change_my_pin"))
+
+    settings.reset_pin()
+    assert calls == ["change_my_pin"]  # the flow that asks for the current PIN, never a bare reset

@@ -11,6 +11,25 @@ OTHER = Actor("B-200", "Ayşe Demir")
 _MUTATORS = ("create", "update", "mark_cleared", "mark_endorsed", "reopen", "delete")
 
 
+def ensure_admin_account(actor: Actor) -> None:
+    """Ledger writes re-check that the actor is a live administrator in the
+    database, so a test actor needs a real account. Idempotent."""
+    from database import account_repository, employee_repository
+    from database.exceptions import AccountNotFoundError, EmployeeNotFoundError
+    from shared.models import Employee
+
+    try:
+        account_repository.get(actor.badge_id)
+        return
+    except AccountNotFoundError:
+        pass
+    try:
+        employee_repository.get_by_badge_id(actor.badge_id)
+    except EmployeeNotFoundError:
+        employee_repository.create(Employee(actor.badge_id, actor.name, "Management", "Dealership", "HQ"))
+    account_repository.create_account(actor.badge_id, "admin", "482913")
+
+
 class SignedIn:
     """Wraps database.ledger_repository: mutators get `actor` filled in
     (ACTOR unless one is passed); everything else passes straight through."""
@@ -27,6 +46,7 @@ class SignedIn:
         def call(*args, **kwargs):
             if len(args) < 2 and "actor" not in kwargs:
                 kwargs["actor"] = self._actor
+            ensure_admin_account(kwargs.get("actor") or args[-1])
             return target(*args, **kwargs)
 
         return call

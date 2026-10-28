@@ -10,7 +10,7 @@ from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 
 import database.connection as connection
 from database import ledger_repository
-from tests.ledger_support import ACTOR, SignedIn, session_for
+from tests.ledger_support import ACTOR, SignedIn, ensure_admin_account, session_for
 from shared.models import LedgerEntry
 
 SITE = "WH-01 · Test"
@@ -25,6 +25,7 @@ def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "_initialized", False)
     from shared import current_session
 
+    ensure_admin_account(ACTOR)  # ledger writes re-check the actor against the database
     current_session.set(session_for(ACTOR, area="depot_console"))  # (conftest signs everyone out after each test)
 
 

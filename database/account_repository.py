@@ -37,7 +37,7 @@ from database.exceptions import (
     SignInFailedError,
     localized_auth,
 )
-from database import activity_repository, employee_repository
+from database import activity_repository, audit_repository, authz, employee_repository
 from shared import auth, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
@@ -131,19 +131,21 @@ def _check_actor(conn, by: Actor | None, target_badge: str, *, allow_self: bool 
     return same
 
 
-def is_session_valid(session: Session | None) -> bool:
+def is_session_valid(session: Session | None, *, assume_on_error: bool = False) -> bool:
     """Whether `session` still stands: its account exists, is switched on,
     belongs to an active employee, still has the role the person signed in
     with, and that role may still open the area. One cheap read - call it
     before anything that must not be done by someone who has since been
-    switched off (POS: before finalising a sale)."""
+    switched off (POS: before finalising a sale). A database error counts as
+    "not valid" - unless `assume_on_error`, for a background check (a transient
+    lock must not sign anybody out)."""
     if session is None:
         return False
     try:
         with connection_scope() as conn:
             row = _fetch_by_id(conn, session.account_id)
     except sqlite3.Error:
-        return False
+        return assume_on_error
     return (
         row is not None
         and bool(row["is_active"])
@@ -160,11 +162,7 @@ def require_actor_allowed(conn: sqlite3.Connection, actor: Actor | None, area: s
     the caller's connection, so a repository can check it inside the very
     transaction it is about to write in (POS: finalising a sale). No actor
     (setup scripts, tests) skips the check, as everywhere else."""
-    if actor is None:
-        return
-    row = _fetch(conn, actor.badge_id)
-    if row is None or not row["is_active"] or not row["employee_active"] or not auth.can_open(row["role"], area):
-        raise SessionInvalidError()
+    authz.require_live_role(conn, actor, area)
 
 
 def require_valid_session(session: Session | None) -> None:
@@ -363,9 +361,21 @@ def _verify_with_lockout(row: sqlite3.Row, pin: str, area: str, terminal: str, n
         raise AccountLockedError(local_datetime_text(account.locked_until))
 
     if auth.verify_pin(pin or "", row["pin_hash"]):
-        if auth.needs_rehash(row["pin_hash"]):  # made by an older version with fewer iterations
-            upgraded = auth.hash_pin(pin)
-            _write(lambda conn: conn.execute("UPDATE accounts SET pin_hash = ? WHERE id = ?", (upgraded, account.id)))
+        rehash = auth.needs_rehash(row["pin_hash"])  # made by an older version with fewer iterations
+        if row["failed_attempts"] or rehash:
+            # A correct PIN clears the wrong-PIN count - whichever action asked for it (sign-in, change PIN,
+            # security question...), so old slips never add up to a lockout later. Locks are left to expire.
+            upgraded = auth.hash_pin(pin) if rehash else None
+
+            def reset(conn):
+                if upgraded is None:
+                    conn.execute("UPDATE accounts SET failed_attempts = 0 WHERE id = ?", (account.id,))
+                else:
+                    conn.execute(
+                        "UPDATE accounts SET failed_attempts = 0, pin_hash = ? WHERE id = ?", (upgraded, account.id)
+                    )
+
+            _write(reset)
         return
 
     def wrong(conn):
@@ -462,16 +472,23 @@ def _account_row(conn, badge_id: str) -> sqlite3.Row:
 
 
 def set_pin(badge_id: str, new_pin: str, by: Actor | None = None) -> None:
-    """An administrator sets a new PIN (also clears a lockout); a person
-    may set their own (`by` is them - change_own_pin checks the old PIN
-    first). With `by` given, the actor is re-checked in the database:
-    someone else's PIN needs a CURRENT active administrator."""
+    """An administrator sets someone ELSE's PIN (also clears a lockout). With
+    `by` given, the actor is re-checked in the database: it needs a CURRENT
+    active administrator, and it may not be the account itself
+    (SelfActionError - a reset without the current PIN would let anyone at an
+    unlocked screen take over the account; use change_own_pin, which asks)."""
+    _set_pin(badge_id, new_pin, by, own=False)
+
+
+def _set_pin(badge_id: str, new_pin: str, by: Actor | None, *, own: bool) -> None:
     account = get(badge_id)
     _check_pin(new_pin, account.role)
     pin_hash = auth.hash_pin(new_pin)
 
     def run(conn):
-        _check_actor(conn, by, account.badge_id, allow_self=True)
+        same = _check_actor(conn, by, account.badge_id, allow_self=own)
+        if same and not own:
+            raise SelfActionError("reset")
         row = _account_row(conn, account.badge_id)
         if row["role"] != account.role:  # changed while we were hashing
             _check_pin(new_pin, row["role"])
@@ -651,7 +668,7 @@ def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:
     """Signed-in person changes their own PIN; the current one must match
     (checked with the sign-in lockout against the account as it is NOW)."""
     row = _confirm_current_pin(session, current_pin)
-    set_pin(row["badge_id"], new_pin, by=session.actor)
+    _set_pin(row["badge_id"], new_pin, session.actor, own=True)
 
 
 def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | None = None) -> None:
@@ -741,6 +758,7 @@ def delete(badge_id: str, by: Actor | None = None) -> None:
         if row["role"] == "admin":
             guard_last_admin(conn, row["employee_id"])
         conn.execute("DELETE FROM accounts WHERE id = ?", (row["id"],))
+        audit_repository.record(conn, by, "deleted", "account", row["badge_id"], row["name"])
         _log(conn, "account_changed", row["badge_id"], detail="account removed" + (f" · by {by.label}" if by else ""))
 
     _write(run)
