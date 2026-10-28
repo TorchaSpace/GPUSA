@@ -125,6 +125,11 @@ def create(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str,
 
             total = round(sum(sold[b][1] * (r + w) for b, (r, w) in wanted.items()), 2)
             location = UNASSIGNED if sale["dealership_code"] is None else StockLocation.dealership(sale["dealership_code"])
+            shop_removed = (not location.is_unassigned and conn.execute(
+                "SELECT 1 FROM dealerships WHERE code = ?", (location.code,)).fetchone() is None)
+            if shop_removed:  # the shop was deleted since the sale: the refund still pays out, goods go to unassigned
+                location = UNASSIGNED
+            self_approved = (requested_by is not None and approved_by.badge_id == requested_by.badge_id)
             cursor = conn.execute(
                 "INSERT INTO sale_returns (transaction_id, dealership_code, total, payment_method, reason, "
                 "requested_by, approved_by, client_uuid) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
@@ -144,8 +149,10 @@ def create(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str,
                 if restocked:
                     change_level(conn, location, barcode, restocked, change_total=True)
             audit_repository.record(conn, approved_by, "refunded", "sale", f"#{transaction_id}",
-                                    f"RF-{return_id:05d} · {total:.2f} · {reason}")
-            activity_repository.record(conn, "refund", severity="notice", source="pos", location=location,
+                                    f"RF-{return_id:05d} · {total:.2f} · {reason}"
+                                    + (" · shop removed, restocked as unassigned" if shop_removed else "")
+                                    + (" · self-approved" if self_approved else ""))
+            activity_repository.record(conn, "refund", severity="warning" if self_approved else "notice", source="pos", location=location,
                                        actor=approved_by, number=f"RF-{return_id:05d}", total=total,
                                        reason=reason, sale=transaction_id)
         except Exception:
