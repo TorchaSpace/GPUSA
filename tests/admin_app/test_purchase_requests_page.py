@@ -12,6 +12,7 @@ from database import product_repository, purchase_order_repository as po_repo
 from shared import current_session
 from shared.auth import Actor
 from shared.models import PriceRange, Product
+from tests.ledger_support import ensure_admin_account
 from tests.po_support import seed_admin
 
 ADMIN = Actor(badge_id="A-1", name="Ada Admin")
@@ -25,7 +26,11 @@ def _isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture(autouse=True)
 def _signed_in(monkeypatch):
-    monkeypatch.setattr(current_session, "actor", lambda: ADMIN)
+    def actor():
+        ensure_admin_account(ADMIN)  # admin writes re-check the actor against the database (idempotent)
+        return ADMIN
+
+    monkeypatch.setattr(current_session, "actor", actor)
 
 
 @pytest.fixture

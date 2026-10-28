@@ -45,7 +45,7 @@ import sqlite3
 from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
-from database import account_repository, activity_repository, stock_repository
+from database import account_repository, activity_repository, audit_repository, authz, stock_repository
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
@@ -130,35 +130,76 @@ def list_price_ranges() -> list[PriceRange]:
 
 
 @_wrap_sqlite
-def set_price_range(price_range: PriceRange) -> None:
+def set_price_range(price_range: PriceRange, by: Actor | None = None) -> None:
     """Create or replace a product's band. Raises ProductNotFoundError for
     an unknown barcode, ValueError for negative/inverted prices. Existing
-    orders keep the band they were judged against (see schema.sql)."""
+    orders keep the band they were judged against (see schema.sql). `by`,
+    when given, must still be an active administrator (SessionInvalidError);
+    a band that really changed is recorded in the admin audit trail."""
     low, high = _validate_range(price_range)
     supplier = (price_range.default_supplier or "").strip() or None
     with connection_scope() as conn:
-        exists = conn.execute(
-            "SELECT 1 FROM products WHERE barcode = ?", (price_range.product_barcode,)
-        ).fetchone()
-        if exists is None:
-            raise ProductNotFoundError(price_range.product_barcode)
-        conn.execute(
-            "INSERT INTO purchase_price_ranges "
-            "(product_barcode, min_unit_price, max_unit_price, default_supplier) VALUES (?, ?, ?, ?) "
-            "ON CONFLICT(product_barcode) DO UPDATE SET "
-            "min_unit_price = excluded.min_unit_price, max_unit_price = excluded.max_unit_price, "
-            "default_supplier = excluded.default_supplier, "
-            "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            (price_range.product_barcode, low, high, supplier),
-        )
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            authz.require_live_admin(conn, by)
+            exists = conn.execute(
+                "SELECT 1 FROM products WHERE barcode = ?", (price_range.product_barcode,)
+            ).fetchone()
+            if exists is None:
+                raise ProductNotFoundError(price_range.product_barcode)
+            old = conn.execute(
+                "SELECT min_unit_price, max_unit_price, default_supplier FROM purchase_price_ranges "
+                "WHERE product_barcode = ?",
+                (price_range.product_barcode,),
+            ).fetchone()
+            conn.execute(
+                "INSERT INTO purchase_price_ranges "
+                "(product_barcode, min_unit_price, max_unit_price, default_supplier) VALUES (?, ?, ?, ?) "
+                "ON CONFLICT(product_barcode) DO UPDATE SET "
+                "min_unit_price = excluded.min_unit_price, max_unit_price = excluded.max_unit_price, "
+                "default_supplier = excluded.default_supplier, "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+                (price_range.product_barcode, low, high, supplier),
+            )
+            if old is None or (old["min_unit_price"], old["max_unit_price"], old["default_supplier"]) != (
+                low, high, supplier
+            ):
+                before = "" if old is None else f"{old['min_unit_price']:g}-{old['max_unit_price']:g} -> "
+                audit_repository.record(
+                    conn, by, "created" if old is None else "changed", "price_band",
+                    price_range.product_barcode, f"{before}{low:g}-{high:g}",
+                )
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
 
 @_wrap_sqlite
-def delete_price_range(barcode: str) -> None:
+def delete_price_range(barcode: str, by: Actor | None = None) -> None:
     """Remove a product's band (a no-op if it had none). Orders for that
-    product are then held as "no_range" until a new band is set."""
+    product are then held as "no_range" until a new band is set. `by`, when
+    given, must still be an active administrator (SessionInvalidError); the
+    removal is recorded in the admin audit trail."""
     with connection_scope() as conn:
-        conn.execute("DELETE FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,))
+        conn.execute("BEGIN IMMEDIATE")
+        try:
+            authz.require_live_admin(conn, by)
+            old = conn.execute(
+                "SELECT min_unit_price, max_unit_price FROM purchase_price_ranges WHERE product_barcode = ?",
+                (barcode,),
+            ).fetchone()
+            conn.execute("DELETE FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,))
+            if old is not None:
+                audit_repository.record(
+                    conn, by, "deleted", "price_band", barcode, f"{old['min_unit_price']:g}-{old['max_unit_price']:g}"
+                )
+        except Exception:
+            conn.execute("ROLLBACK")
+            raise
+        else:
+            conn.execute("COMMIT")
 
 
 # --- Purchase orders -----------------------------------------------------

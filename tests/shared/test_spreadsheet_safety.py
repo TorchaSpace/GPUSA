@@ -16,3 +16,10 @@ def test_numbers_percentages_and_normal_text_are_untouched():
 
 def test_control_characters_are_removed():
     assert safe_cell("Box\x07 A") == "Box A"
+
+
+def test_excel_text_only_drops_control_characters():
+    from shared.spreadsheet_safety import excel_text
+
+    assert excel_text('=HYPERLINK("x")') == '=HYPERLINK("x")' and excel_text("Box\x07 A") == "Box A"
+    assert excel_text(12.5) == 12.5 and excel_text(None) is None

@@ -353,3 +353,16 @@ def dealership_bootstrap_models():
     from shared import models
 
     return models
+
+
+def test_a_lower_case_sidecar_code_is_the_stored_upper_case_code(frozen_exe):
+    _write_sidecar(frozen_exe, {"code": " ist-01 ", "name": "Kadikoy", "region": "Metro", "city": "Istanbul"})
+
+    # The identity (what the till sells under) is normalised even before it is applied...
+    assert dealership_bootstrap.load_dealership_identity()["code"] == "IST-01"
+
+    dealership_bootstrap.register_pending_dealership()
+
+    assert [d.code for d in dealership_repository.list_all()] == ["IST-01"]
+    assert dealership_bootstrap.load_dealership_identity()["code"] == "IST-01"
+    assert _read_sidecar(frozen_exe)["code"] == "IST-01"  # and the sidecar stores the normalised code

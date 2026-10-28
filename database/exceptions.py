@@ -433,7 +433,8 @@ class SelfActionError(AuthError):
 
     def __init__(self, action: str):
         super().__init__(f"You can't {action} your own account - ask another administrator.")
-        key = {"change the role of": "err.self_role", "switch off": "err.self_off", "remove": "err.self_remove"}.get(action)
+        key = {"change the role of": "err.self_role", "switch off": "err.self_off", "remove": "err.self_remove",
+               "reset": "err.self_reset"}.get(action)
         if key:
             self._localize(key)
         self.action = action

@@ -53,6 +53,8 @@ import sys
 from datetime import datetime, timezone
 from pathlib import Path
 
+from shared.warehousing import clean_code
+
 _SIDECAR_SUFFIX = ".dealership.json"
 _LOG_SUFFIX = ".dealership.log"
 _APPLIED_KEY = "applied_at"
@@ -124,7 +126,7 @@ def load_dealership_identity() -> dict | None:
     if not isinstance(data, dict):
         return None
 
-    code = str(data.get("code") or "").strip()
+    code = clean_code(data.get("code"))
     if not code:
         return None
 
@@ -153,7 +155,7 @@ def apply_sidecar(sidecar: Path, applied_by: str) -> None:
         _log(log_path, f"{applied_by}: skipped - {sidecar.name} doesn't contain a JSON object")
         return
 
-    code = str(data.get("code") or "").strip()
+    code = clean_code(data.get("code"))
     if not code:
         _log(log_path, f"{applied_by}: skipped - {sidecar.name} has no 'code' field")
         return
@@ -228,6 +230,7 @@ def apply_sidecar(sidecar: Path, applied_by: str) -> None:
         )
         return
 
+    data["code"] = code  # the sidecar keeps the code as stored ("ist-01" -> "IST-01")
     data[_APPLIED_KEY] = _now_utc()
     try:
         sidecar.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")

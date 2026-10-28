@@ -232,7 +232,7 @@ def prompt_dealership_details(count: int) -> list[dict]:
             continue
 
         print(f"\n-- POS terminal #{i} (POS_{i}.exe) --")
-        code = input(f"  Dealership code [{default_code}]: ").strip() or default_code
+        code = input(f"  Dealership code [{default_code}]: ").strip().upper() or default_code
         name = input(f"  Dealership / branch name [{default_name}]: ").strip() or default_name
         print("  Region: " + ", ".join(f"{n + 1}={r}" for n, r in enumerate(DEALERSHIP_REGIONS)))
         region_raw = input(f"  Choose 1-{len(DEALERSHIP_REGIONS)} [1={DEALERSHIP_REGIONS[0]}]: ").strip()

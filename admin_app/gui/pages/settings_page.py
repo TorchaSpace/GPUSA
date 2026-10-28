@@ -261,6 +261,10 @@ class SettingsPage(AdminPage):
         account = self.selected()
         if account is None:
             return
+        if self._is_me(account):
+            # Your own PIN is changed with the current one (that flow asks for it); a reset would not.
+            self.change_my_pin()
+            return
         popup = PinPopup(account.name, account.role, ask_current=False, parent=self)
         if popup.exec():
             self._run(lambda: account_repository.set_pin(account.badge_id, popup.pin.text(), by=current_session.actor()))

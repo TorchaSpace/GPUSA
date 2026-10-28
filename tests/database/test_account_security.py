@@ -102,8 +102,11 @@ def test_the_actor_is_rechecked_in_the_database(people):
         accounts.set_active("B-2", False, by=stale)
     with pytest.raises(SessionInvalidError):
         accounts.create_account("B-3", "cashier", "5831", by=stale)
-    # but anyone may change their OWN pin
-    accounts.set_pin("B-3", "6042", by=stale)
+    # but anyone may change their OWN pin - with the current one (set_pin refuses a self-reset)
+    with pytest.raises(SessionInvalidError):  # a demoted admin cannot "reset" even their own PIN
+        accounts.set_pin("B-3", "6042", by=stale)
+    own = accounts.authenticate("B-3", "739184", auth.AREA_POS, "POS")
+    accounts.change_own_pin(own, "739184", "6042")
     assert accounts.authenticate("B-3", "6042", auth.AREA_POS, "POS")
 
 
@@ -276,3 +279,50 @@ def test_signing_in_upgrades_a_hash_made_with_fewer_iterations(monkeypatch):
                               "WHERE e.badge_id = 'B-7'").fetchone()[0]
     assert stored.split("$")[1] == str(_auth.PBKDF2_ITERATIONS)
     accounts.authenticate("B-7", "5831", "pos", "Till 1")  # still works after the upgrade
+
+
+# --- the wrong-PIN count is cleared by ANY correct PIN check ------------------------
+
+def _failed_attempts(badge: str) -> int:
+    return accounts.get(badge).failed_attempts
+
+
+def test_a_correct_current_pin_clears_earlier_slips_so_they_never_add_up(people):
+    session = people
+    for _ in range(auth.MAX_FAILED_ATTEMPTS - 1):
+        with pytest.raises(SignInFailedError):
+            accounts.set_security_question(session, "000000", "First pet?", "Pamuk")
+    assert _failed_attempts("B-1") == auth.MAX_FAILED_ATTEMPTS - 1
+
+    accounts.set_security_question(session, "482913", "First pet?", "Pamuk")  # the right PIN
+    assert _failed_attempts("B-1") == 0
+
+    # one slip at sign-in later is just a slip, not the fifth strike
+    with pytest.raises(SignInFailedError):
+        accounts.authenticate("B-1", "000000", auth.AREA_ADMIN, "Admin")
+    assert _failed_attempts("B-1") == 1
+
+
+def test_changing_your_own_pin_resets_the_count(people):
+    with pytest.raises(SignInFailedError):
+        accounts.change_own_pin(people, "000000", "913574")
+    assert _failed_attempts("B-1") == 1
+    accounts.change_own_pin(people, "482913", "913574")
+    assert _failed_attempts("B-1") == 0
+
+
+def test_a_reset_of_your_own_pin_needs_the_current_pin_flow(people):
+    with pytest.raises(SelfActionError) as caught:
+        accounts.set_pin("B-1", "913574", by=people.actor)  # an unlocked screen must not be a takeover
+    assert caught.value.action == "reset"
+    assert accounts.authenticate("B-1", "482913", auth.AREA_ADMIN, "Admin")  # nothing changed
+
+    with pytest.raises(SignInFailedError):
+        accounts.change_own_pin(people, "000000", "913574")
+    accounts.change_own_pin(people, "482913", "913574")
+    assert accounts.authenticate("B-1", "913574", auth.AREA_ADMIN, "Admin")
+
+    employee_repository.create(Employee("B-4", "Ece", "Management", "Dealership", "HQ"))
+    accounts.create_account("B-4", "cashier", "5831")
+    accounts.set_pin("B-4", "6042", by=people.actor)  # an administrator may still reset someone else's
+    assert accounts.authenticate("B-4", "6042", auth.AREA_POS, "POS")

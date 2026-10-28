@@ -84,9 +84,16 @@ def normalise_barcode(barcode) -> str:
     return text
 
 
+def clean_code(code) -> str:
+    """A warehouse/dealership code as stored: trimmed, upper-case ("ist-01 " is
+    "IST-01"). Plain str.upper on purpose - codes are identifiers, not UI text,
+    so Turkish casing (i -> İ) must not apply. Blank stays blank."""
+    return str(code or "").strip().upper()
+
+
 def normalise_code(code, what: str = "code") -> str:
     """Warehouse/dealership codes: trimmed, upper-case. ValueError if blank."""
-    text = str(code or "").strip().upper()
+    text = clean_code(code)
     if not text:
         raise UserError("err.code_required", what=enum_label("kind", what))
     return text

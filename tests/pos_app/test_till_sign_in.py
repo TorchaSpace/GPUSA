@@ -198,4 +198,28 @@ def test_the_next_cashier_signs_in_at_the_home_shop_and_the_till_goes_back_to_it
     assert asked == [("D-A", "Shop D-A")]
     assert window._dealership_code == "D-A" and window.session == nxt
     assert window._header._cashier_label.text() == "Erol"
+
+def test_a_lower_case_setup_code_still_sells_and_receives(qapp, cashier, monkeypatch):
+    """The sidecar may say "ist-01"; the shop is stored as IST-01 and the till must still find it."""
+    from database import dealership_repository, product_repository, stock_repository
+    from pos_app.gui import main_window as pos_main_window
+    from shared.models import Dealership, Product, StockLocation
+    from tests.stock_invariant import assert_totals_consistent
+
+    dealership_repository.create(Dealership(code="ist-01", name="Kadikoy", region="Coastal", city="Istanbul"))
+    product_repository.create(Product("P1", "Oil", 5.0, 0, 1))
+    monkeypatch.setattr(
+        pos_main_window, "load_dealership_identity",
+        lambda: {"code": "ist-01", "name": "Kadikoy", "location_line": "Istanbul"},
+    )
+    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    window = pos_main_window.MainWindow(session)
+    window.show()
+    pump(qapp)
+
+    assert window._dealership_code == "IST-01"
+    shelf = StockLocation.dealership(window._dealership_code)
+    stock_repository.receive(shelf, "P1", 5)
+    assert stock_repository.quantity_at(shelf, "P1") == 5
+    assert_totals_consistent()
     window.close()

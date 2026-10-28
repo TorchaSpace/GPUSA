@@ -10,7 +10,7 @@ from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 
 import database.connection as connection
 from database import ledger_repository
-from tests.ledger_support import ACTOR, OTHER, SignedIn, session_for
+from tests.ledger_support import ACTOR, OTHER, SignedIn, ensure_admin_account, session_for
 from shared.models import LedgerEntry
 
 TODAY = date(2026, 9, 24)
@@ -24,6 +24,7 @@ def _isolated_db(tmp_path, monkeypatch):
     monkeypatch.setattr(connection, "_initialized", False)
     from shared import current_session
 
+    ensure_admin_account(ACTOR)  # the page's ledger writes re-check the actor against the database
     current_session.set(session_for(ACTOR, area="admin"))  # (conftest signs everyone out after each test)
 
 
@@ -298,6 +299,7 @@ def test_history_shows_who_did_what_for_the_selected_document(page):
     text = page.history_text()
     assert "Check · CHK-1" in text and "Murat Yılmaz · B-100" in text and "recorded" in text
 
+    ensure_admin_account(OTHER)
     current_session.set(session_for(OTHER))
     page._change_status("clear")
     text = page.history_text()

@@ -312,3 +312,44 @@ def test_new_product_can_be_added_with_a_cost(page):
     form._cost_input.setValue(4)
     form.accept()
     assert product_repository.get_by_barcode("COSTED").cost_price == 4
+
+
+def _export_to(page, monkeypatch, chosen):
+    from PySide6.QtWidgets import QFileDialog
+
+    monkeypatch.setattr(QFileDialog, "getSaveFileName", staticmethod(lambda *a, **k: (str(chosen), "")))
+    page._export_price_list()
+
+
+def test_the_price_list_is_a_csv_excel_reads_with_turkish_letters(page, monkeypatch, tmp_path, boxes):
+    import csv
+
+    product_repository.create(Product("ÇAY-1", "Çay Bardağı İnce", 12.5, 0, 5))
+    page.reload()
+    _export_to(page, monkeypatch, tmp_path / "prices")  # no extension typed
+
+    out = tmp_path / "prices.csv"
+    assert out.read_bytes().startswith(b"\xef\xbb\xbf") and not (tmp_path / "prices").exists()
+    rows = list(csv.reader(out.open(encoding="utf-8-sig", newline="")))
+    assert rows[0][:3] == ["Barcode", "Name", "Price"]
+    assert ["ÇAY-1", "Çay Bardağı İnce", "12.50"] == next(r for r in rows if r[0] == "ÇAY-1")[:3]
+    assert str(out) in boxes["info"][-1]  # the message names the file that was really written
+
+
+def test_the_price_list_keeps_a_typed_csv_name_and_appends_after_other_dots(page, monkeypatch, tmp_path):
+    _export_to(page, monkeypatch, tmp_path / "plain.csv")
+    _export_to(page, monkeypatch, tmp_path / "list 2026.10.03")
+    assert (tmp_path / "plain.csv").exists() and (tmp_path / "list 2026.10.03.csv").exists()
+
+
+def test_the_price_list_asks_before_replacing_the_file_it_adds_an_extension_to(page, monkeypatch, tmp_path):
+    from PySide6.QtWidgets import QMessageBox
+
+    (tmp_path / "prices.csv").write_text("precious", encoding="utf-8")
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.No)
+    _export_to(page, monkeypatch, tmp_path / "prices")
+    assert (tmp_path / "prices.csv").read_text(encoding="utf-8") == "precious"
+
+    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
+    _export_to(page, monkeypatch, tmp_path / "prices")
+    assert (tmp_path / "prices.csv").read_text(encoding="utf-8-sig").startswith("Barcode")
