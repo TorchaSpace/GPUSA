@@ -878,6 +878,7 @@ TR_ADMIN = {
     "err.po_decide_admin_only": "Satın alma siparişini yalnızca yönetici onaylayabilir veya reddedebilir.",
     "err.po_not_found": "{id} numaralı satın alma siparişi bulunamadı",
     "err.po_site_required": "Satın alma siparişinin bir konumu olmalı.",
+    "err.shipment_dealership_inactive": "{name} devre dışı - ona sevkiyat gönderilemez.",
     "err.price_finite": "Fiyat sonlu bir sayı olmalı.",
     "err.price_huge": "Fiyat makul olmayacak kadar büyük.",
     "err.price_negative": "Fiyat negatif olamaz.",

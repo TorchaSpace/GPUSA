@@ -373,3 +373,12 @@ def test_in_transit_shipments_also_block_the_delete(world):
 
     ships.complete_receipt(shipment.id, {})  # delivered: the warehouse is free to go
     warehouse_repository.delete("WH-01")
+
+
+def test_a_shipment_to_a_deactivated_dealership_is_refused(world):
+    dealership_repository.create(Dealership(code="002", name="Closed Branch", region="Metro", city="X", is_active=False))
+    with pytest.raises(ValueError) as excinfo:
+        _new(dealership_code="002")
+    assert "Closed Branch" in str(excinfo.value)
+    assert ships.list_shipments() == []
+    assert _new().dealership_code == "001"  # an active one is still fine

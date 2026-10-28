@@ -828,6 +828,7 @@ EN_ADMIN = {
     "err.po_decide_admin_only": "Only an administrator can approve or reject a purchase order.",
     "err.po_not_found": "No purchase order found with id {id}",
     "err.po_site_required": "A purchase order needs a site.",
+    "err.shipment_dealership_inactive": "{name} is switched off - it can't be sent a shipment.",
     "err.price_finite": "Price must be a finite number.",
     "err.price_huge": "Price is unreasonably large.",
     "err.price_negative": "Price can't be negative.",
