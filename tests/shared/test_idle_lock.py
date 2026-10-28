@@ -61,3 +61,19 @@ def test_never_fires_under_a_modal_dialog(qapp):
     dialog.exec()
     assert seen == [False]
     assert lock.check()
+
+
+def test_lock_under_modal_flag_fires_even_with_a_dialog_open(qapp):
+    clock = _Clock()
+    lock = IdleLock(60, clock=clock, lock_under_modal=True)
+    clock.now += 120
+    seen = []
+
+    def probe():
+        seen.append(lock.check())
+        dialog.reject()
+
+    dialog = QDialog()
+    QTimer.singleShot(0, probe)
+    dialog.exec()
+    assert seen == [True]
