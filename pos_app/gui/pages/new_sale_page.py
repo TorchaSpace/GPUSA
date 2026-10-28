@@ -40,6 +40,7 @@ is stored or charged by the database.
 
 from __future__ import annotations
 
+import uuid
 from dataclasses import dataclass
 
 from PySide6.QtCore import QEasingCurve, QEvent, QPropertyAnimation, QRectF, QSize, Qt, QTimer
@@ -377,6 +378,9 @@ class NewSalePage(QWidget):
 
         self._all_products: list[Product] = []
         self._cart: dict[str, _CartLine] = {}  # barcode -> _CartLine, insertion order preserved
+        # (what was being charged, its key): a retry of the SAME cart after a failure whose outcome is
+        # unknown (database busy, answer lost) re-sends the same key, so the sale is stored once.
+        self._attempt: tuple[tuple, str] | None = None
         self._cards: dict[str, _ProductCard] = {}  # barcode -> the card currently in the grid
         self._rows: dict[str, _CartRow] = {}  # barcode -> its cart row widget
         self._last_total: float | None = None
@@ -757,6 +761,7 @@ class NewSalePage(QWidget):
 
     def _clear_cart(self) -> None:
         self._cart.clear()
+        self._attempt = None
         self._render_cart()
 
     def _on_clear_clicked(self) -> None:
@@ -868,10 +873,19 @@ class NewSalePage(QWidget):
             QMessageBox.information(self, tr("pos.cart_empty"), tr("pos.sale.empty_body"))
             return
 
+        method = payment_label.lower() if payment_label.lower() in PAYMENT_METHODS else None
+        signature = (method, tuple((line.barcode, line.quantity, round(line.unit_price, 2))
+                                   for line in self._cart.values()))
+        retrying = self._attempt is not None and self._attempt[0] == signature
+        if not retrying:
+            self._attempt = (signature, uuid.uuid4().hex)
+
         # Re-read prices and availability NOW: the till may have been open for a while, and an admin
         # can change a price (or withdraw a product) at any time. Refuse, refresh, and let the cashier look again.
+        # (Not on a retry of the same cart: the first try may have committed and taken the stock, and
+        # finalize_transaction() answers a repeated key with the stored sale before looking at stock.)
         try:
-            issues = product_repository.check_cart(self._location, self._cart_triples())
+            issues = [] if retrying else product_repository.check_cart(self._location, self._cart_triples())
         except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, tr("pos.sale.failed_title"), str(exc))
             return
@@ -888,7 +902,8 @@ class NewSalePage(QWidget):
             return
 
         pending = Transaction(
-            payment_method=payment_label.lower() if payment_label.lower() in PAYMENT_METHODS else None,
+            payment_method=method,
+            client_uuid=self._attempt[1],
             items=[
                 LineItem(
                     product_barcode=line.barcode,
@@ -932,6 +947,7 @@ class NewSalePage(QWidget):
             return
 
         self._cart.clear()
+        self._attempt = None
         self._cart_notice.hide()
         self.reload()
         body = tr("pos.sale.complete_body").format(

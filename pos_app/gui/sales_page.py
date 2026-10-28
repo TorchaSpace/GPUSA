@@ -14,6 +14,7 @@
 
 from __future__ import annotations
 
+import uuid
 from datetime import date, datetime, timedelta
 
 from PySide6.QtCore import Qt, Signal
@@ -69,6 +70,7 @@ class ReturnDialog(QDialog):
         self.sale_return: SaleReturn | None = None
         self._requested_by = requested_by
         self._terminal = terminal
+        self._attempt: tuple[tuple, str] | None = None  # (what was submitted, its key): a re-submit stores once
         self._lines = sale_return_repository.returnable_lines(transaction.id)
         self.setWindowTitle(tr("pos.sales.return_title"))
         self.setModal(True)
@@ -139,13 +141,17 @@ class ReturnDialog(QDialog):
     def submit(self) -> bool:
         lines = [(barcode, spin.value(), self.restock_boxes[barcode].isChecked())
                  for barcode, spin in self.quantity_spins.items() if spin.value() > 0]
+        signature = (tuple(lines), self.reason_input.text(), self.badge_input.text().strip())
+        if self._attempt is None or self._attempt[0] != signature:
+            self._attempt = (signature, uuid.uuid4().hex)
         try:
             approver = account_repository.authenticate(
                 self.badge_input.text(), self.pin_input.text(), AREA_DEPOT_CONSOLE, self._terminal,
                 event="pin_confirmed",
             ).actor
             self.sale_return = sale_return_repository.create(
-                self.transaction.id, lines, self.reason_input.text(), approver, self._requested_by)
+                self.transaction.id, lines, self.reason_input.text(), approver, self._requested_by,
+                client_uuid=self._attempt[1])
         except (ValueError, *DATABASE_ERRORS) as exc:
             self.pin_input.clear()
             self.error_label.setText(str(exc))

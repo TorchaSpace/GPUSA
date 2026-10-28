@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sqlite3
+
 import pytest
 
 from tests.gui_support import pump, qapp  # noqa: F401
@@ -124,3 +126,24 @@ def test_a_free_item_can_be_returned_from_the_till(page):
     dialog.pin_input.setText("482913")
     assert dialog.submit() and dialog.sale_return.total == 0.0
     assert stock_repository.quantity_at(SHELF, "GIFT") == 5
+
+
+def test_a_refund_submitted_twice_is_stored_once(page, monkeypatch):
+    page.table.selectRow(0)
+    dialog = page.return_dialog()
+    _fill(dialog)
+    real = sale_return_repository.create
+    calls = []
+
+    def lose_the_answer(*args, **kwargs):
+        calls.append(kwargs.get("client_uuid"))
+        real(*args, **kwargs)
+        if len(calls) == 1:
+            raise sqlite3.OperationalError("database is locked")
+
+    monkeypatch.setattr(sale_return_repository, "create", lose_the_answer)
+    assert not dialog.submit()  # committed, but the till never heard back
+    dialog.pin_input.setText("482913")  # the PIN field is cleared after a failure
+    assert dialog.submit() and calls[0] == calls[1] and calls[0]
+    assert len(sale_return_repository.list_for_transaction(page.transactions[0].id)) == 1
+    assert stock_repository.quantity_at(SHELF, "OIL") == 9
