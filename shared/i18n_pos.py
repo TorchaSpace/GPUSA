@@ -69,6 +69,9 @@ EN_POS: dict[str, str] = {
     "pos.sale.failed_title": "Sale failed",
     "pos.sale.complete_title": "Sale complete",
     "pos.sale.complete_body": "{payment} sale #{id} - total {total}",
+    "pos.cart.issue_unavailable": "{name} is no longer sold - it was removed or deactivated.",
+    "pos.cart.issue_price": "The price of {name} changed from {old} to {new}.",
+    "pos.cart.issue_stock": "Only {n} of {name} left on this shelf.",
     # My Stock
     "pos.stock.title": "My Local Stock",
     "pos.stock.counted": "counted {time} today",
@@ -239,6 +242,9 @@ TR_POS: dict[str, str] = {
     "pos.sale.failed_title": "Satış başarısız",
     "pos.sale.complete_title": "Satış tamamlandı",
     "pos.sale.complete_body": "{payment} satışı #{id} - toplam {total}",
+    "pos.cart.issue_unavailable": "{name} artık satılmıyor - kaldırıldı veya devre dışı bırakıldı.",
+    "pos.cart.issue_price": "{name} fiyatı {old} iken {new} oldu.",
+    "pos.cart.issue_stock": "Bu rafta {name} ürününden yalnızca {n} adet kaldı.",
     # My Stock
     "pos.stock.title": "Stoğum",
     "pos.stock.counted": "bugün {time} sayımı",

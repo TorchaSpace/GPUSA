@@ -23,7 +23,7 @@ import sqlite3
 from dataclasses import dataclass
 
 from shared.auth import Actor
-from shared.i18n import UserError
+from shared.i18n import UserError, tr
 from database import audit_repository
 from database.connection import connection_scope
 from database.exceptions import (
@@ -328,13 +328,14 @@ def cart_issues(lines: list[tuple[str, float, int]], current: dict[str, Product 
         if now is None or not now.is_active:
             name = now.name if now is not None else barcode
             issues.append(CartIssue("unavailable", barcode, name, price, None, 0,
-                                    f"{name} is no longer sold - it was removed or deactivated."))
+                                    tr("pos.cart.issue_unavailable").format(name=name)))
         elif round(float(now.price), 2) != round(float(price), 2):
             issues.append(CartIssue("price", barcode, now.name, price, float(now.price), now.stock_quantity,
-                                    f"The price of {now.name} changed from {format_money(price, '$')} to {format_money(now.price, '$')}."))
+                                    tr("pos.cart.issue_price").format(
+                                        name=now.name, old=format_money(price, "$"), new=format_money(now.price, "$"))))
         elif wanted[barcode] > now.stock_quantity:
             issues.append(CartIssue("stock", barcode, now.name, price, float(now.price), now.stock_quantity,
-                                    f"Only {now.stock_quantity} of {now.name} left on this shelf."))
+                                    tr("pos.cart.issue_stock").format(n=now.stock_quantity, name=now.name)))
     return issues
 
 
