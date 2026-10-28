@@ -390,3 +390,21 @@ def test_the_decision_and_its_event_stand_or_fall_together(wrap, monkeypatch):
     assert po_repo.get(held.id).status == "pending"  # rolled back with the failed event
     assert po_repo.approve(held.id, decided_by=ADMIN).status == "sent"
     assert "po_approved" in [e.kind for e in activity_repository.list_since(0)]
+
+
+# --- the product an order names ------------------------------------------------
+
+
+def test_submit_stores_the_products_own_barcode_and_name_whatever_case_was_typed(wrap):
+    order = po_repo.submit("plt-4410", "Kuzey Ambalaj A.Ş.", 10, 600, "WH-01")
+    assert (order.product_barcode, order.product_name) == ("PLT-4410", "Pallet wrap 500mm")
+    assert order.status == "sent"  # judged against PLT-4410's band, not "no range" for the lower-case text
+
+
+def test_submit_refuses_a_deactivated_product(wrap):
+    from database.exceptions import ProductInactiveError
+
+    product_repository.set_active(wrap, False)
+    with pytest.raises(ProductInactiveError):
+        _submit(wrap, 600)
+    assert po_repo.list_orders() == []

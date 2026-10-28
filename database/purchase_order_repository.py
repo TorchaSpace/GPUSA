@@ -199,7 +199,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     Raises ValueError for a blank supplier/site, a quantity that isn't a
     whole number between 1 and MAX_QUANTITY, or a price that isn't finite,
     rounds (half-up, to cents) to less than 0.01 or exceeds MAX_AMOUNT;
-    ProductNotFoundError for an unknown barcode. The site is stored
+    ProductNotFoundError for an unknown barcode, ProductInactiveError for a
+    deactivated product (any letter case is fine). The site is stored
     stripped and upper-cased.
 
     BEGIN IMMEDIATE so the band that's read and the order that's written
@@ -226,11 +227,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            product = conn.execute(
-                "SELECT name FROM products WHERE barcode = ?", (barcode,)
-            ).fetchone()
-            if product is None:
-                raise ProductNotFoundError(barcode)
+            # stored spelling + name (any letter case typed), and no new orders for a deactivated product
+            barcode, product_name = stock_repository.resolve_product(conn, barcode, active_only=True)
 
             range_row = conn.execute(
                 "SELECT * FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,)
@@ -245,7 +243,7 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
                 "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (
                     barcode,
-                    product["name"],
+                    product_name,
                     supplier,
                     quantity,
                     unit_price,
@@ -262,7 +260,7 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
             ).fetchone()
             activity_repository.record(
                 conn, "po_pending" if hold_reason else "po_sent", severity="warning" if hold_reason else "info",
-                source="depot", actor=raised_by, number=_row_to_order(row).number, product=product["name"],
+                source="depot", actor=raised_by, number=_row_to_order(row).number, product=product_name,
                 quantity=quantity, total=round(quantity * unit_price, 2), site=site)
         except Exception:
             conn.execute("ROLLBACK")
