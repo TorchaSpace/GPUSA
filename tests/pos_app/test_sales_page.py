@@ -167,3 +167,17 @@ def test_an_empty_or_unexplained_refund_is_refused_before_the_manager_pin_is_spe
     assert not dialog.submit() and "why the goods" in dialog.error_label.text()
     assert len(accounts.list_events(500)) == events_before  # the PIN was never checked
     assert sale_return_repository.list_for_transaction(page.transactions[0].id) == []
+
+
+def test_day_close_explains_a_negative_expected_cash(page, monkeypatch):
+    import dataclasses
+
+    from pos_app.gui.sales_page import DayCloseDialog
+
+    dialog = DayCloseDialog("001")
+    assert not dialog.negative_label.isVisibleTo(dialog)
+    real = day_close_repository.summarize
+    monkeypatch.setattr(day_close_repository, "summarize",
+                        lambda *a, **k: dataclasses.replace(real(*a, **k), cash_refunds=100.0))
+    dialog = DayCloseDialog("001")
+    assert dialog.negative_label.isVisibleTo(dialog) and "exceed" in dialog.negative_label.text()

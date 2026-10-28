@@ -203,6 +203,12 @@ class DayCloseDialog(QDialog):
                 amount.setStyleSheet("font-weight: 700;")
             grid.addWidget(amount, row, 1)
         layout.addLayout(grid)
+        # Refunds paid out today (for earlier days' sales) can exceed today's cash sales; the till has no
+        # opening float to net that against, so say why the difference will read "over".
+        self.negative_label = QLabel(tr("pos.sales.negative_expected"))
+        self.negative_label.setWordWrap(True)
+        self.negative_label.setVisible(s.expected_cash < 0)
+        layout.addWidget(self.negative_label)
 
         form = QFormLayout()
         self.counted_spin = QDoubleSpinBox()
