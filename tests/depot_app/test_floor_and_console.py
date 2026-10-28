@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import sys
+
 import pytest
 
 from tests.gui_support import pump, qapp  # noqa: F401
@@ -347,6 +349,7 @@ def test_a_badge_from_another_site_cannot_credit_a_movement_here(floor):
     assert stock_repository.quantity_at(WH1, "BOX") == 0
 
 
+@pytest.mark.skipif(sys.platform == "win32", reason="time.tzset() is not available on Windows")
 def test_movement_log_times_are_shown_in_local_time(floor, monkeypatch):
     import time
 
