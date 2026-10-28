@@ -823,6 +823,7 @@ EN_ADMIN = {
     "err.over_receive": "{product}: can't receive {count} - only {expected} were shipped on {number}.",
     "err.pick_location": "Pick a warehouse or dealership.",
     "err.po_decided": "{number} is no longer awaiting approval (it is {status})",
+    "err.po_decide_admin_only": "Only an administrator can approve or reject a purchase order.",
     "err.po_not_found": "No purchase order found with id {id}",
     "err.po_site_required": "A purchase order needs a site.",
     "err.price_finite": "Price must be a finite number.",

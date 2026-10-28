@@ -336,7 +336,12 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
     if not decider or not decider.strip(" ·"):
         raise UserError("err.decision_needs_admin")
     note = (note or "").strip() or None
-    with connection_scope() as conn:
+
+    def run(conn):
+        row = _order_row(conn, order_id)  # PurchaseOrderNotFoundError
+        # Only an administrator decides, read from the account in the database like cancel_order does.
+        if account_repository.live_role(conn, decided_by.badge_id) != "admin":
+            raise UserError("err.po_decide_admin_only")
         # The `AND status = 'pending'` is what makes this safe with two
         # admins on two machines: only the first decision matches a row;
         # the second sees rowcount 0 and is told the order was already
@@ -348,17 +353,16 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
             "WHERE id = ? AND status = 'pending'",
             (new_status, note, decider, order_id),
         )
-        row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
-    if row is None:
-        raise PurchaseOrderNotFoundError(order_id)
-    order = _row_to_order(row)
-    if cursor.rowcount == 0:
-        raise PurchaseOrderAlreadyDecidedError(order.number, order.status)
-    with connection_scope() as conn:
+        order = _row_to_order(_order_row(conn, order_id))
+        if cursor.rowcount == 0:
+            raise PurchaseOrderAlreadyDecidedError(_row_to_order(row).number, order.status)
+        # Same transaction as the decision, so the event exists iff the decision was kept.
         activity_repository.record(conn, "po_approved" if new_status == "sent" else "po_rejected", source="admin",
                                    actor=decided_by, number=order.number, product=order.product_name,
                                    quantity=order.quantity)
-    return order
+        return order
+
+    return _in_transaction(run)
 
 
 def approve(order_id: int, note: str | None = None, decided_by: Actor | None = None) -> PurchaseOrder:

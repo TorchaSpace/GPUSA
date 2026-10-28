@@ -9,6 +9,7 @@ from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 import database.connection as connection
 from database import product_repository, purchase_order_repository as po_repo
 from shared.auth import Actor
+from tests.po_support import seed_admin
 from shared.models import PriceRange, Product
 
 ADMIN = Actor(badge_id="A-1", name="Ada Admin")
@@ -22,6 +23,7 @@ def _isolated_db(tmp_path, monkeypatch):
 
 @pytest.fixture
 def panel(qapp):
+    seed_admin()  # approve()/reject() check the decider's role in the database
     product_repository.create(Product("PLT-4410", "Pallet wrap 500mm", 900, 5, 10))
     product_repository.create(Product("BOX-2218", "Carton", 40, 300, 200))
     po_repo.set_price_range(PriceRange("PLT-4410", 520, 680, "Kuzey Ambalaj A.Ş."))

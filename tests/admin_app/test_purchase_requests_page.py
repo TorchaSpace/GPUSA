@@ -12,6 +12,7 @@ from database import product_repository, purchase_order_repository as po_repo
 from shared import current_session
 from shared.auth import Actor
 from shared.models import PriceRange, Product
+from tests.po_support import seed_admin
 
 ADMIN = Actor(badge_id="A-1", name="Ada Admin")
 
@@ -29,6 +30,7 @@ def _signed_in(monkeypatch):
 
 @pytest.fixture
 def held_orders():
+    seed_admin()  # approve()/reject() check the decider's role in the database
     product_repository.create(Product("PLT-4410", "Pallet wrap 500mm", 900, 5, 10))
     po_repo.set_price_range(PriceRange("PLT-4410", 520, 680))
     first = po_repo.submit("PLT-4410", "Kuzey", 40, 742.5, "WH-01")

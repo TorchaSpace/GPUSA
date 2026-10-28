@@ -873,6 +873,7 @@ TR_ADMIN = {
     "err.over_receive": "{product}: {count} adet teslim alınamaz - {number} ile yalnızca {expected} adet sevk edildi.",
     "err.pick_location": "Bir depo veya bayi seçin.",
     "err.po_decided": "{number} artık onay beklemiyor (durumu: {status})",
+    "err.po_decide_admin_only": "Satın alma siparişini yalnızca yönetici onaylayabilir veya reddedebilir.",
     "err.po_not_found": "{id} numaralı satın alma siparişi bulunamadı",
     "err.po_site_required": "Satın alma siparişinin bir konumu olmalı.",
     "err.price_finite": "Fiyat sonlu bir sayı olmalı.",
