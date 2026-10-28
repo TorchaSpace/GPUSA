@@ -23,6 +23,7 @@ from database.exceptions import (
 from database.stock_repository import change_level, level_in, require_location
 from shared.auth import AREA_POS, Actor, actor_label
 from shared.formatting import to_db_timestamp
+from shared.i18n import UserError
 from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, StockLocation, Transaction
 
 
@@ -43,6 +44,7 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
     a dealership can change between that check and the charge. Inside the
     one BEGIN IMMEDIATE transaction it re-reads everything and refuses,
     writing nothing, with:
+    - UserError                if a quantity is not a whole number of at least 1;
     - DealershipInactiveError  if `location` is a dealership switched off in Admin;
     - SessionInvalidError      if `cashier` no longer has an active account
                                that may use POS (switched off, employee
@@ -77,6 +79,12 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
         raise ValueError("Cannot finalize a transaction with no line items")
     if transaction.payment_method is not None and transaction.payment_method not in PAYMENT_METHODS:
         raise ValueError(f"Unknown payment method: {transaction.payment_method!r}")
+
+    for item in transaction.items:  # whole units, at least 1 - never 0, negative, fractional or True
+        if isinstance(item.quantity, bool) or int(item.quantity) != item.quantity or item.quantity <= 0:
+            raise UserError("err.sale_lines")
+    transaction = dataclasses.replace(
+        transaction, items=[dataclasses.replace(item, quantity=int(item.quantity)) for item in transaction.items])
 
     client_uuid = (transaction.client_uuid or "").strip() or uuid.uuid4().hex
     wanted: dict[str, int] = {}
