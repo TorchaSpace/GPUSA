@@ -43,7 +43,7 @@ from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared import current_session
 from shared.auth import AREA_DEPOT_CONSOLE
 from shared.currency import format_money
-from shared.i18n import tr
+from shared.i18n import UserError, tr
 from shared.models import DayClose, SaleReturn, StockLocation, Transaction, UNASSIGNED
 
 RECENT_DAYS = 7
@@ -145,6 +145,12 @@ class ReturnDialog(QDialog):
         if self._attempt is None or self._attempt[0] != signature:
             self._attempt = (signature, uuid.uuid4().hex)
         try:
+            # Checked before the approver's PIN is spent: a manager must not be asked to
+            # sign off (and log a pin_confirmed event for) a form that cannot be saved.
+            if not lines:
+                raise UserError("err.return_lines")
+            if not self.reason_input.text().strip():
+                raise UserError("err.return_reason")
             approver = account_repository.authenticate(
                 self.badge_input.text(), self.pin_input.text(), AREA_DEPOT_CONSOLE, self._terminal,
                 event="pin_confirmed",
@@ -349,7 +355,14 @@ class SalesPage(QWidget):
         return self.transactions[rows[0].row()]
 
     def _update_buttons(self) -> None:
-        self.return_button.setEnabled(self.selected_transaction() is not None)
+        sale = self.selected_transaction()
+        returnable = False
+        if sale is not None:
+            try:  # a fully refunded sale has nothing left to take back
+                returnable = any(line.available > 0 for line in sale_return_repository.returnable_lines(sale.id))
+            except DATABASE_ERRORS:
+                returnable = False
+        self.return_button.setEnabled(returnable)
 
     def return_dialog(self) -> ReturnDialog | None:
         sale = self.selected_transaction()

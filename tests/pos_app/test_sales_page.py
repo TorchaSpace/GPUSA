@@ -147,3 +147,23 @@ def test_a_refund_submitted_twice_is_stored_once(page, monkeypatch):
     assert dialog.submit() and calls[0] == calls[1] and calls[0]
     assert len(sale_return_repository.list_for_transaction(page.transactions[0].id)) == 1
     assert stock_repository.quantity_at(SHELF, "OIL") == 9
+
+
+def test_a_fully_refunded_sale_cannot_be_returned_again(page):
+    sale_return_repository.create(page.transactions[0].id, [("OIL", 3, True)], "All back",
+                                  Actor("B-1", "Erol Admin"))
+    page.reload()
+    page.table.selectRow(0)
+    assert not page.return_button.isEnabled()
+
+
+def test_an_empty_or_unexplained_refund_is_refused_before_the_manager_pin_is_spent(page):
+    page.table.selectRow(0)
+    events_before = len(accounts.list_events(500))
+    dialog = page.return_dialog()
+    _fill(dialog, qty=0)
+    assert not dialog.submit() and "at least one product" in dialog.error_label.text()
+    _fill(dialog, qty=1, reason="   ")
+    assert not dialog.submit() and "why the goods" in dialog.error_label.text()
+    assert len(accounts.list_events(500)) == events_before  # the PIN was never checked
+    assert sale_return_repository.list_for_transaction(page.transactions[0].id) == []
