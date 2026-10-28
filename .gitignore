@@ -51,3 +51,8 @@ Claude outputs/
 # packaging/build_release.py output
 /release/
 /build_release/
+
+# Secrets - never commit (server/README.md: connection details live in the environment)
+.env
+.env.*
+*.pem
