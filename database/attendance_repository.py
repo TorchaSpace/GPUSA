@@ -190,7 +190,7 @@ def list_punches(for_date: str | None = None, limit: int = 12) -> list[dict]:
     low, high = to_db_timestamp(start), to_db_timestamp(end)
     with connection_scope() as conn:
         rows = conn.execute(
-            "SELECT e.badge_id, e.name, a.check_in_at, a.check_out_at "
+            "SELECT a.id, e.badge_id, e.name, a.check_in_at, a.check_out_at "
             "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
             "WHERE (a.check_in_at >= ? AND a.check_in_at < ?) OR (a.check_out_at >= ? AND a.check_out_at < ?)",
             (low, high, low, high),
@@ -198,10 +198,13 @@ def list_punches(for_date: str | None = None, limit: int = 12) -> list[dict]:
     events = []
     for row in rows:
         if low <= row["check_in_at"] < high:
-            events.append({"at": row["check_in_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "IN"})
+            events.append({"at": row["check_in_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "IN", "_order": (row["id"], 0)})
         if row["check_out_at"] and low <= row["check_out_at"] < high:
-            events.append({"at": row["check_out_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "OUT"})
-    events.sort(key=lambda e: e["at"], reverse=True)
+            events.append({"at": row["check_out_at"], "name": row["name"], "badge_id": row["badge_id"], "action": "OUT", "_order": (row["id"], 1)})
+    # Stamps can tie (two punches inside one clock tick): then the later record, and a check-out after its own check-in, comes first.
+    events.sort(key=lambda e: (e["at"], e["_order"]), reverse=True)
+    for event in events:
+        del event["_order"]
     return events[: max(0, limit)]
 
 

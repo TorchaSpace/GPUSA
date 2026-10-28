@@ -144,3 +144,16 @@ def test_list_punches_gives_todays_events_newest_first(person):
     assert {p["name"] for p in punches} == {"Elena Varga"}
     assert attendance_repository.list_punches(limit=2) == punches[:2]
     assert attendance_repository.list_punches(for_date="2001-01-01") == []
+
+
+def test_punches_with_the_same_stamp_keep_their_real_order(person):
+    attendance_repository.check_in("B-1")
+    attendance_repository.check_out("B-1")
+    attendance_repository.check_in("B-1")
+    first, later = to_db_timestamp(NOW - timedelta(seconds=1)), to_db_timestamp(NOW)
+    with connection.connection_scope() as conn:  # the check-out and the next check-in land in one clock tick
+        conn.execute("UPDATE attendance_records SET check_in_at = ?, check_out_at = ? WHERE check_out_at IS NOT NULL", (first, later))
+        conn.execute("UPDATE attendance_records SET check_in_at = ? WHERE check_out_at IS NULL", (later,))
+        conn.commit()
+    punches = attendance_repository.list_punches(for_date=NOW.astimezone().date().isoformat())
+    assert [p["action"] for p in punches] == ["IN", "OUT", "IN"]
