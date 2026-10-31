@@ -51,3 +51,12 @@ Claude outputs/
 # packaging/build_release.py output
 /release/
 /build_release/
+
+# Secrets - never commit. Local server config goes in server/.env (copy
+# server/.env.example); on AWS the password lives in Secrets Manager.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+secrets*
