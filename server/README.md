@@ -91,4 +91,8 @@ Passwords are masked in logs and never returned by the health endpoints.
 - `POST /auth/login`, `GET /auth/me`: sign in with badge + PIN, check the token.
 - `GET /products`: product list (needs a token).
 - `GET /dealerships`, `/warehouses`, `/stock-levels` (filters: `location_kind`, `location_code`, `product_barcode`): any signed-in account. `GET /employees`: administrators and depot managers only.
+- `POST /products`, `PATCH /products/{barcode}`: administrators signed in to `admin` only. Create may carry a starting `stock_quantity` (booked as not-yet-placed stock with a movement row); update changes only the fields sent (`name`, `price`, `critical_stock_level`, `cost_price`, `is_active`), never stock. Both write an `admin_audit` row.
+- `POST /stock-movements` (`direction`: `receive` | `dispatch`, `barcode`, `location_kind`, `location_code`, `quantity`, optional `note`, `reference`, `bin_code`): stock entering or leaving the company; the place's level and the product total move together, never below zero, warehouse capacity respected. Administrators (signed in to `admin` or `depot_console`) at any place; depot managers at warehouses only. `GET /stock-movements` (newest first, filter `product_barcode`): administrators and depot managers.
+
+Every write re-reads the account inside its own transaction, so a token from someone who has since been switched off or demoted is refused (401) even before it expires.
 - `GET /health/db`: readiness, runs `SELECT 1`; 503 when unreachable or not configured.
