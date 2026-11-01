@@ -90,4 +90,5 @@ Passwords are masked in logs and never returned by the health endpoints.
 - `GET /health`: liveness, never touches the database (use for the load balancer).
 - `POST /auth/login`, `GET /auth/me`: sign in with badge + PIN, check the token.
 - `GET /products`: product list (needs a token).
+- `GET /dealerships`, `/warehouses`, `/stock-levels` (filters: `location_kind`, `location_code`, `product_barcode`): any signed-in account. `GET /employees`: administrators and depot managers only.
 - `GET /health/db`: readiness, runs `SELECT 1`; 503 when unreachable or not configured.
