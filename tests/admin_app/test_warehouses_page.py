@@ -114,6 +114,13 @@ def test_place_all_unassigned(page):
     assert stock_repository.quantity_at(WH2, "TAPE") == 57
 
 
+def test_move_popup_offers_a_product_added_after_the_page_was_built(page):
+    """The page keeps its data between refreshes; opening the dialog must not offer an old product list."""
+    product_repository.create(Product("NEW1", "Fresh", 9, 0, 1))
+    page._open_move()
+    assert page._move_popup._product_input.findData("NEW1") >= 0
+
+
 def test_move_popup_moves_and_counts(page):
     page._open_move()
     popup = page._move_popup

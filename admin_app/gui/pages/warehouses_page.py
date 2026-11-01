@@ -572,6 +572,7 @@ class WarehousesPage(AdminPage):
         self.reload()
 
     def _open_move(self) -> None:
+        self.reload()  # a product added on another page (or by someone else) must be in the list now
         if not self._data:
             return
         active = [w for w in self._data["warehouses"] if w.is_active]
@@ -585,6 +586,7 @@ class WarehousesPage(AdminPage):
         self._move_popup.raise_()
 
     def _open_distribute(self) -> None:
+        self.reload()  # same: never offer yesterday's product list
         if not self._data:
             return
         active = [w for w in self._data["warehouses"] if w.is_active]
