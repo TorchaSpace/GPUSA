@@ -92,6 +92,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         "nav.reports": "Reports",
         "nav.treasury": "Treasury & Ledger",
         "nav.settings": "Settings",
+        "nav.server_test": "Server (test)",
         "page.overview.title": "Operations Overview",
         "page.overview.subtitle": "Sales, stock and approvals at a glance.",
         "page.inventory.title": "Inventory Management",

@@ -52,6 +52,7 @@ from admin_app.gui.pages.distribution_page import DistributionPage
 from admin_app.gui.pages.inventory_page import InventoryPage
 from admin_app.gui.pages.overview_page import OverviewPage
 from admin_app.gui.pages.reports_page import ReportsPage
+from admin_app.gui.pages.server_test_page import ServerTestPage
 from admin_app.gui.pages.settings_page import SettingsPage
 from admin_app.gui.pages.warehouses_page import WarehousesPage
 from admin_app.gui.pages.purchase_requests_page import PurchaseRequestsPage
@@ -88,6 +89,7 @@ def build_nav_sections() -> list[NavSection]:
                 NavItem("reports", tr("nav.reports"), icons.REPORTS),
                 NavItem("treasury", tr("nav.treasury"), icons.TREASURY),
                 NavItem("settings", tr("nav.settings"), icons.SETTINGS),
+                NavItem("server_test", tr("nav.server_test"), icons.DISTRIBUTION),
             ],
         ),
     ]
@@ -142,6 +144,7 @@ class MainWindow(QMainWindow):
         self._settings_page = SettingsPage()
         self._settings_page.notifications_changed.connect(self._refresh_pending_display)
         self._register_page("settings", self._settings_page)
+        self._register_page("server_test", ServerTestPage())
         self._workforce_page = WorkforcePage()
         self._register_page("workforce", self._workforce_page)
         self._treasury_page = TreasuryPage()
