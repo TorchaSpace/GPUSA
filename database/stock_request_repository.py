@@ -29,7 +29,7 @@ from __future__ import annotations
 
 import sqlite3
 
-from database import activity_repository
+from database import activity_repository, remote, remote_requests
 from database.connection import connection_scope
 from database.exceptions import (
     DealershipInactiveError,
@@ -112,6 +112,8 @@ def create(dealership_code: str, barcode: str, quantity, note: str | None = None
     if quantity <= 0 or quantity > MAX_REQUEST_QUANTITY:
         raise UserError("err.stock_request_qty", n=MAX_REQUEST_QUANTITY)
     note = _clean_note(note)
+    if remote.active():
+        return remote_requests.create(dealership_code, barcode, quantity, note)
 
     def run(conn):
         shop = conn.execute("SELECT name, is_active FROM dealerships WHERE code = ?", (dealership_code,)).fetchone()
@@ -142,6 +144,8 @@ def create(dealership_code: str, barcode: str, quantity, note: str | None = None
 
 
 def get(request_id: int) -> StockRequest:
+    if remote.active():
+        return remote_requests.get(request_id)
     with connection_scope() as conn:
         return _fetch(conn, request_id)
 
@@ -150,6 +154,8 @@ def list_requests(statuses: tuple[str, ...] | None = None, dealership_code: str 
                   limit: int | None = None) -> list[StockRequest]:
     """Requests, newest first. Open ones from a dealership that has since
     been switched off or deleted are still listed (the depot can decline them)."""
+    if remote.active():
+        return remote_requests.list_requests(statuses, dealership_code, limit)
     clauses, params = [], []
     if statuses:
         clauses.append(f"r.status IN ({','.join('?' * len(statuses))})")
@@ -174,6 +180,8 @@ def list_open() -> list[StockRequest]:
 
 
 def count_open(dealership_code: str | None = None) -> int:
+    if remote.active():
+        return len(remote_requests.list_requests(("open",), dealership_code, None))
     sql = "SELECT COUNT(*) FROM stock_requests WHERE status = 'open'"
     params: tuple = ()
     if dealership_code is not None:
@@ -185,6 +193,8 @@ def count_open(dealership_code: str | None = None) -> int:
 
 def _close(request_id: int, new_status: str, action: str, actor: Actor | None, note: str | None) -> StockRequest:
     note = _clean_note(note)
+    if remote.active():
+        return remote_requests.cancel(request_id) if new_status == "cancelled" else remote_requests.decline(request_id, note)
 
     def run(conn):
         current = _fetch(conn, request_id)

@@ -6,7 +6,7 @@ from __future__ import annotations
 import pytest
 
 from database import (product_repository, purchase_order_repository, remote, sale_return_repository,
-                      shipment_repository, stock_repository)
+                      shipment_repository, stock_repository, stock_request_repository)
 from database.exceptions import (
     DATABASE_ERRORS,
     DuplicateBarcodeError,
@@ -275,3 +275,47 @@ def test_stock_changes_without_a_server_version_are_refused(call):
     with pytest.raises(remote.NotOnServerYetError):
         call()
     assert client.calls == []
+
+
+REQUEST = {"id": 4, "created_at": "2026-11-01T10:00:00.5+00:00", "updated_at": "2026-11-01T10:00:00.5+00:00",
+           "dealership_code": "D-1", "dealership_name": "Coast", "product_barcode": "A1", "product_name": "Anvil",
+           "quantity": 3, "note": None, "status": "open", "requested_by": "Ali · B-001", "decided_by": None,
+           "decision_note": None, "shipment_id": None, "shipment_status": None}
+
+
+def test_stock_requests_go_to_the_server():
+    client = on({
+        ("POST", "/stock-requests"): REQUEST,
+        ("GET", "/stock-requests/4"): REQUEST,
+        ("GET", "/stock-requests?status=open&status=planned&dealership_code=D-1&limit=5"): [REQUEST],
+        ("GET", "/stock-requests?status=open"): [REQUEST, {**REQUEST, "id": 5}],
+        ("POST", "/stock-requests/4/cancel"): {**REQUEST, "status": "cancelled"},
+        ("POST", "/stock-requests/4/decline"): {**REQUEST, "status": "declined", "decision_note": "no truck"},
+    })
+    made = stock_request_repository.create("D-1", "A1", 3, "  running   low ")
+    assert client.calls[-1] == ("POST", "/stock-requests", {"dealership_code": "D-1", "barcode": "A1", "quantity": 3,
+                                                             "note": "running low"})
+    assert (made.id, made.number, made.status, made.created_at) == (4, "RQ-00004", "open", "2026-11-01T10:00:00.500Z")
+    assert stock_request_repository.get(4).product_name == "Anvil"
+    assert len(stock_request_repository.list_requests(("open", "planned"), "D-1", 5)) == 1
+    assert stock_request_repository.count_open() == 2
+    assert [r.id for r in stock_request_repository.list_open()] == [5, 4]  # oldest first, as locally
+    assert stock_request_repository.cancel(4).status == "cancelled"
+    declined = stock_request_repository.decline(4, "no truck")
+    assert (declined.status, declined.decision_note) == ("declined", "no truck")
+    assert client.calls[-1] == ("POST", "/stock-requests/4/decline", {"note": "no truck"})
+
+
+def test_stock_request_checks_run_before_the_server_is_asked():
+    client = on({})
+    with pytest.raises(UserError):
+        stock_request_repository.create("D-1", "A1", 0)
+    assert client.calls == []
+
+
+def test_missing_stock_request_is_not_found():
+    from database.exceptions import StockRequestNotFoundError
+
+    on({("GET", "/stock-requests/9"): ServerError("no", 404)})
+    with pytest.raises(StockRequestNotFoundError):
+        stock_request_repository.get(9)
