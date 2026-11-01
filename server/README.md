@@ -53,6 +53,23 @@ a wrong PIN and an unknown badge look the same, every attempt is logged in
 `auth_events`. Tokens last 12 hours. Accounts copied from the desktop database
 keep working: the PIN hash format is the same.
 
+## Copying the desktop data (one time)
+
+Copy `shared_backend.db` from the desktop machine to the server (work on the
+copy; the importer only reads it), then:
+
+```bash
+cd server
+set -a; . ./.env; set +a
+python -m gpusa_server.import_sqlite ~/shared_backend.db           # dry run, writes nothing
+python -m gpusa_server.import_sqlite ~/shared_backend.db --apply   # writes, in one transaction
+```
+
+PostgreSQL must be empty (the admin made by `create_admin` counts); add
+`--wipe` to empty it first, after which you sign in with the desktop
+administrator's PIN. The stock rule (`stock_quantity = SUM(stock_levels) +
+units on the truck`) is re-checked and mismatches are listed.
+
 ## Configuration (environment variables only)
 
 | Variable | Used for |
