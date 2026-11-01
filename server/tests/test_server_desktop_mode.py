@@ -131,3 +131,33 @@ def test_places_transfers_counts_and_reads_through_the_desktop(desktop):
     since = moves[-1]["created_at"]
     assert stock_repository.movement_totals_since(since)[shop] == (4, 1)
     assert set(stock_repository.last_movement_at(shop)) == {"A1"}
+
+
+def test_desktop_sign_in_goes_to_the_server(api_url, monkeypatch, tmp_path):
+    url, settings = api_url
+    monkeypatch.syspath_prepend(str(REPO))
+    with psycopg.connect(URL, autocommit=True) as conn:
+        conn.execute("TRUNCATE accounts, auth_events, employees, products RESTART IDENTITY CASCADE")
+        conn.execute("INSERT INTO products (barcode, name, price) VALUES ('A1', 'Anvil', 5)")
+    create_admin.create_admin(settings, "B-001", "Ali", PIN)
+    import database.connection as connection
+    from database import account_repository, product_repository, remote
+    from database.exceptions import SignInFailedError
+    from shared import paths
+
+    monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "local.db")
+    monkeypatch.setattr(connection, "_initialized", False)
+    monkeypatch.setenv(paths.SERVER_URL_ENV, url)
+    try:
+        with pytest.raises(SignInFailedError):
+            account_repository.authenticate("B-001", "000000", "admin", "test")
+        session = account_repository.authenticate("b-001", PIN, "admin", "test")
+        assert (session.badge_id, session.role) == ("B-001", "admin")
+        assert [p.barcode for p in product_repository.list_all()] == ["A1"]
+        with psycopg.connect(URL) as conn:
+            events = [r[0] for r in conn.execute("SELECT event FROM auth_events ORDER BY id")]
+        assert events == ["failed", "sign_in"]
+        account_repository.sign_out(session)
+        assert not remote.active()
+    finally:
+        remote.use_server(None)

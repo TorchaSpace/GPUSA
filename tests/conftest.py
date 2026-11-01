@@ -77,3 +77,16 @@ def _server_mode_off():
     remote.use_server(None)
     yield
     remote.use_server(None)
+
+
+@pytest.fixture(autouse=True)
+def _no_server_address(monkeypatch):
+    """No test signs in to a real server or writes the real config.json's
+    server address: GPUSA_SERVER_URL is unset and the saved address lives in
+    memory (tests/shared/test_server_address.py tests the real functions)."""
+    from shared import paths
+
+    monkeypatch.delenv(paths.SERVER_URL_ENV, raising=False)
+    saved: dict = {}
+    monkeypatch.setattr(paths, "get_server_url", lambda: saved.get("url"))
+    monkeypatch.setattr(paths, "set_server_url", lambda url: saved.__setitem__("url", (url or "").strip() or None))

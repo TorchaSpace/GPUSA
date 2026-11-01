@@ -32,6 +32,7 @@ from PySide6.QtWidgets import (
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.theme import CLASSICAL_PALETTE
 from database import remote
+from shared import paths
 from shared.i18n import tr
 from shared.server_client import ServerClient, ServerError
 
@@ -57,7 +58,7 @@ class ServerTestPage(AdminPage):
         row = QHBoxLayout(form)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
-        self.url_edit = QLineEdit(os.environ.get("GPUSA_API_URL") or DEFAULT_URL)
+        self.url_edit = QLineEdit(paths.get_server_url() or os.environ.get("GPUSA_API_URL") or DEFAULT_URL)
         self.url_edit.setPlaceholderText(tr("admin.server_test.url"))
         self.badge_edit = QLineEdit()
         self.badge_edit.setPlaceholderText(tr("admin.auth.badge"))
@@ -87,6 +88,12 @@ class ServerTestPage(AdminPage):
         self.server_mode.setToolTip(tr("admin.server_test.server_mode_hint"))
         self.server_mode.toggled.connect(self._toggle_server_mode)
         self.body_layout().addWidget(self.server_mode)
+        self.always = QCheckBox(tr("admin.server_test.always"))
+        self.always.setToolTip(tr("admin.server_test.always_hint"))
+        self.always.setChecked(bool(paths.get_server_url()))
+        self.always.setEnabled(self.always.isChecked())  # can always be switched off; on needs a sign-in
+        self.always.toggled.connect(self._toggle_always)
+        self.body_layout().addWidget(self.always)
         self.mode_label = QLabel("")
         self.mode_label.setWordWrap(True)
         self.mode_label.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
@@ -174,6 +181,7 @@ class ServerTestPage(AdminPage):
         self._client = client
         self.refresh_button.setEnabled(True)
         self.server_mode.setEnabled(True)
+        self.always.setEnabled(True)
         if kind == "login":
             self.status_label.setText(tr("admin.server_test.connected").format(
                 name=who["name"], badge=who["badge_id"], url=client.base_url))
@@ -205,7 +213,20 @@ class ServerTestPage(AdminPage):
         self._show_mode()
 
     def _show_mode(self) -> None:
-        if remote.active():
+        saved = paths.get_server_url()
+        if saved:
+            self.mode_label.setText(tr("admin.server_test.mode_saved").format(url=saved))
+        elif remote.active():
             self.mode_label.setText(tr("admin.server_test.mode_server").format(url=remote.server_url()))
         else:
             self.mode_label.setText(tr("admin.server_test.mode_local"))
+
+    def _toggle_always(self, on: bool) -> None:
+        """Save (or clear) this server for every app on this computer: from the next
+        sign-in on, Admin, Depot and POS sign in to it and use it."""
+        if on and self._client is None:
+            return
+        paths.set_server_url(self._client.base_url if on else None)
+        if on and not self.server_mode.isChecked():
+            self.server_mode.setChecked(True)
+        self._show_mode()

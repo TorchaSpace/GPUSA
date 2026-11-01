@@ -17,7 +17,16 @@ from __future__ import annotations
 import threading
 from urllib.parse import quote
 
-from database.exceptions import DataAccessError, SessionInvalidError
+import re
+
+from database.exceptions import (
+    AccountDisabledError,
+    AccountLockedError,
+    DataAccessError,
+    NotAllowedError,
+    SessionInvalidError,
+    SignInFailedError,
+)
 from shared.i18n import english
 from shared.server_client import ServerClient, ServerError
 
@@ -48,6 +57,34 @@ class NotOnServerYetError(DataAccessError):
     def __init__(self):
         super().__init__(english("err.server_not_yet"))
         self._localize("err.server_not_yet")
+
+
+def sign_in(url: str, badge_id: str, pin: str, area: str, terminal: str) -> tuple[ServerClient, dict]:
+    """Sign in to the server at `url`; returns (signed-in client, who). The
+    server's refusals come back as the desktop's own sign-in errors; no answer
+    at all is ServerUnavailableError."""
+    from shared import auth  # local: shared.auth is light, but keep this module's imports minimal
+
+    client = ServerClient(url)
+    try:
+        who = client.login(badge_id, pin, area=area, terminal=terminal or "")
+    except ServerError as exc:
+        text = str(exc)
+        if exc.status is None:
+            raise ServerUnavailableError(text) from None
+        if exc.status == 401:
+            raise SignInFailedError() from None
+        if exc.status == 423:
+            match = re.search(r"until (\S+?)\.?$", text)
+            raise AccountLockedError(match.group(1) if match else "later") from None
+        if exc.status == 403 and "switched off" in text:
+            raise AccountDisabledError() from None
+        if exc.status == 403:
+            match = re.match(r"A (\w+) account", text)
+            role = auth.role_label(match.group(1)) if match else "this"
+            raise NotAllowedError(role, auth.AREA_LABELS.get(area, area)) from None
+        raise ServerRefusedError(text, exc.status) from None
+    return client, who
 
 
 def use_server(client: ServerClient | None) -> None:

@@ -116,3 +116,21 @@ def test_server_mode_switch(qapp, server):
     page.server_mode.setChecked(False)
     assert not remote.active() and "off" in page.mode_label.text()
     page.close()
+
+
+def test_use_this_server_on_every_app_of_this_computer(qapp, server):
+    from database import remote
+    from shared import paths
+
+    page = _page(qapp, server.url)
+    assert not page.always.isEnabled() and not page.always.isChecked()
+    page.badge_edit.setText("B-001")
+    page.pin_edit.setText("482915")
+    page.connect_to_server()
+    _wait(qapp, page)
+    page.always.setChecked(True)
+    assert paths.get_server_url() == server.url and remote.active()
+    assert server.url in page.mode_label.text()
+    page.always.setChecked(False)
+    assert paths.get_server_url() is None
+    page.close()
