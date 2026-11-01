@@ -97,3 +97,22 @@ def test_refresh_reloads(qapp, server):
     _wait(qapp, page)
     assert len([r for r in server.requests if r == ("GET", "/products")]) == before + 1
     page.close()
+
+
+def test_server_mode_switch(qapp, server):
+    from database import product_repository, remote
+
+    page = _page(qapp, server.url)
+    assert not page.server_mode.isEnabled()  # nothing to switch to before signing in
+    assert "off" in page.mode_label.text()
+    page.badge_edit.setText("B-001")
+    page.pin_edit.setText("482915")
+    page.connect_to_server()
+    _wait(qapp, page)
+    assert page.server_mode.isEnabled() and not remote.active()
+    page.server_mode.setChecked(True)
+    assert remote.active() and server.url.replace("http://", "") in page.mode_label.text()
+    assert [p.barcode for p in product_repository.list_all()] == ["A1", "B2"]  # from the fake server
+    page.server_mode.setChecked(False)
+    assert not remote.active() and "off" in page.mode_label.text()
+    page.close()

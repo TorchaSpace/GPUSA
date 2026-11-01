@@ -16,6 +16,7 @@ import threading
 
 from PySide6.QtCore import QObject, Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QAbstractItemView,
     QHBoxLayout,
     QHeaderView,
@@ -30,6 +31,7 @@ from PySide6.QtWidgets import (
 
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.theme import CLASSICAL_PALETTE
+from database import remote
 from shared.i18n import tr
 from shared.server_client import ServerClient, ServerError
 
@@ -79,6 +81,17 @@ class ServerTestPage(AdminPage):
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         self.body_layout().addWidget(self.status_label)
+
+        self.server_mode = QCheckBox(tr("admin.server_test.server_mode"))
+        self.server_mode.setEnabled(False)
+        self.server_mode.setToolTip(tr("admin.server_test.server_mode_hint"))
+        self.server_mode.toggled.connect(self._toggle_server_mode)
+        self.body_layout().addWidget(self.server_mode)
+        self.mode_label = QLabel("")
+        self.mode_label.setWordWrap(True)
+        self.mode_label.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
+        self.body_layout().addWidget(self.mode_label)
+        self._show_mode()
 
         self.summary_label = QLabel("")
         self.summary_label.setStyleSheet(f"font-size: 13px; color: {p['text_primary']};")
@@ -156,8 +169,11 @@ class ServerTestPage(AdminPage):
             self.refresh_button.setEnabled(self._client is not None)
             return
         kind, client, who, data = outcome
+        if kind == "login" and remote.active():
+            remote.use_server(client)  # signed in again: keep server mode on the new sign-in
         self._client = client
         self.refresh_button.setEnabled(True)
+        self.server_mode.setEnabled(True)
         if kind == "login":
             self.status_label.setText(tr("admin.server_test.connected").format(
                 name=who["name"], badge=who["badge_id"], url=client.base_url))
@@ -179,3 +195,17 @@ class ServerTestPage(AdminPage):
         self.summary_label.setText(tr("admin.server_test.summary").format(
             products=len(products), dealerships=data["dealerships"], warehouses=data["warehouses"],
             employees="-" if employees is None else employees))
+
+    # --- server mode ---------------------------------------------------------
+
+    def _toggle_server_mode(self, on: bool) -> None:
+        """On: Products (list, add, edit, cost, on/off) and stock in/out use this
+        server until switched off or Admin closes. Off: back to this computer's data."""
+        remote.use_server(self._client if on and self._client is not None else None)
+        self._show_mode()
+
+    def _show_mode(self) -> None:
+        if remote.active():
+            self.mode_label.setText(tr("admin.server_test.mode_server").format(url=remote.server_url()))
+        else:
+            self.mode_label.setText(tr("admin.server_test.mode_local"))

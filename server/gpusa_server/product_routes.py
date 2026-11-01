@@ -22,6 +22,18 @@ class ProductOut(BaseModel):
     stock_quantity: int
     critical_stock_level: int
     is_active: bool
+    cost_price: float | None = None  # only for administrators and depot managers
+
+
+COST_ROLES = ("admin", "depot_manager")
+
+
+def _out(row: dict, session: Session) -> ProductOut:
+    return ProductOut(
+        barcode=row["barcode"], name=row["name"], price=float(row["price"]),
+        stock_quantity=row["stock_quantity"], critical_stock_level=row["critical_stock_level"],
+        is_active=row["is_active"],
+        cost_price=float(row["cost_price"]) if session.role in COST_ROLES else None)
 
 
 @router.get("", response_model=list[ProductOut])
@@ -29,12 +41,23 @@ def list_products(request: Request, include_inactive: bool = False,
                   session: Session = Depends(current_session)) -> list[ProductOut]:
     """Active products by default. ``include_inactive`` is for admins and depot managers."""
     show_all = include_inactive and session.role in ("admin", "depot_manager")
-    sql = ("SELECT barcode, name, price, stock_quantity, critical_stock_level, is_active FROM products"
-           + ("" if show_all else " WHERE is_active") + " ORDER BY name, barcode")
+    sql = "SELECT * FROM products" + ("" if show_all else " WHERE is_active") + " ORDER BY name, barcode"
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         rows = conn.execute(sql).fetchall()
-    return [ProductOut(**{**r, "price": float(r["price"])}) for r in rows]
+    return [_out(r, session) for r in rows]
+
+
+@router.get("/{barcode}", response_model=ProductOut)
+def get_product(request: Request, barcode: str = Path(max_length=64),
+                session: Session = Depends(current_session)) -> ProductOut:
+    """One product by barcode in any letter case (switched-off ones too: the caller decides)."""
+    with db.connect(request.app.state.settings) as conn:
+        conn.row_factory = dict_row
+        row = conn.execute("SELECT * FROM products WHERE upper(barcode) = %s", (barcode.strip().upper(),)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=404, detail=f"No product with barcode {barcode}.")
+    return _out(row, session)
 
 
 
@@ -100,14 +123,7 @@ class ProductUpdate(BaseModel):
         return _clean_name(v)
 
 
-def _out(row: dict) -> ProductOut:
-    return ProductOut(
-        barcode=row["barcode"], name=row["name"], price=float(row["price"]),
-        stock_quantity=row["stock_quantity"], critical_stock_level=row["critical_stock_level"],
-        is_active=row["is_active"])
-
-
-_RETURNING = "RETURNING barcode, name, price, stock_quantity, critical_stock_level, is_active"
+_RETURNING = "RETURNING *"
 
 
 @router.post("", response_model=ProductOut, status_code=status.HTTP_201_CREATED)
@@ -142,7 +158,7 @@ def create_product(body: ProductCreate, request: Request,
                          "VALUES (%s, 'created', 'product', %s, %s)", (actor, body.barcode, body.name))
     except psycopg.errors.UniqueViolation:  # lost a race with another writer
         raise HTTPException(status_code=409, detail=f"A product with barcode {body.barcode} exists already.") from None
-    return _out(row)
+    return _out(row, session)
 
 
 @router.patch("/{barcode}", response_model=ProductOut)
@@ -162,7 +178,7 @@ def update_product(body: ProductUpdate, request: Request, barcode: str = Path(ma
             raise HTTPException(status_code=404, detail=f"No product with barcode {barcode}.")
         changes = {k: v for k, v in changes.items() if old[k] != v}
         if not changes:
-            return _out(old)
+            return _out(old, session)
         columns = sorted(changes)  # fixed names from the model, never user text
         row = conn.execute(
             "UPDATE products SET " + ", ".join(f"{c} = %s" for c in columns) + ", updated_at = now() "
@@ -173,4 +189,4 @@ def update_product(body: ProductUpdate, request: Request, barcode: str = Path(ma
         conn.execute("INSERT INTO admin_audit (actor, action, kind, target, detail) "
                      "VALUES (%s, 'updated', 'product', %s, %s)",
                      (authz.actor_label(session), old["barcode"], detail))
-    return _out(row)
+    return _out(row, session)

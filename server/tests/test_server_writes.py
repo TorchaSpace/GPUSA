@@ -83,10 +83,22 @@ def test_create_product_with_starting_stock(client):
                                                   "stock_quantity": 4, "critical_stock_level": 2})
     assert r.status_code == 201, r.text
     assert r.json() == {"barcode": "NB-7", "name": "Nail box", "price": 20.0, "stock_quantity": 4,
-                        "critical_stock_level": 2, "is_active": True}
+                        "critical_stock_level": 2, "is_active": True, "cost_price": 0.0}
     assert level("unassigned", "", "NB-7") == 4
     assert sql("SELECT movement_type, quantity, handled_by FROM stock_movements") == [("receive", 4, "Ali · B-001")]
     assert sql("SELECT action, target FROM admin_audit") == [("created", "NB-7")]
+
+
+def test_get_one_product_and_cost_only_for_managers(client):
+    h = login(client)
+    client.patch("/products/A1", headers=h, json={"cost_price": 3.333})
+    one = client.get("/products/a1", headers=h).json()
+    assert (one["barcode"], one["cost_price"]) == ("A1", 3.33)
+    assert client.get("/products/NOPE", headers=h).status_code == 404
+    sql("UPDATE accounts SET role = 'cashier'")
+    pos = login(client, "pos")
+    assert client.get("/products/A1", headers=pos).json()["cost_price"] is None
+    assert client.get("/products", headers=pos).json()[0]["cost_price"] is None
 
 
 def test_create_duplicate_barcode_any_case(client):
