@@ -16,6 +16,7 @@ TR = {
     "nav.reports": "Raporlar",
     "nav.treasury": "Kasa ve Defter",
     "nav.settings": "Ayarlar",
+    "nav.server_test": "Sunucu (test)",
     "page.overview.title": "Operasyon \u00d6zeti",
     "page.overview.subtitle": "Sat\u0131\u015f, stok ve onaylara tek bak\u0131\u015fta.",
     "page.inventory.title": "Envanter Y\u00f6netimi",
