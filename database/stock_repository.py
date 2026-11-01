@@ -28,7 +28,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError
-from database import remote, remote_products
+from database import remote, remote_products, remote_stock
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityExceededError,
@@ -276,6 +276,9 @@ def transfer(
     if source == destination:
         raise UserError("err.two_locations")
 
+    if remote.active():
+        return remote_stock.transfer(source, destination, barcode, quantity, _clean(note))
+
     def run(conn):
         require_location(conn, source)
         require_location(conn, destination)
@@ -311,6 +314,9 @@ def distribute(source: StockLocation, barcode: str, allocations: list[tuple[Stoc
     if source in places:
         raise UserError("err.two_locations")
 
+    if remote.active():
+        return remote_stock.distribute(source, barcode, legs, _clean(note))
+
     def run(conn):
         require_location(conn, source)
         code = resolve_product(conn, barcode)[0]
@@ -344,6 +350,9 @@ def set_count(location: StockLocation, barcode: str, counted: int, note: str | N
     if counted < 0:
         raise UserError("err.count_negative")
 
+    if remote.active():
+        return remote_stock.set_count(location, barcode, counted, _clean(note))
+
     def run(conn):
         require_location(conn, location)
         code = resolve_product(conn, barcode)[0]
@@ -371,6 +380,8 @@ def clear_unassigned(actor: Actor | None = None) -> int:
     was ALSO added at a warehouse by hand (a count or receipt) while it still sat "unplaced": the company
     counted it twice. The company total drops by those units and each product gets a 'count' movement.
     Returns the units removed."""
+    if remote.active():
+        return remote_stock.clear_unassigned()
     def run(conn):
         rows = conn.execute(
             "SELECT product_barcode, quantity FROM stock_levels WHERE location_kind = 'unassigned' AND quantity > 0"
@@ -393,6 +404,9 @@ def place_all_unassigned(destination: StockLocation, actor: Actor | None = None)
     Returns the number of units moved."""
     if destination.is_unassigned:
         raise UserError("err.pick_location")
+
+    if remote.active():
+        return remote_stock.place_all_unassigned(destination)
 
     def run(conn):
         require_location(conn, destination)
@@ -425,6 +439,8 @@ def _location_of(kind: str | None, code: str | None) -> StockLocation | None:
 
 
 def quantity_at(location: StockLocation, barcode: str) -> int:
+    if remote.active():
+        return remote_stock.quantity_at(location, barcode)
     with connection_scope() as conn:
         return level_in(conn, location, barcode)
 
@@ -456,6 +472,8 @@ def products_at(location: StockLocation, include_inactive: bool = False) -> list
     here, so physical stock never disappears from the list (callers that
     SELL or RECEIVE must still skip `not p.is_active`). `include_inactive`
     returns all of them."""
+    if remote.active():
+        return remote_stock.products_at(location, include_inactive)
     sql = _PRODUCT_AT_SQL
     if not include_inactive:
         sql += "WHERE p.is_active = 1 OR COALESCE(l.quantity, 0) > 0 "
@@ -469,6 +487,8 @@ def product_at(location: StockLocation, barcode: str, active_only: bool = False)
     """One product (barcode in any letter case) with its local quantity.
     Raises ProductNotFoundError; with `active_only` a deactivated product
     raises ProductInactiveError - the POS sale lookup."""
+    if remote.active():
+        return remote_stock.product_at(location, barcode, active_only)
     text = str(barcode).strip()
     with connection_scope() as conn:
         row = conn.execute(
@@ -493,6 +513,8 @@ def reorder_level_for(conn: sqlite3.Connection, location: StockLocation, barcode
 
 def reorder_overrides_at(location: StockLocation) -> dict[str, int]:
     """{barcode: level} for the products Admin gave this place its own reorder level."""
+    if remote.active():
+        return remote_stock.reorder_overrides_at(location)
     with connection_scope() as conn:
         rows = conn.execute("SELECT product_barcode, level FROM location_reorder_levels "
                             "WHERE location_kind = ? AND location_code = ?", (location.kind, location.code)).fetchall()
@@ -508,6 +530,9 @@ def set_reorder_level(location: StockLocation, barcode: str, level: int | None, 
         level = whole_number(level, "Reorder level")
         if level < 0:
             raise UserError("err.count_negative")
+
+    if remote.active():
+        return remote_stock.set_reorder_level(location, barcode, level)
 
     def run(conn):
         require_location(conn, location)
@@ -551,6 +576,8 @@ def levels_for_product(barcode: str) -> list[StockLevel]:
 
 def levels_at(location: StockLocation) -> list[StockLevel]:
     """Every product held at `location` (quantity > 0), by name."""
+    if remote.active():
+        return remote_stock.levels_at(location)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT l.location_kind, l.location_code, l.product_barcode, p.name, l.quantity "
@@ -564,6 +591,8 @@ def levels_at(location: StockLocation) -> list[StockLevel]:
 def all_levels() -> list[StockLevel]:
     """Every non-zero stock level, by product name then location - the
     Admin "Stock by location" grid."""
+    if remote.active():
+        return remote_stock.all_levels()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT l.location_kind, l.location_code, l.product_barcode, p.name, l.quantity "
@@ -576,6 +605,8 @@ def all_levels() -> list[StockLevel]:
 def units_by_location() -> dict[StockLocation, int]:
     """Total units held at each location that holds any - a warehouse's
     "used" capacity is its entry here."""
+    if remote.active():
+        return remote_stock.units_by_location()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT location_kind, location_code, SUM(quantity) FROM stock_levels "
@@ -586,6 +617,8 @@ def units_by_location() -> dict[StockLocation, int]:
 
 def units_in_transit() -> int:
     """Units on dispatched shipments not yet received."""
+    if remote.active():
+        return remote_stock.units_in_transit()
     with connection_scope() as conn:
         return int(conn.execute(
             "SELECT COALESCE(SUM(l.expected_qty), 0) FROM shipment_lines l JOIN shipments s ON s.id = l.shipment_id "
@@ -610,6 +643,8 @@ def list_movements(
     the depot's Reports. `limit` None = no limit."""
     if movement_type is not None and movement_type not in ("receive", "dispatch"):
         raise ValueError("movement_type must be 'receive', 'dispatch', or None")
+    if remote.active():
+        return remote_stock.list_movements(limit, location, movement_type, location_kind, since, until)
     clauses, params = [], []
     if location is not None:
         clauses.append("m.location_kind = ? AND m.location_code = ?")
@@ -661,6 +696,8 @@ def list_movements(
 def movement_totals_since(since_db_timestamp: str) -> dict[StockLocation, tuple[int, int]]:
     """Units in and out per location since a UTC db timestamp (the
     Warehouses cards' "inbound / outbound today")."""
+    if remote.active():
+        return remote_stock.movement_totals_since(since_db_timestamp)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT location_kind, location_code, "
@@ -676,6 +713,8 @@ def movement_totals_since(since_db_timestamp: str) -> dict[StockLocation, tuple[
 def last_movement_at(location: StockLocation) -> dict[str, str]:
     """barcode -> created_at of the latest movement at `location` (the
     Console Inventory's "Last moved" column)."""
+    if remote.active():
+        return remote_stock.last_movement_at(location)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT product_barcode, MAX(created_at) FROM stock_movements "

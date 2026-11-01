@@ -121,6 +121,8 @@ def get_critical_stock_list() -> list[Product]:
     depot_app re-runs per-location alerts on an interval, and
     admin_app's Overview page for the passive equivalent.
     """
+    if remote.active():
+        return [p for p in remote_products.list_all(include_inactive=False) if p.is_below_critical_stock]
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT * FROM products WHERE is_active = 1 AND critical_stock_level > 0 "

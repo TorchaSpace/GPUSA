@@ -71,11 +71,9 @@ def set_active(barcode: str, active: bool) -> None:
 
 
 def levels_for_product(barcode: str) -> list[StockLevel]:
-    product = get_by_barcode(barcode)
-    rows = remote.call("GET", "/stock-levels?product_barcode=" + remote.path(product.barcode)[1:])
-    levels = [StockLevel(StockLocation(r["location_kind"], r["location_code"]), r["product_barcode"], product.name,
-                         int(r["quantity"])) for r in rows if int(r["quantity"]) > 0]
-    return sorted(levels, key=lambda lv: (-lv.quantity, lv.location.code))
+    from database import remote_stock  # the per-place reads live there
+
+    return remote_stock.levels_for_product(barcode)
 
 
 def _move(direction: str, location: StockLocation, barcode: str, quantity: int, note: str | None,

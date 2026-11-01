@@ -100,3 +100,34 @@ def test_products_and_stock_through_the_desktop_repositories(desktop):
     with psycopg.connect(URL) as conn:
         who = conn.execute("SELECT DISTINCT handled_by FROM stock_movements").fetchall()
     assert who == [("Ali · B-001",)]
+
+
+def test_places_transfers_counts_and_reads_through_the_desktop(desktop):
+    from database import dealership_repository, product_repository, stock_repository, warehouse_repository
+    from database.exceptions import InsufficientStockError
+    from shared.models import Product, StockLocation
+
+    with psycopg.connect(URL, autocommit=True) as conn:
+        conn.execute("INSERT INTO dealerships (code, name, region, city) VALUES ('CST-04', 'Coast', 'Coastal', 'Izmir')")
+    wh, shop = StockLocation("warehouse", "WH-01"), StockLocation("dealership", "CST-04")
+    assert [w.code for w in warehouse_repository.list_all()] == ["WH-01"]
+    assert dealership_repository.get_by_code("cst-04").name == "Coast"
+    product_repository.create(Product("A1", "Anvil", 5, 6, 2))  # 6 unplaced
+    assert stock_repository.place_all_unassigned(wh) == 6
+    stock_repository.transfer(wh, shop, "A1", 4)
+    with pytest.raises(InsufficientStockError):
+        stock_repository.distribute(wh, "A1", [(shop, 3)])
+    assert stock_repository.set_count(shop, "A1", 3) == -1
+    stock_repository.set_reorder_level(shop, "A1", 3)
+    [here] = stock_repository.products_at(shop)
+    assert (here.stock_quantity, here.critical_stock_level) == (3, 3)
+    assert stock_repository.critical_at(shop) == [here]
+    assert stock_repository.units_by_location() == {wh: 2, shop: 3}
+    assert product_repository.get_by_barcode("A1").stock_quantity == 5  # the count lost one
+    moves = stock_repository.list_movements(limit=None, location=shop)
+    assert [(m["reason"], m["movement_type"], m["quantity"]) for m in moves] == [("count", "dispatch", 1),
+                                                                               ("transfer", "receive", 4)]
+    assert moves[0]["created_at"].endswith("Z")
+    since = moves[-1]["created_at"]
+    assert stock_repository.movement_totals_since(since)[shop] == (4, 1)
+    assert set(stock_repository.last_movement_at(shop)) == {"A1"}

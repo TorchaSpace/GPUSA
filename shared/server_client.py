@@ -75,3 +75,6 @@ class ServerClient:
 
     def patch(self, path: str, body: dict):
         return self._request("PATCH", path, body)
+
+    def put(self, path: str, body: dict):
+        return self._request("PUT", path, body)

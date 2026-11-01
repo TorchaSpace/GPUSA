@@ -91,6 +91,8 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
             return client.post(url_path, body or {})
         if method == "PATCH":
             return client.patch(url_path, body or {})
+        if method == "PUT":
+            return client.put(url_path, body or {})
         raise ValueError(method)
     except ServerError as exc:
         if errors and exc.status in errors:

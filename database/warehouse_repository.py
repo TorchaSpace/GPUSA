@@ -14,7 +14,7 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository, authz, purchase_order_repository
+from database import audit_repository, authz, purchase_order_repository, remote, remote_places
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityBelowUsageError,
@@ -68,6 +68,8 @@ def _validated(warehouse: Warehouse) -> Warehouse:
 
 
 def get_by_code(code: str) -> Warehouse:
+    if remote.active():
+        return remote_places.warehouse(code)
     text = (code or "").strip()
     with connection_scope() as conn:
         row = conn.execute(
@@ -79,6 +81,8 @@ def get_by_code(code: str) -> Warehouse:
 
 
 def list_all(active_only: bool = False) -> list[Warehouse]:
+    if remote.active():
+        return remote_places.warehouses(active_only)
     sql = "SELECT * FROM warehouses"
     if active_only:
         sql += " WHERE is_active = 1"
@@ -91,6 +95,8 @@ def create(warehouse: Warehouse) -> Warehouse:
     """Insert a warehouse; its code is stored trimmed and upper-case
     ("wh-01" -> "WH-01"). Raises DuplicateWarehouseCodeError (any letter
     case), ValueError."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     w = _validated(warehouse)
     with connection_scope() as conn:
         if conn.execute("SELECT 1 FROM warehouses WHERE code = ? COLLATE NOCASE", (w.code,)).fetchone():
@@ -114,6 +120,8 @@ def update(warehouse: Warehouse) -> None:
     case). Raises WarehouseNotFoundError, ValueError and
     CapacityBelowUsageError - a capacity below the units it holds now is
     refused (move stock out first)."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     w = _validated(warehouse)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -149,6 +157,8 @@ def delete(code: str, by: Actor | None = None) -> None:
     - deleting would lose track of it), LocationInUseError while a
     scheduled / in-transit shipment leaves from it (deactivate it instead), LocationHasOpenOrdersError while purchase orders
     are still open for it, WarehouseNotFoundError if the code doesn't exist."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
