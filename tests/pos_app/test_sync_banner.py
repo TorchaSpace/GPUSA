@@ -40,6 +40,9 @@ def test_shows_waiting_and_refused_sales(qapp, monkeypatch):
     class Dead:
         base_url, token = "http://x", "t"
 
+        def get(self, path):  # a banner left over from an earlier test may still poll while this one waits
+            return []
+
     remote.use_server(Dead())
     monkeypatch.setattr(remote_sales, "send_pending", lambda: {"sent": 0, "rejected": 0, "pending": 3})
     monkeypatch.setattr(remote_sales, "rejected_sales", lambda: [{}])
