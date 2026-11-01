@@ -55,10 +55,15 @@ def api_url():
 
 
 @pytest.fixture()
-def desktop(api_url, monkeypatch):
-    """The desktop packages (repo root) with server mode on, signed in as an admin."""
+def desktop(api_url, monkeypatch, tmp_path):
+    """The desktop packages (repo root) with server mode on, signed in as an admin;
+    the local file (server-mode cache and queue) is a temp one."""
     url, settings = api_url
     monkeypatch.syspath_prepend(str(REPO))
+    import database.connection as connection
+
+    monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "local.db")
+    monkeypatch.setattr(connection, "_initialized", False)
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute("TRUNCATE accounts, auth_events, employees, products, dealerships, warehouses, "
                      "stock_movements, admin_audit RESTART IDENTITY CASCADE")
@@ -161,3 +166,48 @@ def test_desktop_sign_in_goes_to_the_server(api_url, monkeypatch, tmp_path):
         assert not remote.active()
     finally:
         remote.use_server(None)
+
+
+def test_offline_till_sales_reach_the_server_once(desktop, api_url):
+    url, settings = api_url
+    from database import remote, remote_sales, stock_repository, transaction_repository
+    from shared.models import LineItem, StockLocation, Transaction
+
+    with psycopg.connect(URL, autocommit=True) as conn:
+        conn.execute("TRUNCATE transactions RESTART IDENTITY CASCADE")
+        conn.execute("INSERT INTO dealerships (code, name, region, city) VALUES ('CST-04', 'Coast', 'Coastal', 'Izmir')")
+        conn.execute("INSERT INTO products (barcode, name, price, stock_quantity) VALUES ('A1', 'Anvil', 5, 4)")
+        conn.execute("INSERT INTO stock_levels VALUES ('dealership', 'CST-04', 'A1', 4, now())")
+        conn.execute("UPDATE accounts SET role = 'admin'")
+    from shared.server_client import ServerClient
+
+    till = ServerClient(url)
+    till.login("B-001", PIN, area="pos")
+    remote.use_server(till)
+    shop = StockLocation("dealership", "CST-04")
+    assert stock_repository.products_at(shop)[0].stock_quantity == 4  # cached for later
+    online = transaction_repository.finalize_transaction(
+        Transaction(items=[LineItem("A1", "Anvil", 5.0, 1)], payment_method="card"), shop)
+    assert online.id is not None
+    from shared.server_client import ServerError
+
+    class NoNetwork(ServerClient):
+        def _request(self, *a, **k):
+            raise ServerError("Cannot reach the server (no network).")
+
+    dead = NoNetwork(url)
+    dead.token = "x"
+    remote.use_server(dead)  # the network goes
+    queued = transaction_repository.finalize_transaction(
+        Transaction(items=[LineItem("A1", "Anvil", 5.0, 2)], payment_method="cash"), shop)
+    assert queued.id is None and stock_repository.products_at(shop)[0].stock_quantity == 1
+    remote.use_server(till)  # back
+    assert remote_sales.send_pending() == {"sent": 1, "rejected": 0, "pending": 0}
+    remote_sales._queue(queued.client_uuid, {"client_uuid": queued.client_uuid, "dealership_code": "CST-04",
+                                              "payment_method": "cash", "sold_at": "2026-11-01T10:00:00Z",
+                                              "lines": [{"barcode": "A1", "name": "Anvil", "unit_price": 5,
+                                                         "quantity": 2}]})
+    with psycopg.connect(URL) as conn:
+        assert conn.execute("SELECT count(*), sum(total) FROM transactions").fetchone() == (2, 15)
+        assert conn.execute("SELECT quantity FROM stock_levels WHERE location_code = 'CST-04'").fetchone() == (1,)
+    assert stock_repository.products_at(shop)[0].stock_quantity == 1

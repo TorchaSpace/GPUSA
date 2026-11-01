@@ -35,6 +35,7 @@ from pos_app.gui.pages.my_stock_page import MyStockPage
 from pos_app.gui.pages.new_sale_page import NewSalePage
 from pos_app.gui.pages.receive_page import ReceivePage
 from pos_app.gui.sales_page import SalesPage
+from pos_app.gui.sync_banner import SyncBanner
 from pos_app.theme import ORGANIC_PALETTE
 from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
@@ -96,6 +97,8 @@ class MainWindow(QMainWindow):
         self._header.switch_cashier.connect(self.switch_cashier)
         self._header.dealership_picked.connect(self._on_dealership_picked)
         layout.addWidget(self._header)
+        self._sync_banner = SyncBanner(ORGANIC_PALETTE)  # queued sales (server mode); hidden otherwise
+        layout.addWidget(self._sync_banner)
 
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}

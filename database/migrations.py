@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-LATEST_VERSION = 10
+LATEST_VERSION = 11
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -382,8 +382,49 @@ def _to_v10(conn: sqlite3.Connection) -> None:
         raise sqlite3.IntegrityError(f"migration v10 left {len(broken)} dangling foreign key row(s)")
 
 
+# Local-only tables for server mode (database/remote.py). They are NOT in
+# schema.sql on purpose: the server's schema mirrors schema.sql table for
+# table, and these never leave this computer.
+LOCAL_SERVER_TABLES = (
+    """CREATE TABLE IF NOT EXISTS sale_outbox (
+        client_uuid  TEXT PRIMARY KEY,
+        created_at   TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        payload      TEXT NOT NULL,
+        status       TEXT NOT NULL DEFAULT 'pending' CHECK (status IN ('pending', 'sent', 'rejected')),
+        attempts     INTEGER NOT NULL DEFAULT 0,
+        last_error   TEXT,
+        server_id    INTEGER,
+        sent_at      TEXT
+    )""",
+    "CREATE INDEX IF NOT EXISTS idx_sale_outbox_status ON sale_outbox(status, created_at)",
+    """CREATE TABLE IF NOT EXISTS server_cache (
+        key        TEXT PRIMARY KEY,
+        body       TEXT NOT NULL,
+        fetched_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    )""",
+    """CREATE TABLE IF NOT EXISTS server_sign_ins (
+        server_url TEXT NOT NULL,
+        badge_id   TEXT NOT NULL,
+        name       TEXT NOT NULL,
+        role       TEXT NOT NULL,
+        pin_hash   TEXT NOT NULL,
+        updated_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+        PRIMARY KEY (server_url, badge_id)
+    )""",
+)
+
+
+def _to_v11(conn: sqlite3.Connection) -> None:
+    """Version 11 - server mode's local tables: sales waiting to be sent
+    (sale_outbox), the last answers for reads a till needs offline
+    (server_cache), and who signed in here through the server, so they can
+    sign in at the till while it is offline (server_sign_ins: PIN hash only)."""
+    for statement in LOCAL_SERVER_TABLES:
+        conn.execute(statement)
+
+
 _STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9,
-          10: _to_v10}
+          10: _to_v10, 11: _to_v11}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

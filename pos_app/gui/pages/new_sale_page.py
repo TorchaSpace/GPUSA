@@ -960,7 +960,7 @@ class NewSalePage(QWidget):
         self.reload()
         body = tr("pos.sale.complete_body").format(
             payment=tr(_PAYMENT_KEYS[payment_label]) if payment_label in _PAYMENT_KEYS else payment_label,
-            id=finalized.id,
+            id=finalized.id if finalized.id is not None else tr("pos.sale.queued_number"),
             total=format_money(finalized.total, "$"),
         )
         self._notify(body)

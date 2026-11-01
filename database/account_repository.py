@@ -141,6 +141,8 @@ def is_session_valid(session: Session | None, *, assume_on_error: bool = False) 
     lock must not sign anybody out)."""
     if session is None:
         return False
+    if remote.active() and paths.get_server_url():
+        return True  # signed in through the server, which re-checks the account on every write
     try:
         with connection_scope() as conn:
             row = _fetch_by_id(conn, session.account_id)
@@ -449,13 +451,53 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
 
 
 def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, terminal: str, event: str) -> Session:
-    client, who = remote.sign_in(url, badge_id, pin, area, terminal)
-    if event == "sign_in":
-        remote.use_server(client)
+    """The server checks the badge and PIN. When it cannot be reached, someone
+    who signed in here through it before may still sign in with the same PIN
+    (checked against the hash kept from that sign-in): the app then works from
+    its cached data and queues its sales (database/remote_sales.py) until the
+    server answers again."""
+    try:
+        client, who = remote.sign_in(url, badge_id, pin, area, terminal)
+    except remote.ServerUnavailableError:
+        who = _offline_sign_in(url, badge_id, pin, area)
+        if event == "sign_in":
+            remote.use_server_offline(url, who["badge_id"], pin, area, terminal)
+    else:
+        _remember_server_sign_in(url, who, pin)
+        if event == "sign_in":
+            remote.use_server(client)
     with connection_scope() as conn:
         row = _fetch(conn, who["badge_id"])
     return Session(account_id=int(row["id"]) if row is not None else 0, badge_id=who["badge_id"], name=who["name"],
                    role=who["role"], signed_in_at=to_db_timestamp(_now()), area=area, terminal=terminal)
+
+
+def _remember_server_sign_in(url: str, who: dict, pin: str) -> None:
+    pin_hash = auth.hash_pin(pin)
+
+    def save(conn):
+        conn.execute(
+            "INSERT INTO server_sign_ins (server_url, badge_id, name, role, pin_hash) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (server_url, badge_id) DO UPDATE SET name = excluded.name, role = excluded.role, "
+            "pin_hash = excluded.pin_hash, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            (url, who["badge_id"], who["name"], who["role"], pin_hash))
+
+    _write(save)
+
+
+def _offline_sign_in(url: str, badge_id: str, pin: str, area: str) -> dict:
+    """Who signed in here through the server before, if the PIN matches; else
+    the server is simply unavailable (a person never seen here cannot sign in)."""
+    with connection_scope() as conn:
+        row = conn.execute("SELECT * FROM server_sign_ins WHERE server_url = ? AND badge_id = ?",
+                           (url, auth.normalize_badge_id(badge_id))).fetchone()
+    if row is None:
+        raise remote.ServerUnavailableError("")
+    if not auth.verify_pin(pin or "", row["pin_hash"]):
+        raise SignInFailedError()
+    if not auth.can_open(row["role"], area):
+        raise NotAllowedError(auth.role_label(row["role"]), auth.AREA_LABELS.get(area, area))
+    return {"badge_id": row["badge_id"], "name": row["name"], "role": row["role"]}
 
 
 def confirm_pin(session: Session, pin: str) -> None:

@@ -24,6 +24,15 @@ ROW = {"barcode": "A1", "name": "Anvil", "price": 9.5, "stock_quantity": 3, "cri
 WH = StockLocation("warehouse", "WH-01")
 
 
+@pytest.fixture(autouse=True)
+def _isolated_db(tmp_path, monkeypatch):
+    """Server reads are cached in the local file: keep that in a temp one."""
+    import database.connection as connection
+
+    monkeypatch.setattr(connection, "get_db_path", lambda: tmp_path / "t.db")
+    monkeypatch.setattr(connection, "_initialized", False)
+
+
 class FakeClient:
     """Records calls; `answers` maps (method, path) to a value or a ServerError."""
 

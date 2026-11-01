@@ -97,5 +97,7 @@ Passwords are masked in logs and never returned by the health endpoints.
 - `POST /stock/transfers` (one product from `source` to one or more `legs`, all or nothing; administrators), `POST /stock/counts` (set a place's level to what was counted; the difference is a `count` movement), `POST /stock/unassigned/place` and `/stock/unassigned/clear`, `PUT /stock/reorder-levels` (administrators).
 - Reads for the screens: `GET /products/{barcode}`, `/stock/products-at`, `/stock/reorder-levels`, `/stock/units-by-location`, `/stock/in-transit`, `/stock/movement-totals?since=`, `/stock/last-moved`; `GET /stock-movements` also filters by `location_kind`, `location_code`, `movement_type`, `since`, `until`.
 
+- `POST /sales` (tills: `admin` or `cashier` signed in to `pos`): one sale, keyed by `client_uuid` (sent twice = stored once, answered with `duplicate: true`). A live sale must match today's prices; one made offline (`sold_at` set) keeps the price paid. Both are refused (409) if the shelf does not hold the units. `GET /sales?since=&until=&dealership_code=`.
+
 Every write re-reads the account inside its own transaction, so a token from someone who has since been switched off or demoted is refused (401) even before it expires.
 - `GET /health/db`: readiness, runs `SELECT 1`; 503 when unreachable or not configured.
