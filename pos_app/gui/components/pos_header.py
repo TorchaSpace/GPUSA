@@ -168,7 +168,11 @@ class PosHeader(QWidget):
         picker.clear()
         for code, name in shops:
             picker.addItem(name, code)
-        picker.setCurrentIndex(max(0, picker.findData(current_code)))
+        if current_code is None:  # a till with no shop of its own: say so, never show the first shop as if it were its own
+            picker.setPlaceholderText(tr("pos.switch.choose"))
+            picker.setCurrentIndex(-1)
+        else:
+            picker.setCurrentIndex(max(0, picker.findData(current_code)))
         picker.blockSignals(False)
         many = len(shops) > 1
         picker.setVisible(many)
