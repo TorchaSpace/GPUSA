@@ -19,6 +19,21 @@ curl localhost:8000/health/db   # 200 if PostgreSQL answers, 503 otherwise
 Tests: `python -m pytest -q server` (from the repo root). Set
 `GPUSA_TEST_DATABASE_URL` to also test against a real PostgreSQL; CI does.
 
+## Database schema (Alembic)
+
+The PostgreSQL tables mirror the desktop SQLite schema (v10). Create or update
+them with the same environment variables the API uses:
+
+```bash
+cd server
+set -a; . ./.env; set +a
+alembic upgrade head      # creates all tables
+alembic current           # shows the applied version (0001)
+```
+
+Never run `alembic downgrade` on a database that holds real data: it drops the
+tables. New columns/tables go in a new file under `migrations/versions/`.
+
 ## Configuration (environment variables only)
 
 | Variable | Used for |
