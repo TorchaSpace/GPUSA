@@ -60,6 +60,7 @@ class StockLevelOut(BaseModel):
     location_kind: str
     location_code: str
     product_barcode: str
+    product_name: str
     quantity: int
     updated_at: datetime
 
@@ -88,9 +89,10 @@ def employees(request: Request, session: Session = Depends(current_session)):
 def stock_levels(request: Request, location_kind: str | None = None, location_code: str | None = None,
                  product_barcode: str | None = None, _: Session = Depends(current_session)):
     """Units per place and product. Optional filters narrow the list."""
-    sql = ("SELECT location_kind, location_code, product_barcode, quantity, updated_at FROM stock_levels "
-           "WHERE (%s::text IS NULL OR location_kind = %s) AND (%s::text IS NULL OR location_code = %s) "
-           "AND (%s::text IS NULL OR upper(product_barcode) = upper(%s)) "
-           "ORDER BY location_kind, location_code, product_barcode")
+    sql = ("SELECT l.location_kind, l.location_code, l.product_barcode, p.name AS product_name, l.quantity, "
+           "l.updated_at FROM stock_levels l JOIN products p ON p.barcode = l.product_barcode "
+           "WHERE (%s::text IS NULL OR l.location_kind = %s) AND (%s::text IS NULL OR l.location_code = %s) "
+           "AND (%s::text IS NULL OR upper(l.product_barcode) = upper(%s)) "
+           "ORDER BY p.name, l.location_kind, l.location_code")
     return _rows(request, sql, (location_kind, location_kind, location_code, location_code,
                                 product_barcode, product_barcode))

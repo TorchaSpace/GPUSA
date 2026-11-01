@@ -50,6 +50,9 @@ class FakeClient:
     def patch(self, path, body):
         return self._answer("PATCH", path, body)
 
+    def put(self, path, body):
+        return self._answer("PUT", path, body)
+
 
 def on(answers: dict) -> FakeClient:
     client = FakeClient(answers)
@@ -136,10 +139,11 @@ def test_barcodes_are_quoted_in_paths():
 
 def test_stock_in_and_out():
     levels = [{"location_kind": "warehouse", "location_code": "WH-01", "product_barcode": "A1", "quantity": 2,
-               "updated_at": "2026-11-01T10:00:00Z"}]
+               "product_name": "Anvil", "updated_at": "2026-11-01T10:00:00Z"}]
     client = on({("POST", "/stock-movements"): {"level_after": 7},
                  ("GET", "/products/A1"): ROW,
-                 ("GET", "/stock-levels?product_barcode=A1"): levels})
+                 ("GET", "/stock-levels?location_kind=warehouse&location_code=WH-01&product_barcode=A1"): levels,
+        ("GET", "/stock-levels?product_barcode=A1"): levels})
     assert stock_repository.receive(WH, "A1", 5, note=" supplier ", reference="PO-1") == 7
     body = client.calls[-1][2]
     assert (body["direction"], body["location_code"], body["quantity"], body["note"]) == ("receive", "WH-01", 5,
@@ -152,8 +156,9 @@ def test_stock_in_and_out():
 
 def test_dispatch_too_many_and_unknown_place():
     levels = [{"location_kind": "warehouse", "location_code": "WH-01", "product_barcode": "A1", "quantity": 2,
-               "updated_at": "2026-11-01T10:00:00Z"}]
+               "product_name": "Anvil", "updated_at": "2026-11-01T10:00:00Z"}]
     on({("POST", "/stock-movements"): ServerError("Only 2", 409), ("GET", "/products/A1"): ROW,
+        ("GET", "/stock-levels?location_kind=warehouse&location_code=WH-01&product_barcode=A1"): levels,
         ("GET", "/stock-levels?product_barcode=A1"): levels})
     with pytest.raises(InsufficientStockError) as info:
         stock_repository.dispatch(WH, "A1", 5)
@@ -171,3 +176,71 @@ def test_local_mode_untouched(db_connection, monkeypatch):
     monkeypatch.setattr(remote, "call", boom)
     with pytest.raises(ProductNotFoundError):
         product_repository.get_by_barcode("NOPE-XYZ")
+
+
+def test_stock_reads_and_writes_per_place():
+    lv = {"location_kind": "dealership", "location_code": "CST-04", "product_barcode": "A1", "product_name": "Anvil",
+          "quantity": 3, "updated_at": "2026-11-01T10:00:00Z"}
+    here = {"barcode": "A1", "name": "Anvil", "price": 9.5, "quantity": 3, "critical_stock_level": 5,
+            "is_active": True, "stocked_here": True}
+    mv = {"id": 9, "created_at": "2026-11-01T10:00:00.123456+00:00", "direction": "receive", "barcode": "A1",
+          "product_name": "Anvil", "location_kind": "warehouse", "location_code": "WH-01", "quantity": 4,
+          "note": None, "reason": "transfer", "reference": "CST-04", "handled_by": "Ali · B-001", "bin_code": None}
+    dealer = StockLocation("dealership", "CST-04")
+    client = on({
+        ("POST", "/stock/transfers"): {"moved": 4, "source_level_after": 0},
+        ("POST", "/stock/counts"): {"difference": -1},
+        ("POST", "/stock/unassigned/place"): {"moved": 6},
+        ("POST", "/stock/unassigned/clear"): {"removed": 2},
+        ("PUT", "/stock/reorder-levels"): {"barcode": "A1", "level": 5},
+        ("GET", "/stock/reorder-levels?kind=dealership&code=CST-04"): {"A1": 5},
+        ("GET", "/stock/products-at?kind=dealership&code=CST-04"): [here],
+        ("GET", "/stock/products-at?kind=dealership&code=CST-04&include_inactive=true"): [here],
+        ("GET", "/stock-levels?location_kind=dealership&location_code=CST-04"): [lv],
+        ("GET", "/stock-levels"): [lv, {**lv, "quantity": 0}],
+        ("GET", "/stock/units-by-location"): [{"location_kind": "dealership", "location_code": "CST-04", "units": 3}],
+        ("GET", "/stock/in-transit"): {"units": 0},
+        ("GET", "/stock-movements?location_kind=warehouse&location_code=WH-01&limit=50"): [mv],
+        ("GET", "/stock/movement-totals?since=2026-11-01T00%3A00%3A00.000Z"):
+            [{"location_kind": "warehouse", "location_code": "WH-01", "units_in": 4, "units_out": 0}],
+        ("GET", "/stock/last-moved?kind=warehouse&code=WH-01"): {"A1": "2026-11-01T10:00:00+00:00"},
+    })
+    stock_repository.transfer(WH, dealer, "A1", 4, note=" move ")
+    assert client.calls[-1][2] == {"barcode": "A1", "source": {"kind": "warehouse", "code": "WH-01"}, "note": "move",
+                                   "legs": [{"kind": "dealership", "code": "CST-04", "quantity": 4}]}
+    with pytest.raises(UserError):
+        stock_repository.transfer(WH, WH, "A1", 1)  # checked before anything is sent
+    assert stock_repository.set_count(dealer, "A1", 2) == -1
+    assert stock_repository.place_all_unassigned(WH) == 6
+    assert stock_repository.clear_unassigned() == 2
+    stock_repository.set_reorder_level(dealer, "A1", 5)
+    assert stock_repository.reorder_overrides_at(dealer) == {"A1": 5}
+    [p] = stock_repository.products_at(dealer)
+    assert (p.stock_quantity, p.critical_stock_level, p.stocked_here) == (3, 5, True)
+    assert stock_repository.critical_at(dealer) == [p]
+    assert stock_repository.product_at(dealer, "a1").barcode == "A1"
+    assert [lv.quantity for lv in stock_repository.levels_at(dealer)] == [3]
+    assert len(stock_repository.all_levels()) == 1  # zero levels left out
+    assert stock_repository.units_by_location() == {dealer: 3}
+    assert stock_repository.units_in_transit() == 0
+    [m] = stock_repository.list_movements(location=WH)
+    assert (m["created_at"], m["location"], m["movement_type"]) == ("2026-11-01T10:00:00.123Z", WH, "receive")
+    assert stock_repository.movement_totals_since("2026-11-01T00:00:00.000Z") == {WH: (4, 0)}
+    assert stock_repository.last_movement_at(WH) == {"A1": "2026-11-01T10:00:00.000Z"}
+
+
+def test_places_read_from_the_server_and_writes_wait():
+    from database import dealership_repository, warehouse_repository
+    from shared.models import Warehouse
+
+    on({("GET", "/warehouses"): [{"id": 1, "code": "WH-01", "name": "Main", "city": "", "capacity_units": 10,
+                                  "docks": 2, "is_active": True},
+                                 {"id": 2, "code": "WH-02", "name": "Old", "city": "", "capacity_units": None,
+                                  "docks": 0, "is_active": False}],
+        ("GET", "/dealerships"): [{"id": 1, "code": "CST-04", "name": "Coast", "region": "Coastal", "city": "Izmir",
+                                   "manager_name": None, "is_active": True}]})
+    assert [w.code for w in warehouse_repository.list_all(active_only=True)] == ["WH-01"]
+    assert warehouse_repository.get_by_code("wh-02").name == "Old"
+    assert dealership_repository.get_by_code(" cst-04 ").city == "Izmir"
+    with pytest.raises(remote.NotOnServerYetError):
+        warehouse_repository.create(Warehouse("WH-03", "New"))

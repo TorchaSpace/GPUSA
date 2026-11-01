@@ -21,7 +21,7 @@ import sqlite3
 
 from shared.auth import Actor
 from shared.i18n import UserError
-from database import audit_repository, authz
+from database import audit_repository, authz, remote, remote_places
 from database.connection import connection_scope
 from database.exceptions import DealershipNotFoundError, DuplicateDealershipCodeError, LocationHasStockError
 from shared.models import DEALERSHIP_REGIONS, Dealership
@@ -105,6 +105,8 @@ def _row_to_dealership(row: sqlite3.Row) -> Dealership:
 def get_by_code(code: str) -> Dealership:
     """Return the Dealership for `code` (any letter case, stray spaces
     ignored), or raise DealershipNotFoundError."""
+    if remote.active():
+        return remote_places.dealership(code, normalize_code(code))
     with connection_scope() as conn:
         row = _find_row(conn, code)
     if row is None:
@@ -114,6 +116,8 @@ def get_by_code(code: str) -> Dealership:
 
 def list_all() -> list[Dealership]:
     """Return every dealership, e.g. for admin_app's Dealerships page."""
+    if remote.active():
+        return remote_places.dealerships()
     with connection_scope() as conn:
         rows = conn.execute("SELECT * FROM dealerships ORDER BY name").fetchall()
     return [_row_to_dealership(row) for row in rows]
@@ -124,6 +128,8 @@ def create(dealership: Dealership) -> None:
     Raises DuplicateDealershipCodeError if the code exists (in any letter
     case), ValueError if region isn't one of DEALERSHIP_REGIONS or the
     code / name is empty or a field is too long."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     _validate_region(dealership.region)
     _clean(dealership)
     validate_fields(dealership)
@@ -159,6 +165,8 @@ def update(dealership: Dealership) -> None:
     (any letter case). Raises ValueError if region isn't one of
     DEALERSHIP_REGIONS or a field is empty / too long,
     DealershipNotFoundError."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     _validate_region(dealership.region)
     _clean(dealership)
     validate_fields(dealership)
@@ -187,6 +195,8 @@ def delete(code: str, by: Actor | None = None) -> None:
     units would be lost track of - move or count them out first),
     LocationInUseError while a scheduled / in-transit shipment is headed
     there (deactivate it instead)."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     from database.exceptions import LocationInUseError  # local: keeps this edit clear of the file's imports
     from database import stock_request_repository
     from database.shipment_repository import active_count_for
