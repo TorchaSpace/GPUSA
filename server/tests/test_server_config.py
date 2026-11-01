@@ -82,3 +82,14 @@ def test_bad_secret_format():
         fetch_db_credentials(ARN, client=FakeSM(secret="not json"))
     with pytest.raises(SecretError):
         fetch_db_credentials(ARN, client=FakeSM(secret='{"username": "x"}'))
+
+
+def test_jwt_secret_must_be_long_and_stays_out_of_logs():
+    import pytest as _pytest
+    from gpusa_server.config import ConfigError, load_settings
+
+    with _pytest.raises(ConfigError):
+        load_settings({"GPUSA_JWT_SECRET": "short"})
+    s = load_settings({"GPUSA_JWT_SECRET": "s" * 40})
+    assert s.jwt_secret == "s" * 40
+    assert "s" * 40 not in repr(s)
