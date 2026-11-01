@@ -5,7 +5,8 @@ from __future__ import annotations
 
 import pytest
 
-from database import product_repository, remote, stock_repository
+from database import (product_repository, purchase_order_repository, remote, sale_return_repository,
+                      shipment_repository, stock_repository)
 from database.exceptions import (
     DATABASE_ERRORS,
     DuplicateBarcodeError,
@@ -253,3 +254,24 @@ def test_places_read_from_the_server_and_writes_wait():
     assert dealership_repository.get_by_code(" cst-04 ").city == "Izmir"
     with pytest.raises(remote.NotOnServerYetError):
         warehouse_repository.create(Warehouse("WH-03", "New"))
+
+
+@pytest.mark.parametrize(
+    "call",
+    [
+        lambda: shipment_repository.create("Main", "D-1", "Truck", None, [("A1", 1)]),
+        lambda: shipment_repository.dispatch(1),
+        lambda: shipment_repository.cancel(1),
+        lambda: shipment_repository.complete_receipt(1, {"A1": 1}),
+        lambda: purchase_order_repository.receive_delivery(None, "A1", 1),
+        lambda: purchase_order_repository.receive_against_order(1, 1, None),
+        lambda: sale_return_repository.create(1, [("A1", 1, True)], "damaged", None),
+    ],
+)
+def test_stock_changes_without_a_server_version_are_refused(call):
+    """Shipments, order receipts and returns still write this computer's own stock tables; in server mode
+    they must refuse instead of pulling the local stock away from the server's."""
+    client = on({})
+    with pytest.raises(remote.NotOnServerYetError):
+        call()
+    assert client.calls == []

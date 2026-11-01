@@ -123,6 +123,22 @@ def online() -> bool:
     return _client is not None
 
 
+def local_only(fn):
+    """Decorator for a repository call that changes stock (or books against stock) on this
+    computer's own database and has no server version yet. In server mode it refuses with
+    NotOnServerYetError instead of quietly changing the local stock while Admin and the tills
+    read the server's: that would pull the two apart."""
+    import functools
+
+    @functools.wraps(fn)
+    def guarded(*args, **kwargs):
+        if active():
+            raise NotOnServerYetError()
+        return fn(*args, **kwargs)
+
+    return guarded
+
+
 def server_url() -> str | None:
     client = _client
     if client is not None:

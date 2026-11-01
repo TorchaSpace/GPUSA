@@ -42,6 +42,7 @@ import sqlite3
 from shared.i18n import UserError
 from database import activity_repository, stock_request_repository
 from database.connection import connection_scope
+from database import remote
 from datetime import datetime, timedelta
 
 from database.exceptions import (
@@ -174,6 +175,7 @@ def list_shipments(
     return [_row_to_shipment(row, lines[row["id"]]) for row in rows]
 
 
+@remote.local_only
 def create(
     origin: str,
     dealership_code: str,
@@ -289,6 +291,7 @@ def _touch(conn: sqlite3.Connection, shipment_id: int, sql_set: str, params: tup
     )
 
 
+@remote.local_only
 def dispatch(shipment_id: int, actor: Actor | None = None) -> Shipment:
     """The truck left: scheduled -> in_transit, departed_at = now, and
     every line comes off the origin warehouse's stock. Raises
@@ -334,6 +337,7 @@ def update_eta(shipment_id: int, eta) -> Shipment:
     return _write(shipment_id, run)
 
 
+@remote.local_only
 def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
     """Call the shipment off. If it was already dispatched, the goods go
     back onto the origin warehouse's stock. Stock requests it was planned
@@ -358,6 +362,7 @@ def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
     return _write(shipment_id, run)
 
 
+@remote.local_only
 def complete_receipt(shipment_id: int, received: dict[str, int], note: str | None = None,
                      actor: Actor | None = None) -> Shipment:
     """The dealership checked the shipment in. `received` maps barcode ->

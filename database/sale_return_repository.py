@@ -30,6 +30,7 @@ from database import account_repository, activity_repository, audit_repository
 from database.connection import connection_scope
 from database.exceptions import ReturnApprovalError, ReturnQuantityError, SessionInvalidError, TransactionNotFoundError
 from database.stock_repository import change_level
+from database import remote
 from shared.auth import AREA_DEPOT_CONSOLE, Actor, actor_label
 from shared.formatting import to_db_timestamp
 from shared.i18n import UserError
@@ -73,6 +74,7 @@ def returnable_lines(transaction_id: int) -> list[ReturnableLine]:
         ]
 
 
+@remote.local_only
 def create(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str, approved_by: Actor,
            requested_by: Actor | None = None, client_uuid: str | None = None) -> SaleReturn:
     """Refund `lines` - (barcode, quantity, restock) - of sale `transaction_id`.

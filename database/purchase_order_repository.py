@@ -46,6 +46,7 @@ from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
 from database import account_repository, activity_repository, audit_repository, authz, stock_repository
+from database import remote
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
@@ -499,6 +500,7 @@ def _book_against(conn: sqlite3.Connection, row: sqlite3.Row, order: PurchaseOrd
     )
 
 
+@remote.local_only
 @_wrap_sqlite
 def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor: Actor | None = None, *,
                      note: str | None = None, reference: str | None = None,
@@ -546,6 +548,7 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
     return _in_transaction(run)
 
 
+@remote.local_only
 @_wrap_sqlite
 def receive_against_order(order_id: int, quantity: int, actor: Actor | None,
                           warehouse_location: StockLocation) -> PurchaseOrder:
