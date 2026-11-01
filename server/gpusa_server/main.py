@@ -10,7 +10,9 @@ import logging
 from fastapi import FastAPI, Response, status
 
 from . import __version__, db
+from .auth_routes import router as auth_router
 from .config import Settings, load_settings
+from .product_routes import router as product_router
 
 log = logging.getLogger("gpusa_server")
 
@@ -21,6 +23,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     app = FastAPI(title="GPUSA API", version=__version__)
     app.state.settings = settings
+    app.include_router(auth_router)
+    app.include_router(product_router)
 
     @app.get("/health")
     def health() -> dict:

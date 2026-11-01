@@ -39,6 +39,8 @@ class Settings:
     db_name: str | None = None
     db_secret_arn: str | None = None
     db_sslmode: str = "require"
+    # Signs the login tokens. Unset: /auth/login answers 503 (safe default).
+    jwt_secret: str | None = None
 
     @property
     def mode(self) -> str:
@@ -55,7 +57,7 @@ class Settings:
             f"Settings(mode={self.mode!r}, database_url={url!r}, "
             f"db_host={self.db_host!r}, db_port={self.db_port}, "
             f"db_name={self.db_name!r}, db_secret_arn={self.db_secret_arn!r}, "
-            f"db_sslmode={self.db_sslmode!r})"
+            f"db_sslmode={self.db_sslmode!r}, jwt_secret={'***' if self.jwt_secret else None!r})"
         )
 
     __str__ = __repr__
@@ -75,6 +77,9 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
     secret_arn = _get(env, "GPUSA_DB_SECRET_ARN")
     sslmode = _get(env, "GPUSA_DB_SSLMODE") or "require"
     port_raw = _get(env, "GPUSA_DB_PORT") or "5432"
+    jwt_secret = _get(env, "GPUSA_JWT_SECRET")
+    if jwt_secret is not None and len(jwt_secret) < 32:
+        raise ConfigError("GPUSA_JWT_SECRET must be at least 32 characters")
 
     if sslmode not in VALID_SSLMODES:
         raise ConfigError(f"GPUSA_DB_SSLMODE must be one of {VALID_SSLMODES}, got {sslmode!r}")
@@ -100,4 +105,5 @@ def load_settings(env: Mapping[str, str] | None = None) -> Settings:
         db_name=name,
         db_secret_arn=secret_arn,
         db_sslmode=sslmode,
+        jwt_secret=jwt_secret,
     )

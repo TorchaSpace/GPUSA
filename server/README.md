@@ -34,6 +34,25 @@ alembic current           # shows the applied version (0001)
 Never run `alembic downgrade` on a database that holds real data: it drops the
 tables. New columns/tables go in a new file under `migrations/versions/`.
 
+## Sign-in and first data
+
+1. Put a secret in `.env` (32+ characters, never commit it):
+   `GPUSA_JWT_SECRET=` the output of `python -c "import secrets; print(secrets.token_urlsafe(48))"`
+2. Create the first administrator (the PIN is typed at a hidden prompt):
+   `python -m gpusa_server.create_admin B-001 "Full Name"`
+3. Sign in, then read products with the token:
+
+```bash
+curl -s localhost:8000/auth/login -H 'Content-Type: application/json' \
+  -d '{"badge_id":"B-001","pin":"<PIN>","area":"admin","terminal":"test"}'
+curl -s localhost:8000/products -H 'Authorization: Bearer <token>'
+```
+
+Same rules as the desktop sign-in: 5 wrong PINs lock the account for 5 minutes,
+a wrong PIN and an unknown badge look the same, every attempt is logged in
+`auth_events`. Tokens last 12 hours. Accounts copied from the desktop database
+keep working: the PIN hash format is the same.
+
 ## Configuration (environment variables only)
 
 | Variable | Used for |
@@ -43,6 +62,7 @@ tables. New columns/tables go in a new file under `migrations/versions/`.
 | `GPUSA_DB_PORT` | Default `5432` |
 | `GPUSA_DB_NAME` | e.g. `gpusa` |
 | `GPUSA_DB_SECRET_ARN` | Secrets Manager secret with `{"username","password"}` (RDS-managed format). Read at runtime via the EC2 instance role, cached 5 min. Only used when set. |
+| `GPUSA_JWT_SECRET` | Signs login tokens. Unset: `/auth/login` answers 503. |
 | `GPUSA_DB_SSLMODE` | Default `require`; later `verify-full` with the RDS CA bundle |
 
 Setting both `DATABASE_URL` and `GPUSA_DB_HOST` is an error on purpose.
@@ -51,4 +71,6 @@ Passwords are masked in logs and never returned by the health endpoints.
 ## Endpoints
 
 - `GET /health`: liveness, never touches the database (use for the load balancer).
+- `POST /auth/login`, `GET /auth/me`: sign in with badge + PIN, check the token.
+- `GET /products`: product list (needs a token).
 - `GET /health/db`: readiness, runs `SELECT 1`; 503 when unreachable or not configured.
