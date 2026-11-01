@@ -14,6 +14,7 @@ from .auth_routes import router as auth_router
 from .config import Settings, load_settings
 from .product_routes import router as product_router
 from .read_routes import router as read_router
+from .stock_routes import router as stock_router
 
 log = logging.getLogger("gpusa_server")
 
@@ -27,6 +28,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(auth_router)
     app.include_router(product_router)
     app.include_router(read_router)
+    app.include_router(stock_router)
 
     @app.get("/health")
     def health() -> dict:
