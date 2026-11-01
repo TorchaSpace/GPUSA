@@ -259,17 +259,13 @@ def test_places_read_from_the_server_and_writes_wait():
 @pytest.mark.parametrize(
     "call",
     [
-        lambda: shipment_repository.create("Main", "D-1", "Truck", None, [("A1", 1)]),
-        lambda: shipment_repository.dispatch(1),
-        lambda: shipment_repository.cancel(1),
-        lambda: shipment_repository.complete_receipt(1, {"A1": 1}),
         lambda: purchase_order_repository.receive_delivery(None, "A1", 1),
         lambda: purchase_order_repository.receive_against_order(1, 1, None),
         lambda: sale_return_repository.create(1, [("A1", 1, True)], "damaged", None),
     ],
 )
 def test_stock_changes_without_a_server_version_are_refused(call):
-    """Shipments, order receipts and returns still write this computer's own stock tables; in server mode
+    """Order receipts and returns still write this computer's own stock tables; in server mode
     they must refuse instead of pulling the local stock away from the server's."""
     client = on({})
     with pytest.raises(remote.NotOnServerYetError):
@@ -319,3 +315,70 @@ def test_missing_stock_request_is_not_found():
     on({("GET", "/stock-requests/9"): ServerError("no", 404)})
     with pytest.raises(StockRequestNotFoundError):
         stock_request_repository.get(9)
+
+
+SHIPMENT = {"id": 2, "origin": "WH-01 · Main", "origin_code": "WH-01", "dealership_code": "D-1",
+            "dealership_name": "Coast", "carrier": "Truck", "driver": None, "status": "scheduled",
+            "departed_at": None, "planned_eta": "2030-01-01T10:00:00+00:00", "eta": "2030-01-01T10:00:00+00:00",
+            "delivered_at": None, "receipt_note": None, "created_at": "2026-11-01T09:00:00+00:00",
+            "stock_moved": False,
+            "lines": [{"id": 7, "product_barcode": "A1", "product_name": "Anvil", "expected_qty": 3,
+                       "received_qty": None}]}
+
+
+def test_shipments_go_to_the_server():
+    from datetime import datetime, timezone
+
+    eta = datetime(2030, 1, 1, 10, 0, tzinfo=timezone.utc)
+    client = on({
+        ("POST", "/shipments"): SHIPMENT,
+        ("GET", "/shipments/2"): SHIPMENT,
+        ("GET", "/shipments?status=scheduled&status=in_transit&dealership_code=D-1"): [SHIPMENT],
+        ("GET", "/shipments/incoming-count?dealership_code=D-1"): {"count": 4},
+        ("GET", "/shipments/incoming-count"): {"count": 9},
+        ("POST", "/shipments/2/dispatch"): {**SHIPMENT, "status": "in_transit", "stock_moved": True},
+        ("POST", "/shipments/2/eta"): SHIPMENT,
+        ("POST", "/shipments/2/cancel"): {**SHIPMENT, "status": "cancelled"},
+        ("POST", "/shipments/2/receive"): {**SHIPMENT, "status": "delivered"},
+    })
+    made = shipment_repository.create("WH-01 · Main", "D-1", "Truck", eta, [("a1", 1), ("A1", 2)],
+                                      origin_code="WH-01", request_ids=[5])
+    assert client.calls[-1] == ("POST", "/shipments", {
+        "origin": "WH-01 · Main", "dealership_code": "D-1", "carrier": "Truck", "eta": "2030-01-01T10:00:00.000Z",
+        "driver": None, "origin_code": "WH-01", "departure": None,
+        "lines": [{"barcode": "a1", "quantity": 1}, {"barcode": "A1", "quantity": 2}], "request_ids": [5]})
+    assert (made.number, made.status, made.lines[0].product_name, made.eta) == \
+        ("SH-00002", "scheduled", "Anvil", "2030-01-01T10:00:00.000Z")
+    assert shipment_repository.get(2).lines[0].expected_qty == 3
+    assert len(shipment_repository.list_shipments(("scheduled", "in_transit"), "D-1")) == 1
+    assert shipment_repository.count_incoming("D-1") == 4 and shipment_repository.count_incoming(None) == 9
+    assert shipment_repository.dispatch(2).stock_moved is True
+    shipment_repository.update_eta(2, eta)
+    assert client.calls[-1] == ("POST", "/shipments/2/eta", {"eta": "2030-01-01T10:00:00.000Z"})
+    assert shipment_repository.cancel(2).status == "cancelled"
+    assert shipment_repository.complete_receipt(2, {"a1": 2}, "  one broke ").status == "delivered"
+    assert client.calls[-1] == ("POST", "/shipments/2/receive", {"received": {"A1": 2}, "note": "one broke"})
+
+
+def test_shipment_checks_run_before_the_server_is_asked():
+    from datetime import datetime, timezone
+
+    client = on({})
+    eta = datetime(2030, 1, 1, tzinfo=timezone.utc)
+    with pytest.raises(UserError):
+        shipment_repository.create("WH-01", "D-1", "", eta, [("A1", 1)])
+    with pytest.raises(UserError):
+        shipment_repository.create("WH-01", "D-1", "Truck", eta, [("A1", 0)])
+    with pytest.raises(UserError):
+        shipment_repository.complete_receipt(2, {"A1": -1})
+    assert client.calls == []
+
+
+def test_missing_shipment_is_not_found():
+    from database.exceptions import ShipmentNotFoundError
+
+    on({("GET", "/shipments/9"): ServerError("no", 404), ("POST", "/shipments/9/dispatch"): ServerError("no", 404)})
+    with pytest.raises(ShipmentNotFoundError):
+        shipment_repository.get(9)
+    with pytest.raises(ShipmentNotFoundError):
+        shipment_repository.dispatch(9)
