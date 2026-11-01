@@ -201,3 +201,24 @@ def restrict_to_owner(path: Path) -> bool:
     except OSError:
         return False
 
+
+SERVER_URL_ENV = "GPUSA_SERVER_URL"
+
+
+def get_server_url() -> str | None:
+    """The cloud API every app on this computer signs in to, or None (the
+    default: everything stays on the local database file). Set from Admin >
+    Server (test) (config.json "server_url") or, for a till with no Admin, with
+    the GPUSA_SERVER_URL environment variable, which wins."""
+    url = (os.environ.get(SERVER_URL_ENV) or "").strip() or str(_load_config().get("server_url") or "").strip()
+    return url or None
+
+
+def set_server_url(url: str | None) -> None:
+    """Save (or with None / '' clear) the server address for every app on this computer."""
+    config = _load_config()
+    if url and url.strip():
+        config["server_url"] = url.strip()
+    else:
+        config.pop("server_url", None)
+    _save_config(config)

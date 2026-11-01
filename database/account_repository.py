@@ -37,8 +37,8 @@ from database.exceptions import (
     SignInFailedError,
     localized_auth,
 )
-from database import activity_repository, audit_repository, authz, employee_repository
-from shared import auth, recovery_code, security_question
+from database import activity_repository, audit_repository, authz, employee_repository, remote
+from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
 from shared.models import Account
@@ -141,6 +141,8 @@ def is_session_valid(session: Session | None, *, assume_on_error: bool = False) 
     lock must not sign anybody out)."""
     if session is None:
         return False
+    if remote.active() and paths.get_server_url():
+        return True  # signed in through the server, which re-checks the account on every write
     try:
         with connection_scope() as conn:
             row = _fetch_by_id(conn, session.account_id)
@@ -401,8 +403,18 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
     """Check a badge + PIN for `area` and return the Session. The badge is
     matched in any letter case. Raises SignInFailedError,
     AccountLockedError, AccountDisabledError, NotAllowedError. Every
-    outcome is logged."""
+    outcome is logged.
+
+    When this computer has a server address (shared.paths.get_server_url), the
+    server checks the badge and PIN instead (its accounts are the real ones, with
+    its own lockout and log). A main sign-in (event "sign_in") then switches
+    server mode on for this app with that person's sign-in; a PIN confirmation
+    only checks. The Session keeps the local account id for the same badge, or 0
+    when this computer has none (local account screens then refuse it)."""
     badge_id = auth.normalize_badge_id(badge_id)
+    server_url = paths.get_server_url()
+    if server_url:
+        return _authenticate_on_server(server_url, badge_id, pin, area, terminal, event)
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     now = _now()
@@ -438,6 +450,56 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
                    signed_in_at=signed_in_at, area=area, terminal=terminal)
 
 
+def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, terminal: str, event: str) -> Session:
+    """The server checks the badge and PIN. When it cannot be reached, someone
+    who signed in here through it before may still sign in with the same PIN
+    (checked against the hash kept from that sign-in): the app then works from
+    its cached data and queues its sales (database/remote_sales.py) until the
+    server answers again."""
+    try:
+        client, who = remote.sign_in(url, badge_id, pin, area, terminal)
+    except remote.ServerUnavailableError:
+        who = _offline_sign_in(url, badge_id, pin, area)
+        if event == "sign_in":
+            remote.use_server_offline(url, who["badge_id"], pin, area, terminal)
+    else:
+        _remember_server_sign_in(url, who, pin)
+        if event == "sign_in":
+            remote.use_server(client)
+    with connection_scope() as conn:
+        row = _fetch(conn, who["badge_id"])
+    return Session(account_id=int(row["id"]) if row is not None else 0, badge_id=who["badge_id"], name=who["name"],
+                   role=who["role"], signed_in_at=to_db_timestamp(_now()), area=area, terminal=terminal)
+
+
+def _remember_server_sign_in(url: str, who: dict, pin: str) -> None:
+    pin_hash = auth.hash_pin(pin)
+
+    def save(conn):
+        conn.execute(
+            "INSERT INTO server_sign_ins (server_url, badge_id, name, role, pin_hash) VALUES (?, ?, ?, ?, ?) "
+            "ON CONFLICT (server_url, badge_id) DO UPDATE SET name = excluded.name, role = excluded.role, "
+            "pin_hash = excluded.pin_hash, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            (url, who["badge_id"], who["name"], who["role"], pin_hash))
+
+    _write(save)
+
+
+def _offline_sign_in(url: str, badge_id: str, pin: str, area: str) -> dict:
+    """Who signed in here through the server before, if the PIN matches; else
+    the server is simply unavailable (a person never seen here cannot sign in)."""
+    with connection_scope() as conn:
+        row = conn.execute("SELECT * FROM server_sign_ins WHERE server_url = ? AND badge_id = ?",
+                           (url, auth.normalize_badge_id(badge_id))).fetchone()
+    if row is None:
+        raise remote.ServerUnavailableError("")
+    if not auth.verify_pin(pin or "", row["pin_hash"]):
+        raise SignInFailedError()
+    if not auth.can_open(row["role"], area):
+        raise NotAllowedError(auth.role_label(row["role"]), auth.AREA_LABELS.get(area, area))
+    return {"badge_id": row["badge_id"], "name": row["name"], "role": row["role"]}
+
+
 def confirm_pin(session: Session, pin: str) -> None:
     """Re-check the signed-in person's PIN (the Manager Portal gate). Same
     lockout and logging as authenticate(); raises the same errors."""
@@ -459,6 +521,8 @@ def _confirm_current_pin(session: Session, pin: str, *, admin: bool = False) -> 
 
 
 def sign_out(session: Session) -> None:
+    if paths.get_server_url():
+        remote.use_server(None)  # the next person signs in to the server with their own badge
     _write(lambda conn: _log(conn, "sign_out", session.badge_id, session.area, session.terminal))
 
 

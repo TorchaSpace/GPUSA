@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from database import account_repository, activity_repository, product_repository
+from database import account_repository, activity_repository, product_repository, remote, remote_sales
 from database.connection import connection_scope
 from database.exceptions import (
     DealershipInactiveError,
@@ -87,6 +87,8 @@ def finalize_transaction(transaction: Transaction, location: StockLocation = UNA
         transaction, items=[dataclasses.replace(item, quantity=int(item.quantity)) for item in transaction.items])
 
     client_uuid = (transaction.client_uuid or "").strip() or uuid.uuid4().hex
+    if remote.active():
+        return remote_sales.finalize(dataclasses.replace(transaction, client_uuid=client_uuid), location, cashier)
     wanted: dict[str, int] = {}
     for item in transaction.items:
         wanted[item.product_barcode] = wanted.get(item.product_barcode, 0) + item.quantity
@@ -270,7 +272,13 @@ def list_between(start: datetime, end: datetime, net_of_returns: bool = True) ->
     Transaction/LineItem instances, and sales report ranges are a
     manager-triggered, infrequent read, not a hot path worth
     micro-optimizing.
+
+    In server mode the sales come from the server (refunds are not on the
+    server yet, so they are not netted there), plus this till's sales still
+    waiting to be sent.
     """
+    if remote.active():
+        return remote_sales.list_between(start, end, None)
     with connection_scope() as conn:
         header_rows = conn.execute(
             "SELECT id, created_at, dealership_code, cashier, payment_method FROM transactions "
