@@ -66,3 +66,14 @@ def _nobody_signed_in():
     yield
     current_session.clear()
 
+
+
+@pytest.fixture(autouse=True)
+def _server_mode_off():
+    """database.remote is process-wide; a test that switches server mode on
+    must not send the next test's repository calls to a server."""
+    from database import remote
+
+    remote.use_server(None)
+    yield
+    remote.use_server(None)

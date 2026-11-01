@@ -1,8 +1,8 @@
 """A small client for the cloud API (server/), standard library only, no Qt.
 
-Used by the Admin "Server (test)" page today. The desktop apps still keep
-their data in the local SQLite file; this only talks to the server on request
-and keeps the sign-in token in memory (never on disk).
+Used by the Admin "Server (test)" page, and by database/remote.py when that
+page switches "server mode" on. Keeps the sign-in token in memory only
+(never on disk).
 """
 
 from __future__ import annotations
@@ -69,3 +69,9 @@ class ServerClient:
 
     def get(self, path: str):
         return self._request("GET", path)
+
+    def post(self, path: str, body: dict):
+        return self._request("POST", path, body)
+
+    def patch(self, path: str, body: dict):
+        return self._request("PATCH", path, body)

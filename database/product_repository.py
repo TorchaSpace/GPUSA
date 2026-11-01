@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from shared.auth import Actor
 from shared.i18n import UserError, tr
-from database import audit_repository, authz
+from database import audit_repository, authz, remote, remote_products
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBarcodeError,
@@ -80,6 +80,8 @@ def get_by_barcode(barcode: str, active_only: bool = False) -> Product:
     """Return the Product for `barcode` (any letter case), or raise
     ProductNotFoundError. With `active_only`, a deactivated product raises
     ProductInactiveError (a ProductNotFoundError) - what a sale lookup uses."""
+    if remote.active():
+        return remote_products.get_by_barcode(barcode, active_only)
     with connection_scope() as conn:
         row = _find(conn, barcode)
     if row is None:
@@ -93,6 +95,8 @@ def list_all(include_inactive: bool = True) -> list[Product]:
     """Return every product, e.g. for the Admin product management tab
     (deactivated ones included - Admin shows them dimmed - unless
     `include_inactive` is False)."""
+    if remote.active():
+        return remote_products.list_all(include_inactive)
     sql = "SELECT * FROM products"
     if not include_inactive:
         sql += " WHERE is_active = 1"
@@ -136,6 +140,8 @@ def create(product: Product) -> None:
     Admin > Warehouses moves it to a place. One transaction, so the total,
     the level and the audit row never disagree.
     """
+    if remote.active():
+        return remote_products.create(_validated(product))
     p = _validated(product)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -198,6 +204,8 @@ def update(product: Product, by: Actor | None = None) -> None:
     `by` (the signed-in administrator), when given, is re-checked against the
     database inside the transaction (SessionInvalidError if no longer one).
     """
+    if remote.active():
+        return remote_products.update(_validated(product))
     p = _validated(product)
 
     def work(conn):
@@ -222,6 +230,8 @@ def set_cost(barcode: str, cost: float, by: Actor | None = None) -> float:
     unknown barcode. Returns the stored cost. Sales already made keep the
     cost they were snapshotted with. `by`, when given, must still be an
     active administrator (SessionInvalidError)."""
+    if remote.active():
+        return remote_products.set_cost(barcode, clean_cost(cost))
     cost = clean_cost(cost)
 
     def work(conn):
@@ -269,6 +279,8 @@ def set_active(barcode: str, active: bool, by: Actor | None = None) -> None:
     are untouched; it just stops being sellable / receivable / shippable.
     Raises ProductNotFoundError. `by`, when given, must still be an active
     administrator (SessionInvalidError)."""
+    if remote.active():
+        return remote_products.set_active(barcode, active)
 
     def work(conn):
         authz.require_live_admin(conn, by)
@@ -292,6 +304,8 @@ def delete(barcode: str, by: Actor | None = None) -> None:
     without a movement or break the records that point at it. Deactivate
     such a product instead (set_active). `by` (who deleted it) goes to the
     audit trail in the same transaction."""
+    if remote.active():
+        raise remote.NotOnServerYetError()
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

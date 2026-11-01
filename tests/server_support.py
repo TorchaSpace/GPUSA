@@ -46,7 +46,7 @@ class FakeServer:
                 outer.requests.append(("GET", self.path))
                 if self.headers.get("Authorization") != "Bearer tok":
                     return self._send(401, {"detail": "Sign in first."})
-                if self.path == "/products":
+                if self.path.split("?")[0] == "/products":
                     return self._send(200, PRODUCTS)
                 if self.path in ("/dealerships", "/warehouses"):
                     return self._send(200, [{"code": "X"}])

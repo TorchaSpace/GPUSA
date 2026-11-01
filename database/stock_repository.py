@@ -28,6 +28,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError
+from database import remote, remote_products
 from database.connection import connection_scope
 from database.exceptions import (
     CapacityExceededError,
@@ -233,6 +234,9 @@ def receive(location: StockLocation, barcode: str, quantity: int, note: str | No
             actor: Actor | None = None, reference: str | None = None, bin_code: str | None = None) -> int:
     """New stock arrives at `location` from outside the company (the depot
     Floor's Inbound). Returns the new level there."""
+    if remote.active():
+        return remote_products.receive(location, barcode, _positive(quantity), _clean(note), _clean(reference),
+                                       bin_code)
     quantity = _positive(quantity)
     return _write(lambda conn: receive_in(conn, location, barcode, quantity, note=note, actor=actor,
                                           reference=_clean(reference), bin_code=bin_code))
@@ -244,6 +248,9 @@ def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | N
     supplier, scrapped - the depot Floor's Outbound; NOT a shipment to a
     dealership, which stays inside the company). Raises
     InsufficientStockError if `location` has fewer than `quantity`."""
+    if remote.active():
+        return remote_products.dispatch(location, barcode, _positive(quantity), _clean(note), _clean(reference),
+                                        bin_code)
     quantity = _positive(quantity)
 
     def run(conn):
@@ -530,6 +537,8 @@ def critical_at(location: StockLocation) -> list[Product]:
 
 def levels_for_product(barcode: str) -> list[StockLevel]:
     """Where a product is: every location holding any of it, most first."""
+    if remote.active():
+        return remote_products.levels_for_product(barcode)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT l.location_kind, l.location_code, l.product_barcode, p.name, l.quantity "
