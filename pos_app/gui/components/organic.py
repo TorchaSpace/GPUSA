@@ -139,6 +139,20 @@ class PillButton(QPushButton):
         self._bg, self._hover_bg, self._press_bg, self._fg = bg, hover, press, fg
         self.update()
 
+    def minimumSizeHint(self) -> QSize:
+        """As wide as the label as painted (bold, pixel size) plus its padding, so a
+        crowded row squeezes the space around it instead of cutting the text off."""
+        font = QFont(self.font())
+        font.setPixelSize(self._font_px)
+        font.setWeight(QFont.Normal if self._heading else QFont.Bold)
+        if self._heading:
+            font.setFamily(ORGANIC_PALETTE["font_heading"].split(",")[0].strip("'\" "))
+        icon_w = (self._icon.actualSize(QSize(24, 24)).width() + 8) if self._icon is not None and not self._icon.isNull() else 0
+        return QSize(QFontMetrics(font).horizontalAdvance(self.text()) + icon_w + 2 * 22, self.height())
+
+    def sizeHint(self) -> QSize:
+        return self.minimumSizeHint()
+
     def set_pill_icon(self, icon: QIcon | None) -> None:
         self._icon = icon
         self.update()

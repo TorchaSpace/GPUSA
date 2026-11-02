@@ -253,3 +253,17 @@ def test_places_read_from_the_server_and_writes_wait():
     assert dealership_repository.get_by_code(" cst-04 ").city == "Izmir"
     with pytest.raises(remote.NotOnServerYetError):
         warehouse_repository.create(Warehouse("WH-03", "New"))
+
+
+def test_check_cart_reads_the_server_shelf_in_server_mode():
+    """The till checks its cart against the server's shelf, not this computer's
+    (empty) SQLite file: a product the server sells must not be 'no longer sold'."""
+    dealer = StockLocation("dealership", "CST-04")
+    row = {"barcode": "A1", "name": "Anvil", "price": 9.5, "quantity": 3, "critical_stock_level": 1,
+           "is_active": True, "stocked_here": True}
+    gone = {**row, "barcode": "B2", "name": "Bolt", "is_active": False}
+    on({("GET", "/stock/products-at?kind=dealership&code=CST-04&include_inactive=true"): [row, gone]})
+    assert product_repository.check_cart(dealer, [("a1", 9.5, 3)]) == []  # scanner case
+    kinds = {i.barcode: i.kind for i in product_repository.check_cart(
+        dealer, [("A1", 9.5, 4), ("B2", 1.0, 1), ("NOPE", 1.0, 1)])}
+    assert kinds == {"A1": "stock", "B2": "unavailable", "NOPE": "unavailable"}
