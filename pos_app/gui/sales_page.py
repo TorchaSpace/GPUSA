@@ -36,12 +36,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database import account_repository, day_close_repository, sale_return_repository, transaction_repository
+from database import day_close_repository, sale_return_repository, transaction_repository
 from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.stock_requests import _dialog_css, _title, dark_button, primary_button
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared import current_session
-from shared.auth import AREA_DEPOT_CONSOLE
 from shared.currency import format_money
 from shared.i18n import UserError, tr
 from shared.models import DayClose, SaleReturn, StockLocation, Transaction, UNASSIGNED
@@ -151,13 +150,9 @@ class ReturnDialog(QDialog):
                 raise UserError("err.return_lines")
             if not self.reason_input.text().strip():
                 raise UserError("err.return_reason")
-            approver = account_repository.authenticate(
-                self.badge_input.text(), self.pin_input.text(), AREA_DEPOT_CONSOLE, self._terminal,
-                event="pin_confirmed",
-            ).actor
-            self.sale_return = sale_return_repository.create(
-                self.transaction.id, lines, self.reason_input.text(), approver, self._requested_by,
-                client_uuid=self._attempt[1])
+            self.sale_return = sale_return_repository.create_with_approval(
+                self.transaction.id, lines, self.reason_input.text(), self.badge_input.text(),
+                self.pin_input.text(), self._terminal, self._requested_by, client_uuid=self._attempt[1])
         except (ValueError, *DATABASE_ERRORS) as exc:
             self.pin_input.clear()
             self.error_label.setText(str(exc))

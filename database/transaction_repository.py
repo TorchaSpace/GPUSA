@@ -10,7 +10,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from database import account_repository, activity_repository, product_repository, remote, remote_sales
+from database import account_repository, activity_repository, product_repository, remote, remote_returns, remote_sales
 from database.connection import connection_scope
 from database.exceptions import (
     DealershipInactiveError,
@@ -203,6 +203,8 @@ def get_by_id(transaction_id: int) -> Transaction:
     Same two-query header-then-items shape as list_between() - see that
     function's docstring for why.
     """
+    if remote.active():
+        return remote_returns.sale(transaction_id)
     with connection_scope() as conn:
         header = conn.execute(
             "SELECT id, created_at, dealership_code, cashier, payment_method, client_uuid FROM transactions WHERE id = ?", (transaction_id,)
@@ -273,12 +275,11 @@ def list_between(start: datetime, end: datetime, net_of_returns: bool = True) ->
     manager-triggered, infrequent read, not a hot path worth
     micro-optimizing.
 
-    In server mode the sales come from the server (refunds are not on the
-    server yet, so they are not netted there), plus this till's sales still
-    waiting to be sent.
+    In server mode the sales come from the server (netted of refunds there
+    the same way), plus this till's sales still waiting to be sent.
     """
     if remote.active():
-        return remote_sales.list_between(start, end, None)
+        return remote_sales.list_between(start, end, None, net=net_of_returns)
     with connection_scope() as conn:
         header_rows = conn.execute(
             "SELECT id, created_at, dealership_code, cashier, payment_method FROM transactions "
