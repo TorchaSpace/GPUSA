@@ -300,3 +300,97 @@ def test_an_unreachable_server_is_not_asked_again_straight_away(monkeypatch):
     with pytest.raises(DataAccessError):
         remote.call("GET", "/stock/movement-totals")
     assert Down.calls == 2
+
+
+SHIPMENT = {"id": 7, "origin": "WH-01 · Main", "origin_code": "WH-01", "dealership_code": "CST-04",
+            "dealership_name": "Coast", "carrier": "Fast", "driver": None, "status": "scheduled", "departed_at": None,
+            "planned_eta": "2026-11-03T10:00:00+00:00", "eta": "2026-11-03T10:00:00+00:00", "delivered_at": None,
+            "receipt_note": None, "created_at": "2026-11-02T10:00:00+00:00", "stock_moved": False,
+            "lines": [{"id": 1, "product_barcode": "A1", "product_name": "Anvil", "expected_qty": 3,
+                       "received_qty": None}]}
+REQUEST = {"id": 4, "created_at": "2026-11-02T10:00:00+00:00", "updated_at": "2026-11-02T10:00:00+00:00",
+           "dealership_code": "CST-04", "dealership_name": "Coast", "product_barcode": "A1", "product_name": "Anvil",
+           "quantity": 5, "note": None, "status": "open", "requested_by": "Ali · B-001", "decided_by": None,
+           "decision_note": None, "shipment_id": None, "shipment_status": None}
+
+
+def test_shipments_in_server_mode(db_connection):
+    import datetime as dt
+
+    from database import shipment_repository
+
+    client = on({
+        ("POST", "/shipments"): SHIPMENT,
+        ("GET", "/shipments?status_in=scheduled%2Cin_transit&dealership_code=CST-04"): [SHIPMENT],
+        ("GET", "/shipments/incoming-count?dealership_code=CST-04"): {"count": 1},
+        ("GET", "/shipments/7"): SHIPMENT,
+        ("GET", "/shipments/8"): ServerError("nope", 404),
+        ("POST", "/shipments/7/dispatch"): {**SHIPMENT, "status": "in_transit", "stock_moved": True},
+        ("POST", "/shipments/7/eta"): SHIPMENT,
+        ("POST", "/shipments/7/cancel"): {**SHIPMENT, "status": "cancelled"},
+        ("POST", "/shipments/7/receive"): {**SHIPMENT, "status": "delivered"},
+        ("POST", "/shipments/9/dispatch"): ServerError("Only 2 units of A1 at WH-01; 3 cannot leave.", 409),
+    })
+    made = shipment_repository.create("WH-01 · Main", "CST-04", " Fast ", dt.datetime(2026, 11, 3, 10, 0, tzinfo=dt.timezone.utc),
+                                      [("a1", 3)], origin_code="WH-01", request_ids=[4], actor=None)
+    assert (made.number, made.eta, made.lines[0].expected_qty, made.status) == ("SH-00007", "2026-11-03T10:00:00.000Z", 3, "scheduled")
+    body = client.calls[-1][2]
+    assert (body["carrier"], body["lines"], body["request_ids"], body["origin_code"]) == ("Fast", [{"barcode": "a1", "quantity": 3}], [4], "WH-01")
+    assert shipment_repository.count_incoming("CST-04") == 1
+    assert [s.id for s in shipment_repository.list_shipments(("scheduled", "in_transit"), "CST-04")] == [7]
+    with pytest.raises(Exception) as missing:
+        shipment_repository.get(8)
+    assert type(missing.value).__name__ == "ShipmentNotFoundError"
+    assert shipment_repository.dispatch(7).stock_moved is True
+    shipment_repository.update_eta(7, dt.datetime(2026, 11, 4, 9, 0, tzinfo=dt.timezone.utc))
+    assert client.calls[-1][2] == {"eta": "2026-11-04T09:00:00.000Z"}
+    assert shipment_repository.cancel(7).status == "cancelled"
+    assert shipment_repository.complete_receipt(7, {"A1": 2}, " broke ").status == "delivered"
+    assert client.calls[-1][2] == {"received": {"A1": 2}, "note": "broke"}
+    with pytest.raises(ValueError):
+        shipment_repository.complete_receipt(7, {"A1": -1})
+    with pytest.raises(InsufficientStockError) as short:  # the Floor words this one itself
+        shipment_repository.dispatch(9)
+    assert (short.value.available, short.value.requested, short.value.barcode, short.value.location) == (2, 3, "A1", "WH-01")
+
+
+def test_stock_requests_in_server_mode(db_connection):
+    from database import stock_request_repository as requests
+
+    client = on({
+        ("POST", "/stock-requests"): REQUEST,
+        ("GET", "/stock-requests?status_in=open&dealership_code=CST-04&limit=50"): [REQUEST],
+        ("GET", "/stock-requests/open-count"): {"count": 2},
+        ("GET", "/stock-requests/4"): REQUEST,
+        ("POST", "/stock-requests/4/cancel"): {**REQUEST, "status": "cancelled"},
+        ("POST", "/stock-requests/4/decline"): {**REQUEST, "status": "declined", "decision_note": "none"},
+    })
+    made = requests.create("CST-04", " a1 ", 5, "  need   them ")
+    assert (made.number, made.is_open, made.created_at) == ("RQ-00004", True, "2026-11-02T10:00:00.000Z")
+    assert client.calls[-1][2] == {"dealership_code": "CST-04", "barcode": "a1", "quantity": 5, "note": "need them"}
+    with pytest.raises(ValueError):
+        requests.create("CST-04", "A1", 0)
+    assert [r.id for r in requests.list_requests(("open",), "CST-04", 50)] == [4]
+    assert requests.count_open() == 2
+    assert requests.get(4).product_name == "Anvil"
+    assert requests.cancel(4).status == "cancelled"
+    assert requests.decline(4, "none").decision_note == "none"
+    assert client.calls[-1][2] == {"note": "none"}
+    with pytest.raises(Exception):
+        requests.create("CST-04", "A1", 1, "x" * 201)
+
+
+def test_dealership_shortages_in_server_mode(db_connection):
+    from database import stock_request_repository as requests
+
+    shop = {"code": "CST-04", "name": "Coast", "region": "Coastal", "city": "Izmir", "manager_name": None, "is_active": True, "id": 1}
+    here = {"barcode": "A1", "name": "Anvil", "price": 9.5, "quantity": 1, "critical_stock_level": 5,
+            "is_active": True, "stocked_here": True}
+    on({
+        ("GET", "/dealerships"): [shop],
+        ("GET", "/stock/products-at?kind=dealership&code=CST-04"): [here],
+        ("GET", "/shipments?status_in=scheduled%2Cin_transit"): [SHIPMENT],
+        ("GET", "/stock-requests?status_in=open"): [REQUEST],
+    })
+    [shortage] = requests.dealership_shortages()
+    assert (shortage.on_hand, shortage.reorder_level, shortage.incoming_qty, shortage.requested_qty) == (1, 5, 3, 5)
