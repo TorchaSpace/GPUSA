@@ -8,6 +8,7 @@ page switches "server mode" on. Keeps the sign-in token in memory only
 from __future__ import annotations
 
 import json
+import socket
 import urllib.error
 import urllib.request
 
@@ -58,6 +59,10 @@ class ServerClient:
             raise ServerError(detail, exc.code) from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
+            if isinstance(reason, ConnectionRefusedError):  # "[Errno 61] Connection refused" means nothing to a cashier
+                reason = "nothing answered at that address - is the server running?"
+            elif isinstance(reason, (TimeoutError, socket.timeout)):
+                reason = "it did not answer in time - is it on, and on the same network?"
             raise ServerError(f"Cannot reach the server ({reason}).") from None
 
     def login(self, badge_id: str, pin: str, area: str = "admin", terminal: str = "admin-test") -> dict:

@@ -17,6 +17,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+import time
 from urllib.parse import quote
 
 from database.exceptions import (
@@ -37,6 +38,12 @@ _client: ServerClient | None = None
 # sign-in, so the queued sales can be sent without asking again).
 _pending: tuple[str, str, str, str, str] | None = None
 
+# After a request finds the server unreachable, the next few seconds' calls fail at once instead of each
+# waiting out the network timeout again - a screen that asks the server five things would otherwise freeze
+# for half a minute on every click while the server is down. The first call after the pause tries for real.
+_RETRY_AFTER_SECONDS = 8.0
+_down_until = 0.0
+
 # Reads a till needs while offline: their last answer is kept in the local
 # server_cache table and served when the server cannot be reached.
 CACHED_PREFIXES = ("/products", "/stock/products-at", "/stock/reorder-levels", "/dealerships", "/warehouses")
@@ -48,6 +55,10 @@ class ServerUnavailableError(DataAccessError):
     def __init__(self, reason: str):
         super().__init__(english("err.server_unreachable", reason=reason))
         self._localize("err.server_unreachable", reason=reason)
+
+
+class _ServerPaused(ServerUnavailableError):
+    """Raised without touching the network while the server is in its short 'not answering' pause."""
 
 
 class ServerRefusedError(DataAccessError):
@@ -100,18 +111,28 @@ def use_server(client: ServerClient | None) -> None:
     global _client, _pending
     if client is not None and not client.token:
         raise ValueError("sign the client in first")
+    global _down_until
     with _lock:
         _client = client
         _pending = None
+        _down_until = 0.0
 
 
 def use_server_offline(url: str, badge_id: str, pin: str, area: str, terminal: str) -> None:
     """Server mode while the server cannot be reached: reads come from the local
     cache, sales queue up, and the first call that reaches the server signs in."""
-    global _client, _pending
+    global _client, _pending, _down_until
     with _lock:
         _client = None
         _pending = (url, badge_id, pin, area, terminal)
+        _down_until = 0.0
+
+
+def retry_now() -> None:
+    """End the short 'not answering' pause: the next call really tries the network. For background
+    syncing, which runs off the GUI thread and may wait out a timeout."""
+    global _down_until
+    _down_until = 0.0
 
 
 def active() -> bool:
@@ -161,8 +182,11 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
     no answer -> ServerUnavailableError, anything else -> ServerRefusedError
     with the server's message. A GET under CACHED_PREFIXES that gets no
     answer returns its last cached answer instead, when there is one."""
+    global _down_until
     cached = method == "GET" and url_path.startswith(CACHED_PREFIXES)
     try:
+        if time.monotonic() < _down_until:
+            raise _ServerPaused("It did not answer a moment ago; trying again in a few seconds.")
         client = _current_client()
         if method == "GET":
             result = client.get(url_path)
@@ -174,7 +198,9 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
             result = client.put(url_path, body or {})
         else:
             raise ValueError(method)
-    except ServerUnavailableError:
+    except ServerUnavailableError as exc:
+        if not isinstance(exc, _ServerPaused):
+            _down_until = time.monotonic() + _RETRY_AFTER_SECONDS
         if cached and (hit := cache_get(url_path)) is not None:
             return hit
         raise
@@ -184,10 +210,12 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
         if exc.status == 401:
             raise SessionInvalidError() from None
         if exc.status is None:
+            _down_until = time.monotonic() + _RETRY_AFTER_SECONDS
             if cached and (hit := cache_get(url_path)) is not None:
                 return hit
             raise ServerUnavailableError(str(exc)) from None
         raise ServerRefusedError(str(exc), exc.status) from None
+    _down_until = 0.0
     if cached:
         cache_put(url_path, result)
     return result

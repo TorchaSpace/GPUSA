@@ -146,6 +146,7 @@ def send_pending(limit: int = 50) -> dict:
     sent = rejected = 0
     if not remote.active():
         return {"sent": 0, "rejected": 0, "pending": pending_count()}
+    remote.retry_now()  # this runs in the background: really try the server, don't wait out the pause
     with connection_scope() as conn:
         rows = conn.execute("SELECT client_uuid, payload FROM sale_outbox WHERE status = 'pending' "
                             "ORDER BY created_at, rowid LIMIT ?", (int(limit),)).fetchall()

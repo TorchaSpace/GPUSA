@@ -12,7 +12,7 @@ Receiving at a warehouse also settles that depot's open purchase orders for the 
 
 from __future__ import annotations
 
-from database import purchase_order_repository, stock_repository
+from database import purchase_order_repository, remote, stock_repository
 from shared.auth import Actor
 from shared.models import UNASSIGNED, StockLocation
 
@@ -28,6 +28,12 @@ def receive_stock(barcode: str, quantity: int, note: str | None = None,
     ValueError for a non-positive quantity, UnknownLocationError for a
     location that doesn't exist.
     """
+    if remote.active():
+        # Server mode: the stock is on the server. Purchase orders are not on the server yet, so there is
+        # nothing to settle; booking the delivery in the local file would make the two disagree.
+        stock_repository.receive(location, barcode, quantity, note, actor=actor, reference=reference,
+                                 bin_code=bin_code)
+        return
     # An order waiting for this product at this depot is settled by the delivery (and cannot be received again).
     purchase_order_repository.receive_delivery(location, barcode, quantity, actor, note=note, reference=reference,
                                                bin_code=bin_code)
