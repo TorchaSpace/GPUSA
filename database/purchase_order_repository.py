@@ -45,7 +45,9 @@ import sqlite3
 from shared.formatting import format_int
 from shared.i18n import UserError
 from database.connection import connection_scope
-from database import account_repository, activity_repository, audit_repository, authz, stock_repository
+from database import (
+    account_repository, activity_repository, audit_repository, authz, remote, remote_purchasing, stock_repository,
+)
 from database.exceptions import (
     DataAccessError,
     ProductNotFoundError,
@@ -113,6 +115,8 @@ def _validate_range(price_range: PriceRange) -> tuple[float, float]:
 @_wrap_sqlite
 def get_price_range(barcode: str) -> PriceRange | None:
     """The product's safe band, or None if no band has been set."""
+    if remote.active():
+        return remote_purchasing.get_price_range(barcode)
     with connection_scope() as conn:
         row = conn.execute(
             "SELECT * FROM purchase_price_ranges WHERE product_barcode = ?", (barcode,)
@@ -122,6 +126,8 @@ def get_price_range(barcode: str) -> PriceRange | None:
 
 @_wrap_sqlite
 def list_price_ranges() -> list[PriceRange]:
+    if remote.active():
+        return remote_purchasing.list_price_ranges()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT * FROM purchase_price_ranges ORDER BY product_barcode"
@@ -138,6 +144,9 @@ def set_price_range(price_range: PriceRange, by: Actor | None = None) -> None:
     a band that really changed is recorded in the admin audit trail."""
     low, high = _validate_range(price_range)
     supplier = (price_range.default_supplier or "").strip() or None
+    if remote.active():
+        return remote_purchasing.set_price_range(
+            PriceRange(price_range.product_barcode, low, high, supplier), low, high)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -182,6 +191,8 @@ def delete_price_range(barcode: str, by: Actor | None = None) -> None:
     product are then held as "no_range" until a new band is set. `by`, when
     given, must still be an active administrator (SessionInvalidError); the
     removal is recorded in the admin audit trail."""
+    if remote.active():
+        return remote_purchasing.delete_price_range(barcode)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -264,6 +275,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
     if quantity > MAX_QUANTITY:
         raise UserError("err.qty_too_big", n=format_int(MAX_QUANTITY))
     unit_price = round_money(unit_price, "Unit price")
+    if remote.active():
+        return remote_purchasing.submit(barcode, supplier, quantity, unit_price, site)
 
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -313,6 +326,8 @@ def submit(barcode: str, supplier: str, quantity: int, unit_price: float, site: 
 
 @_wrap_sqlite
 def get(order_id: int) -> PurchaseOrder:
+    if remote.active():
+        return remote_purchasing.get(order_id)
     with connection_scope() as conn:
         row = conn.execute("SELECT * FROM purchase_orders WHERE id = ?", (order_id,)).fetchone()
     if row is None:
@@ -324,6 +339,8 @@ def get(order_id: int) -> PurchaseOrder:
 def list_orders(status: str | None = None, site: str | None = None, limit: int | None = None) -> list[PurchaseOrder]:
     """Orders newest first, optionally filtered by status and/or site
     (compared by warehouse code, so a renamed warehouse keeps its orders)."""
+    if remote.active():
+        return remote_purchasing.list_orders(status, site, limit)
     clauses, params = [], []
     if status is not None:
         clauses.append("status = ?")
@@ -365,6 +382,8 @@ def pending_ids() -> list[int]:
     """Ids of every order awaiting a decision, ascending - cheap to poll,
     and (unlike a count) changes when one is decided AND another raised
     between two polls."""
+    if remote.active():
+        return remote_purchasing.pending_ids()
     with connection_scope() as conn:
         rows = conn.execute("SELECT id FROM purchase_orders WHERE status = 'pending' ORDER BY id").fetchall()
     return [int(row[0]) for row in rows]
@@ -373,6 +392,8 @@ def pending_ids() -> list[int]:
 @_wrap_sqlite
 def count_pending() -> int:
     """Cheap enough to poll (indexed) - drives admin_app's sidebar badge."""
+    if remote.active():
+        return len(remote_purchasing.pending_ids())
     with connection_scope() as conn:
         row = conn.execute("SELECT COUNT(*) FROM purchase_orders WHERE status = 'pending'").fetchone()
     return int(row[0])
@@ -384,6 +405,8 @@ def _decide(order_id: int, new_status: str, note: str | None, decided_by: Actor 
     if not decider or not decider.strip(" ·"):
         raise UserError("err.decision_needs_admin")
     note = (note or "").strip() or None
+    if remote.active():
+        return remote_purchasing.decide(order_id, "approve" if new_status == "sent" else "reject", note)
 
     def run(conn):
         row = _order_row(conn, order_id)  # PurchaseOrderNotFoundError
@@ -509,6 +532,11 @@ def receive_delivery(location: StockLocation, barcode: str, quantity: int, actor
     One transaction. Returns the order numbers it settled units against (empty = plain receipt)."""
     if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
         raise UserError("err.qty_positive")
+    if remote.active():
+        if location.kind == "warehouse":
+            return remote_purchasing.receive_delivery(location, barcode, quantity, note, reference, bin_code)
+        stock_repository.receive(location, barcode, quantity, note, actor=actor, reference=reference, bin_code=bin_code)
+        return []
 
     def run(conn):
         numbers: list[str] = []
@@ -573,6 +601,8 @@ def receive_against_order(order_id: int, quantity: int, actor: Actor | None,
         raise UserError("err.qty_positive")
     if not isinstance(warehouse_location, StockLocation) or warehouse_location.kind != "warehouse":
         raise UserError("err.po_receive_warehouse")
+    if remote.active():
+        return remote_purchasing.receive_against_order(order_id, quantity, warehouse_location.code)
 
     def run(conn):
         row = _order_row(conn, order_id)
@@ -604,6 +634,8 @@ def cancel_order(order_id: int, actor: Actor | None) -> PurchaseOrder:
     cancelled (also when another machine got there first);
     PurchaseOrderCancelNotAllowedError when this person may not cancel it."""
     cancelled_by = _acting_label(actor, "err.po_cancel_needs_actor")
+    if remote.active():
+        return remote_purchasing.cancel(order_id)
 
     def run(conn):
         row = _order_row(conn, order_id)
