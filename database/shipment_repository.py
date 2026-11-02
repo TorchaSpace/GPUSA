@@ -40,7 +40,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError
-from database import activity_repository, stock_request_repository
+from database import activity_repository, remote, remote_shipments, stock_request_repository
 from database.connection import connection_scope
 from datetime import datetime, timedelta
 
@@ -139,6 +139,8 @@ def _fetch(conn: sqlite3.Connection, shipment_id: int) -> Shipment:
 
 
 def get(shipment_id: int) -> Shipment:
+    if remote.active():
+        return remote_shipments.get(shipment_id)
     with connection_scope() as conn:
         return _fetch(conn, shipment_id)
 
@@ -151,6 +153,8 @@ def list_shipments(
 ) -> list[Shipment]:
     """Shipments with their lines, soonest ETA first. `origin` filters on
     the site text, `origin_code` on the warehouse code."""
+    if remote.active():
+        return remote_shipments.list_shipments(statuses, dealership_code, origin, origin_code)
     clauses, params = [], []
     if statuses:
         clauses.append(f"status IN ({','.join('?' * len(statuses))})")
@@ -202,6 +206,9 @@ def create(
     fills - marked "planned" in the same transaction (see
     stock_request_repository.mark_planned); one that is no longer open or
     belongs to another dealership refuses the whole shipment."""
+    if remote.active():
+        return remote_shipments.create(origin, dealership_code, carrier, eta, lines, driver, origin_code, departure,
+                                      request_ids, actor)
     origin, carrier = (origin or "").strip(), (carrier or "").strip()
     driver = (driver or "").strip() or None
     origin_code = (origin_code or "").strip() or None
@@ -294,6 +301,8 @@ def dispatch(shipment_id: int, actor: Actor | None = None) -> Shipment:
     every line comes off the origin warehouse's stock. Raises
     InsufficientStockError (nothing written) if the origin is short of
     any line, ShipmentStateError if it isn't scheduled."""
+    if remote.active():
+        return remote_shipments.dispatch(shipment_id, actor)
 
     def run(conn, shipment):
         if shipment.status != "scheduled":
@@ -320,6 +329,8 @@ def update_eta(shipment_id: int, eta) -> Shipment:
     original promise stays in planned_eta, so the lateness is visible. The
     new ETA can't be before the shipment was planned or, once it left,
     before it departed (ValueError)."""
+    if remote.active():
+        return remote_shipments.update_eta(shipment_id, eta)
     eta_text = to_db_timestamp(eta)
 
     def run(conn, shipment):
@@ -338,6 +349,8 @@ def cancel(shipment_id: int, actor: Actor | None = None) -> Shipment:
     """Call the shipment off. If it was already dispatched, the goods go
     back onto the origin warehouse's stock. Stock requests it was planned
     from go back to "open" - the dealership still needs the goods."""
+    if remote.active():
+        return remote_shipments.cancel(shipment_id, actor)
 
     def run(conn, shipment):
         if not shipment.is_active:
@@ -374,6 +387,8 @@ def complete_receipt(shipment_id: int, received: dict[str, int], note: str | Non
     two terminals completing the same receipt can't both move stock: the
     second gets ShipmentStateError.
     """
+    if remote.active():
+        return remote_shipments.complete_receipt(shipment_id, received, note, actor)
     note = (note or "").strip() or None
     counts: dict[str, int] = {}
     for barcode, quantity in received.items():
@@ -434,6 +449,8 @@ def complete_receipt(shipment_id: int, received: dict[str, int], note: str | Non
 def count_incoming(dealership_code: str | None) -> int:
     """Active (scheduled / in transit) shipments for a dealership - the
     POS home tile's "N arriving" badge. None counts every dealership."""
+    if remote.active():
+        return remote_shipments.count_incoming(dealership_code)
     sql = "SELECT COUNT(*) FROM shipments WHERE status IN ('scheduled', 'in_transit')"
     params: tuple = ()
     if dealership_code is not None:
