@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import date as _date
 from datetime import datetime, time, timedelta, timezone
 
-from database import employee_repository
+from database import employee_repository, remote, remote_people
 from database.connection import connection_scope
 from database.exceptions import (
     AlreadyCheckedInError,
@@ -70,6 +70,8 @@ def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | No
     checking out first. With `warehouse_code` (the depot Floor) the employee must work at that
     warehouse, else EmployeeOtherSiteError.
     """
+    if remote.active():
+        return remote_people.check_in(badge_id, note, warehouse_code)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -107,6 +109,8 @@ def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | N
     inactive employee can still be checked out - that is how a shift left
     open at deactivation, in older data, gets closed.)
     """
+    if remote.active():
+        return remote_people.check_out(badge_id, note, warehouse_code)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -155,6 +159,8 @@ def operator_actor(badge_id: str, *, warehouse_code: str | None = None) -> Actor
     who must be active and CHECKED IN right now (and, with `warehouse_code`,
     work at that warehouse). Raises EmployeeNotFoundError / EmployeeInactiveError /
     EmployeeOtherSiteError / NoOpenAttendanceRecordError."""
+    if remote.active():
+        return remote_people.operator_actor(badge_id, warehouse_code)
     with connection_scope() as conn:
         row = _employee(conn, badge_id)
         if not row["is_active"]:
@@ -172,6 +178,8 @@ def list_open() -> list[dict]:
     """Every employee currently checked in (no check_out_at yet) - depot
     Console's "on floor" count and admin_app's "on shift now" KPI both
     just need len() of this."""
+    if remote.active():
+        return remote_people.open_shifts()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT e.badge_id, e.name, e.role, a.check_in_at "
@@ -187,14 +195,17 @@ def list_punches(for_date: str | None = None, limit: int = 12) -> list[dict]:
     dict: at (the stamp), name, badge_id, action ("IN" or "OUT")."""
     day = _date.fromisoformat(for_date) if for_date else _date.today()
     start, end = _day_window(day)
+    if remote.active():
+        rows = remote_people.attendance_records(start, end)
+    else:
+        with connection_scope() as conn:
+            rows = conn.execute(
+                "SELECT a.id, e.badge_id, e.name, a.check_in_at, a.check_out_at "
+                "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
+                "WHERE (a.check_in_at >= ? AND a.check_in_at < ?) OR (a.check_out_at >= ? AND a.check_out_at < ?)",
+                (to_db_timestamp(start), to_db_timestamp(end), to_db_timestamp(start), to_db_timestamp(end)),
+            ).fetchall()
     low, high = to_db_timestamp(start), to_db_timestamp(end)
-    with connection_scope() as conn:
-        rows = conn.execute(
-            "SELECT a.id, e.badge_id, e.name, a.check_in_at, a.check_out_at "
-            "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
-            "WHERE (a.check_in_at >= ? AND a.check_in_at < ?) OR (a.check_out_at >= ? AND a.check_out_at < ?)",
-            (low, high, low, high),
-        ).fetchall()
     events = []
     for row in rows:
         if low <= row["check_in_at"] < high:
@@ -239,16 +250,20 @@ def list_roster(for_date: str | None = None, now: datetime | None = None) -> lis
     day = _date.fromisoformat(for_date) if for_date else _date.today()
     start, end = _day_window(day)
     now = now or datetime.now(timezone.utc)
-    with connection_scope() as conn:
-        employees = conn.execute(
-            "SELECT id, badge_id, name, title, role, location_type, location_name, is_active "
-            "FROM employees ORDER BY name"
-        ).fetchall()
-        records = conn.execute(
-            "SELECT employee_id, check_in_at, check_out_at FROM attendance_records "
-            "WHERE check_in_at < ? AND (check_out_at IS NULL OR check_out_at > ?) ORDER BY check_in_at",
-            (to_db_timestamp(end), to_db_timestamp(start)),
-        ).fetchall()
+    if remote.active():
+        employees = remote_people.employees_for_roster()
+        records = remote_people.attendance_records(start, end)
+    else:
+        with connection_scope() as conn:
+            employees = conn.execute(
+                "SELECT id, badge_id, name, title, role, location_type, location_name, is_active "
+                "FROM employees ORDER BY name"
+            ).fetchall()
+            records = conn.execute(
+                "SELECT employee_id, check_in_at, check_out_at FROM attendance_records "
+                "WHERE check_in_at < ? AND (check_out_at IS NULL OR check_out_at > ?) ORDER BY check_in_at",
+                (to_db_timestamp(end), to_db_timestamp(start)),
+            ).fetchall()
 
     by_employee: dict[int, list] = {}
     for record in records:

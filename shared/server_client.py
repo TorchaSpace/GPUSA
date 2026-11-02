@@ -47,7 +47,8 @@ class ServerClient:
             request.add_header("Authorization", f"Bearer {self.token}")
         try:
             with urllib.request.urlopen(request, timeout=self.timeout) as response:
-                return json.loads(response.read().decode("utf-8"))
+                raw = response.read().decode("utf-8")
+                return json.loads(raw) if raw.strip() else None  # 204 (deletes, PIN changes) has no body
         except urllib.error.HTTPError as exc:
             detail = ""
             try:
@@ -83,3 +84,6 @@ class ServerClient:
 
     def put(self, path: str, body: dict):
         return self._request("PUT", path, body)
+
+    def delete(self, path: str):
+        return self._request("DELETE", path)

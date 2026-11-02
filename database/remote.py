@@ -47,7 +47,7 @@ _down_until = 0.0
 # Reads a till needs while offline: their last answer is kept in the local
 # server_cache table and served when the server cannot be reached.
 CACHED_PREFIXES = ("/products", "/stock/products-at", "/stock/reorder-levels", "/dealerships", "/warehouses",
-                   "/shipments", "/stock-requests")
+                   "/shipments", "/stock-requests", "/employees")
 
 
 class ServerUnavailableError(DataAccessError):
@@ -197,6 +197,8 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
             result = client.patch(url_path, body or {})
         elif method == "PUT":
             result = client.put(url_path, body or {})
+        elif method == "DELETE":
+            result = client.delete(url_path)
         else:
             raise ValueError(method)
     except ServerUnavailableError as exc:

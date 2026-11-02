@@ -16,6 +16,7 @@ from .product_routes import router as product_router
 from .read_routes import router as read_router
 from .sale_routes import router as sale_router
 from .shipment_routes import router as shipment_router
+from .people_routes import router as people_router
 from .stock_routes import router as stock_router
 
 log = logging.getLogger("gpusa_server")
@@ -33,6 +34,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(stock_router)
     app.include_router(sale_router)
     app.include_router(shipment_router)
+    app.include_router(people_router)
 
     @app.get("/health")
     def health() -> dict:
