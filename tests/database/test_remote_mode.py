@@ -897,3 +897,16 @@ def test_recovery_in_server_mode(db_connection, monkeypatch):
     assert accounts.create_recovery_code(admin) == "AAAA-BBBB-CCCC-DDDD"
     accounts.set_security_question(admin, "753159", "Name of my first pet?", "Fistik")
     remote.use_server(None)
+
+
+def test_server_required_blocks_local_sign_in(monkeypatch):
+    from database import account_repository as accounts
+    from shared import paths
+
+    monkeypatch.setattr(paths, "get_server_url", lambda: None)
+    monkeypatch.setenv(paths.SERVER_REQUIRED_ENV, "1")
+    assert paths.server_required() is True
+    with pytest.raises(remote.ServerUnavailableError):
+        accounts.authenticate("B-001", "753159", "admin", "Admin")
+    monkeypatch.setenv(paths.SERVER_REQUIRED_ENV, "0")
+    assert paths.server_required() is False

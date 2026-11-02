@@ -429,6 +429,10 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
     server_url = paths.get_server_url()
     if server_url:
         return _authenticate_on_server(server_url, badge_id, pin, area, terminal, event)
+    if paths.server_required():  # no silent fall back to the local file on a server installation
+        raise remote.ServerUnavailableError(
+            "This installation works through the server, but no server address is set. "
+            "Set it in Admin > Server (test) or with GPUSA_SERVER_URL.")
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     now = _now()

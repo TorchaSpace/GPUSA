@@ -214,6 +214,20 @@ def get_server_url() -> str | None:
     return url or None
 
 
+SERVER_REQUIRED_ENV = "GPUSA_SERVER_REQUIRED"
+
+
+def server_required() -> bool:
+    """True on an installation that must work through the server (a dealership's or depot's PC): the apps
+    then refuse to sign in without a server address instead of quietly falling back to the local database
+    file. Set with config.json "server_required": true or GPUSA_SERVER_REQUIRED=1 (which wins). Off by
+    default, so developer runs and the first set-up keep working."""
+    env = (os.environ.get(SERVER_REQUIRED_ENV) or "").strip().lower()
+    if env:
+        return env in ("1", "true", "yes", "on")
+    return bool(_load_config().get("server_required"))
+
+
 def set_server_url(url: str | None) -> None:
     """Save (or with None / '' clear) the server address for every app on this computer."""
     config = _load_config()
