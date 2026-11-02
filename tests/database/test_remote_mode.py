@@ -136,11 +136,18 @@ def test_update_cost_and_active_send_only_their_fields():
     assert client.calls[-1][2] == {"is_active": False}
 
 
-def test_delete_is_not_on_the_server_yet():
-    client = on({})
-    with pytest.raises(remote.NotOnServerYetError):
-        product_repository.delete("A1")
-    assert client.calls == []
+def test_product_delete_in_server_mode():
+    from database.exceptions import ProductInUseError
+    client = on({("DELETE", "/products/A1"): None, ("DELETE", "/products/B2"): ServerError(
+        "B2 can't be deleted: it appears on past sales. Deactivate it instead.", 409),
+        ("DELETE", "/products/ZZ"): ServerError("No product with barcode ZZ.", 404)})
+    product_repository.delete("A1")
+    assert client.calls[-1][:2] == ("DELETE", "/products/A1")
+    with pytest.raises(ProductInUseError) as used:
+        product_repository.delete("B2")
+    assert used.value.reason == "it appears on past sales"
+    with pytest.raises(ProductNotFoundError):
+        product_repository.delete("ZZ")
 
 
 def test_barcodes_are_quoted_in_paths():
@@ -254,8 +261,6 @@ def test_places_read_from_the_server_and_writes_wait():
     assert [w.code for w in warehouse_repository.list_all(active_only=True)] == ["WH-01"]
     assert warehouse_repository.get_by_code("wh-02").name == "Old"
     assert dealership_repository.get_by_code(" cst-04 ").city == "Izmir"
-    with pytest.raises(remote.NotOnServerYetError):
-        warehouse_repository.create(Warehouse("WH-03", "New"))
 
 
 def test_check_cart_reads_the_server_shelf_in_server_mode():
@@ -748,3 +753,64 @@ def test_ledger_in_server_mode(db_connection):
     assert (history[0].action, history[0].after, history[0].at) == ("created", {"doc_no": "CHK 1"}, "2026-11-02T10:00:00.000Z")
     assert ledger.list_recent_audit(5)[0].actor_badge == "B-001"
     assert ledger.known_counterparties() == ["Acme"]
+
+
+def test_places_settings_and_audit_in_server_mode(db_connection):
+    from database import audit_repository, dealership_repository, settings_repository, warehouse_repository
+    from database.exceptions import (
+        CapacityBelowUsageError, DealershipNotFoundError, DuplicateDealershipCodeError, DuplicateWarehouseCodeError,
+        LocationHasOpenOrdersError, LocationHasStockError, LocationInUseError, WarehouseNotFoundError,
+    )
+    from shared.models import Dealership, Warehouse
+    from shared import store_settings as ss
+
+    client = on({
+        ("POST", "/dealerships"): ServerError("Dealership NEW-1 already exists.", 409),
+        ("PUT", "/dealerships/NEW-1"): {"code": "NEW-1"},
+        ("DELETE", "/dealerships/new-1"): ServerError("NEW-1 still holds 3 units - move them elsewhere before deleting it.", 409),
+        ("DELETE", "/dealerships/nope"): ServerError("No dealership NOPE.", 404),
+        ("POST", "/warehouses"): {"id": 9, "code": "WH-09"},
+        ("PUT", "/warehouses/WH-09"): ServerError("Warehouse WH-09 holds 40 units, over the capacity of 30. Move stock out first.", 409),
+        ("DELETE", "/warehouses/WH-09"): ServerError("Warehouse WH-09 has 2 open purchase orders; finish or cancel them first.", 409),
+        ("DELETE", "/warehouses/WH-08"): ServerError("Warehouse WH-08 has 1 active shipments; deactivate it instead.", 409),
+        ("DELETE", "/warehouses/WH-07"): ServerError("No warehouse WH-07.", 404),
+        ("GET", "/settings"): {"ui.language": "tr", "store.name": "Shop"},
+        ("GET", "/settings/private"): ServerError("no", 403),
+        ("PUT", "/settings"): {},
+        ("GET", "/audit?limit=5&kind=product"): [{"id": 3, "at": "2026-11-02T10:00:00+00:00", "actor": "Ali · B-001",
+                                                  "action": "deleted", "kind": "product", "target": "A1", "detail": None}],
+    })
+    shop = Dealership(code=" new-1 ", name=" New ", region="Metro", city="Izmir")
+    with pytest.raises(DuplicateDealershipCodeError):
+        dealership_repository.create(shop)
+    assert client.calls[-1][2]["code"] == "NEW-1"
+    with pytest.raises(UserError):
+        dealership_repository.create(Dealership(code="x", name=" ", region="Metro", city="c"))
+    dealership_repository.update(shop)
+    with pytest.raises(LocationHasStockError) as held:
+        dealership_repository.delete("new-1")
+    assert held.value.args and "3 units" in str(held.value)
+    with pytest.raises(DealershipNotFoundError):
+        dealership_repository.delete("nope")
+
+    made = warehouse_repository.create(Warehouse("wh-09", "Spare"))
+    assert (made.id, made.code) == (9, "WH-09")
+    with pytest.raises(CapacityBelowUsageError):
+        warehouse_repository.update(Warehouse("WH-09", "Spare", capacity_units=30))
+    with pytest.raises(LocationHasOpenOrdersError):
+        warehouse_repository.delete("WH-09")
+    with pytest.raises(LocationInUseError):
+        warehouse_repository.delete("WH-08")
+    with pytest.raises(WarehouseNotFoundError):
+        warehouse_repository.delete("WH-07")
+    client.answers[("POST", "/warehouses")] = ServerError("Warehouse WH-09 already exists.", 409)
+    with pytest.raises(DuplicateWarehouseCodeError):
+        warehouse_repository.create(Warehouse("WH-09", "Spare"))
+
+    assert settings_repository.safe_language() == "tr"
+    assert settings_repository.load_store_profile().name == "Shop"
+    settings_repository.save_notifications(ss.NotificationPrefs(low_stock_alerts=False, pending_approvals=True))
+    assert client.calls[-1][:2] == ("PUT", "/settings")
+    assert client.calls[-1][2] == {"values": {"alerts.low_stock": "0", "alerts.pending_approvals": "1"}}
+    entries = audit_repository.list_recent(5, "product")
+    assert (entries[0].id, entries[0].target, entries[0].at) == (3, "A1", "2026-11-02T10:00:00.000Z")

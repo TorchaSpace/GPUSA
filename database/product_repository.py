@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from shared.auth import Actor
 from shared.i18n import UserError, tr
-from database import audit_repository, authz, remote, remote_products, remote_stock
+from database import audit_repository, authz, remote, remote_places, remote_products, remote_stock
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBarcodeError,
@@ -307,7 +307,7 @@ def delete(barcode: str, by: Actor | None = None) -> None:
     such a product instead (set_active). `by` (who deleted it) goes to the
     audit trail in the same transaction."""
     if remote.active():
-        raise remote.NotOnServerYetError()
+        return remote_places.delete_product(barcode)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

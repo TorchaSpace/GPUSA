@@ -47,7 +47,7 @@ _down_until = 0.0
 # Reads a till needs while offline: their last answer is kept in the local
 # server_cache table and served when the server cannot be reached.
 CACHED_PREFIXES = ("/products", "/stock/products-at", "/stock/reorder-levels", "/dealerships", "/warehouses",
-                   "/shipments", "/stock-requests", "/employees", "/ledger")
+                   "/shipments", "/stock-requests", "/employees", "/ledger", "/settings")
 
 
 class ServerUnavailableError(DataAccessError):

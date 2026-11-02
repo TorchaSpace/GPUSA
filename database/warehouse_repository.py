@@ -95,9 +95,9 @@ def create(warehouse: Warehouse) -> Warehouse:
     """Insert a warehouse; its code is stored trimmed and upper-case
     ("wh-01" -> "WH-01"). Raises DuplicateWarehouseCodeError (any letter
     case), ValueError."""
-    if remote.active():
-        raise remote.NotOnServerYetError()
     w = _validated(warehouse)
+    if remote.active():
+        return remote_places.create_warehouse(w)
     with connection_scope() as conn:
         if conn.execute("SELECT 1 FROM warehouses WHERE code = ? COLLATE NOCASE", (w.code,)).fetchone():
             raise DuplicateWarehouseCodeError(w.code)
@@ -120,9 +120,9 @@ def update(warehouse: Warehouse) -> None:
     case). Raises WarehouseNotFoundError, ValueError and
     CapacityBelowUsageError - a capacity below the units it holds now is
     refused (move stock out first)."""
-    if remote.active():
-        raise remote.NotOnServerYetError()
     w = _validated(warehouse)
+    if remote.active():
+        return remote_places.update_warehouse(w)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -158,7 +158,7 @@ def delete(code: str, by: Actor | None = None) -> None:
     scheduled / in-transit shipment leaves from it (deactivate it instead), LocationHasOpenOrdersError while purchase orders
     are still open for it, WarehouseNotFoundError if the code doesn't exist."""
     if remote.active():
-        raise remote.NotOnServerYetError()
+        return remote_places.delete_warehouse(code)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

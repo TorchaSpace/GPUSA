@@ -128,11 +128,11 @@ def create(dealership: Dealership) -> None:
     Raises DuplicateDealershipCodeError if the code exists (in any letter
     case), ValueError if region isn't one of DEALERSHIP_REGIONS or the
     code / name is empty or a field is too long."""
-    if remote.active():
-        raise remote.NotOnServerYetError()
     _validate_region(dealership.region)
     _clean(dealership)
     validate_fields(dealership)
+    if remote.active():
+        return remote_places.create_dealership(dealership)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
@@ -165,11 +165,11 @@ def update(dealership: Dealership) -> None:
     (any letter case). Raises ValueError if region isn't one of
     DEALERSHIP_REGIONS or a field is empty / too long,
     DealershipNotFoundError."""
-    if remote.active():
-        raise remote.NotOnServerYetError()
     _validate_region(dealership.region)
     _clean(dealership)
     validate_fields(dealership)
+    if remote.active():
+        return remote_places.update_dealership(dealership)
     with connection_scope() as conn:
         row = _find_row(conn, dealership.code)
         if row is None:
@@ -196,7 +196,7 @@ def delete(code: str, by: Actor | None = None) -> None:
     LocationInUseError while a scheduled / in-transit shipment is headed
     there (deactivate it instead)."""
     if remote.active():
-        raise remote.NotOnServerYetError()
+        return remote_places.delete_dealership(code)
     from database.exceptions import LocationInUseError  # local: keeps this edit clear of the file's imports
     from database import stock_request_repository
     from database.shipment_repository import active_count_for

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import sqlite3
 
+from database import remote, remote_places
 from database.connection import connection_scope
 from database.exceptions import DataAccessError
 from shared import i18n
@@ -18,6 +19,8 @@ from shared import store_settings as ss
 
 
 def get_all() -> dict[str, str]:
+    if remote.active():
+        return remote_places.settings_all()
     with connection_scope() as conn:
         rows = conn.execute("SELECT key, value FROM app_settings").fetchall()
     return {row["key"]: row["value"] for row in rows}
@@ -25,6 +28,8 @@ def get_all() -> dict[str, str]:
 
 def set_many(values: dict[str, str]) -> None:
     """Upsert every pair in one transaction."""
+    if remote.active():
+        return remote_places.settings_save(values)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

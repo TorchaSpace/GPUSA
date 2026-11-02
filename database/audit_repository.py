@@ -10,6 +10,7 @@ from __future__ import annotations
 import sqlite3
 from dataclasses import dataclass
 
+from database import remote, remote_places
 from database.connection import connection_scope
 from shared.auth import Actor, actor_label
 
@@ -34,6 +35,8 @@ def record(conn: sqlite3.Connection, actor: Actor | None, action: str, kind: str
 
 
 def list_recent(limit: int = 100, kind: str | None = None) -> list[AuditEntry]:
+    if remote.active():
+        return remote_places.audit_recent(limit, kind)
     sql = "SELECT id, at, actor, action, kind, target, detail FROM admin_audit"
     params: list = []
     if kind is not None:
