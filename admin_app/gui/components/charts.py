@@ -124,12 +124,16 @@ class RevenueChart(QWidget):
         font.setPixelSize(10)
         painter.setFont(font)
 
+        last_label = None
         for tick in ticks:
             y = self._y(tick, top)
             painter.setPen(QPen(_color(p["border"]), 1))
             painter.drawLine(QPointF(plot.left(), y), QPointF(plot.right(), y))
             painter.setPen(_color(p["text_secondary"]))
-            painter.drawText(QRectF(0, y - 8, _LEFT - 8, 16), Qt.AlignRight | Qt.AlignVCenter, compact_amount(tick))
+            label = compact_amount(tick)
+            if label != last_label:  # an empty chart's 0 / 0.25 / 0.5 / 0.75 / 1 axis rounds to "0 0 0 1 1"
+                painter.drawText(QRectF(0, y - 8, _LEFT - 8, 16), Qt.AlignRight | Qt.AlignVCenter, label)
+            last_label = label
 
         painter.setPen(_color(p["text_secondary"]))
         for index, text in self._x_labels:
