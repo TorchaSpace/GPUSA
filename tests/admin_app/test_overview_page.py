@@ -164,3 +164,9 @@ def test_revenue_card_says_how_much_revenue_has_no_cost(qapp, seeded):
     assert "Gross profit" not in texts
     assert "Cost unknown" in texts and "100% of revenue" in texts
     page.close()
+
+
+def test_product_name_column_keeps_a_readable_width(page):
+    """In a normal-sized window the name column must not be squeezed to '...'."""
+    page.resize(900, 700)
+    assert page._stock_table.columnWidth(1) >= 200

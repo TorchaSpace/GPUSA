@@ -353,3 +353,15 @@ def test_the_price_list_asks_before_replacing_the_file_it_adds_an_extension_to(p
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
     _export_to(page, monkeypatch, tmp_path / "prices")
     assert (tmp_path / "prices.csv").read_text(encoding="utf-8-sig").startswith("Barcode")
+
+
+def test_product_name_column_is_not_squeezed(qapp):
+    """The name column keeps room for a real name next to the number columns."""
+    from admin_app.gui.components.inventory_table import InventoryTable
+
+    table = InventoryTable()
+    table.resize(560, 400)
+    table.set_products([Product(barcode="1", name="Glutensiz Yulaf Ezmesi 500g", price=1.0, stock_quantity=3)])
+    table.show()
+    pump(qapp)
+    assert table.columnWidth(1) >= 190
