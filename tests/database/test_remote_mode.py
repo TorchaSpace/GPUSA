@@ -276,11 +276,15 @@ def test_floor_receipt_goes_to_the_server_in_server_mode(db_connection):
     """Depot Floor 'Log receipt' in server mode must hit the server (the local file has no such product)."""
     from database import inventory_repository
 
-    client = on({("POST", "/stock-movements"): {"level_after": 7}})
+    client = on({("POST", "/purchase-orders/receive-delivery"): {"orders": []},
+                 ("POST", "/stock-movements"): {"level_after": 7}})
     inventory_repository.receive_stock("A1", 4, "note", location=WH, reference="PO-1", bin_code="A-03")
     method, path, body = client.calls[-1]
-    assert (method, path) == ("POST", "/stock-movements")
-    assert (body["direction"], body["barcode"], body["quantity"], body["location_code"]) == ("receive", "A1", 4, "WH-01")
+    assert (method, path) == ("POST", "/purchase-orders/receive-delivery")  # the server settles open orders itself
+    assert (body["barcode"], body["quantity"], body["warehouse_code"], body["reference"], body["bin_code"]) == (
+        "A1", 4, "WH-01", "PO-1", "A-03")
+    inventory_repository.receive_stock("A1", 2, location=StockLocation.dealership("CST-04"))  # not a depot: plain receipt
+    assert client.calls[-1][:2] == ("POST", "/stock-movements")
 
 
 def test_an_unreachable_server_is_not_asked_again_straight_away(monkeypatch):
@@ -594,3 +598,93 @@ def test_refunds_and_day_close_in_server_mode(db_connection):
     assert closes.latest_for("CST-04", dt.date(2026, 11, 2)) is None
     with pytest.raises(UserError):
         closes.close("CST-04", -1, dt.date(2026, 11, 2))
+
+
+ORDER = {"id": 7, "product_barcode": "A1", "product_name": "Anvil", "supplier": "Acme", "quantity": 10,
+         "unit_price": 5.0, "site": "WH-01 · MAIN", "range_min": 4.0, "range_max": 6.0, "status": "sent",
+         "hold_reason": None, "created_at": "2026-11-02T10:00:00+00:00", "decided_at": None, "decision_note": None,
+         "raised_by": "Mo · M-1", "decided_by": None, "received_qty": 0, "received_at": None, "received_by": None,
+         "cancelled_at": None, "cancelled_by": None}
+
+
+def test_purchasing_in_server_mode(db_connection):
+    from database import purchase_order_repository as orders
+    from database.exceptions import (
+        ProductNotFoundError, PurchaseOrderAlreadyDecidedError, PurchaseOrderCancelNotAllowedError,
+        PurchaseOrderNotFoundError, PurchaseOrderOverReceiveError, PurchaseOrderStateError,
+    )
+    from shared.auth import Actor
+    from shared.models import PriceRange
+
+    band = {"product_barcode": "A1", "min_unit_price": 4.0, "max_unit_price": 6.0, "default_supplier": "Acme"}
+    client = on({
+        ("GET", "/price-ranges"): [band],
+        ("GET", "/price-ranges/A1"): band,
+        ("GET", "/price-ranges/ZZ"): None,
+        ("PUT", "/price-ranges/A1"): band,
+        ("PUT", "/price-ranges/NOPE"): ServerError("none", 404),
+        ("DELETE", "/price-ranges/A1"): None,
+        ("POST", "/purchase-orders"): ORDER,
+        ("GET", "/purchase-orders/7"): ORDER,
+        ("GET", "/purchase-orders/8"): ServerError("none", 404),
+        ("GET", "/purchase-orders?status=pending&site=WH-01&limit=5"): [ORDER],
+        ("GET", "/purchase-orders/pending-ids"): [3, 7],
+        ("POST", "/purchase-orders/7/approve"): {**ORDER, "decided_at": "2026-11-02T11:00:00+00:00"},
+        ("POST", "/purchase-orders/7/reject"): ServerError("PO-00007 was decided already: it is sent.", 409),
+        ("POST", "/purchase-orders/7/receive"): {**ORDER, "status": "partially_received", "received_qty": 4},
+        ("POST", "/purchase-orders/receive-delivery"): {"orders": ["PO-00007"]},
+        ("POST", "/purchase-orders/7/cancel"): {**ORDER, "status": "cancelled"},
+    })
+    assert orders.get_price_range("A1").max_unit_price == 6.0
+    assert orders.get_price_range("ZZ") is None
+    assert [b.product_barcode for b in orders.list_price_ranges()] == ["A1"]
+    orders.set_price_range(PriceRange("A1", 4, 6, " Acme "), by=None)
+    assert client.calls[-1][2] == {"min_unit_price": 4.0, "max_unit_price": 6.0, "default_supplier": "Acme"}
+    with pytest.raises(ProductNotFoundError):
+        orders.set_price_range(PriceRange("NOPE", 1, 2))
+    with pytest.raises(UserError):
+        orders.set_price_range(PriceRange("A1", 7, 3))
+    orders.delete_price_range("A1")
+
+    made = orders.submit("a1", " Acme ", 10, 5, "wh-01")
+    assert (made.number, made.status, made.created_at, made.raised_by_badge) == (
+        "PO-00007", "sent", "2026-11-02T10:00:00.000Z", "M-1")
+    assert client.calls[-1][2] == {"barcode": "a1", "supplier": "Acme", "quantity": 10, "unit_price": 5.0, "site": "WH-01"}
+    with pytest.raises(UserError):
+        orders.submit("A1", "  ", 10, 5, "WH-01")
+    with pytest.raises(UserError):
+        orders.submit("A1", "Acme", 0, 5, "WH-01")
+    assert orders.get(7).total == 50.0
+    with pytest.raises(PurchaseOrderNotFoundError):
+        orders.get(8)
+    assert [o.id for o in orders.list_orders("pending", "WH-01", 5)] == [7]
+    assert orders.pending_ids() == [3, 7] and orders.count_pending() == 2
+
+    admin = Actor("B-001", "Ali")
+    assert orders.approve(7, " ok ", admin).was_approved
+    assert client.calls[-1][2] == {"note": "ok"}
+    with pytest.raises(PurchaseOrderAlreadyDecidedError) as decided:
+        orders.reject(7, None, admin)
+    assert (decided.value.order_number, decided.value.status) == ("PO-00007", "sent")
+    with pytest.raises(UserError):
+        orders.approve(7, None, None)
+
+    assert orders.receive_against_order(7, 4, admin, WH).status == "partially_received"
+    assert client.calls[-1][2] == {"quantity": 4, "warehouse_code": "WH-01"}
+    client.answers[("POST", "/purchase-orders/7/receive")] = ServerError("PO-00007 awaits 6 more units; 7 were booked.", 409)
+    with pytest.raises(PurchaseOrderOverReceiveError) as over:
+        orders.receive_against_order(7, 7, admin, WH)
+    assert (over.value.requested, over.value.remaining) == (7, 6)
+    client.answers[("POST", "/purchase-orders/7/receive")] = ServerError("PO-00007 is rejected; it cannot be received now.", 409)
+    with pytest.raises(PurchaseOrderStateError) as state:
+        orders.receive_against_order(7, 1, admin, WH)
+    assert (state.value.status, state.value.action) == ("rejected", "received")
+    assert orders.receive_delivery(WH, "A1", 9, admin, note="n", reference="DN-1", bin_code="B1") == ["PO-00007"]
+    assert client.calls[-1][2]["reference"] == "DN-1"
+
+    assert orders.cancel_order(7, admin).status == "cancelled"
+    client.answers[("POST", "/purchase-orders/7/cancel")] = ServerError(
+        "Only an administrator can cancel PO-00007 once it is sent.", 403)
+    with pytest.raises(PurchaseOrderCancelNotAllowedError) as denied:
+        orders.cancel_order(7, admin)
+    assert denied.value.reason == "admin_only"
