@@ -176,9 +176,11 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
 
 @router.get("/sales", response_model=list[SaleOut])
 def list_sales(request: Request, since: datetime, until: datetime, dealership_code: str | None = None,
-               limit: int = Query(default=1000, ge=1, le=5000),
+               limit: int = Query(default=1000, ge=1, le=5000), net: bool = True,
                session: Session = Depends(current_session)) -> list[SaleOut]:
-    """Sales in [since, until), newest first; a cashier sees one shop at a time."""
+    """Sales in [since, until), newest first; a cashier sees one shop at a time. By default each sale is
+    read NET of its refunds (returned units come off its lines in order; a sale with nothing left is
+    left out); ``net=false`` gives the sales as sold, which the day count needs."""
     if session.role not in READERS:
         raise _fail(403, "Not allowed.")
     shop = (dealership_code or "").strip().upper() or None
@@ -190,4 +192,31 @@ def list_sales(request: Request, since: datetime, until: datetime, dealership_co
             "SELECT id FROM transactions WHERE created_at >= %s AND created_at < %s "
             "AND (%s::text IS NULL OR dealership_code = %s) ORDER BY created_at DESC, id DESC LIMIT %s",
             (since, until, shop, shop, limit)).fetchall()
-        return [_read_sale(conn, r["id"]) for r in ids]
+        sales = [_read_sale(conn, r["id"]) for r in ids]
+        return _net(conn, sales) if net else sales
+
+
+def _net(conn, sales: list[SaleOut]) -> list[SaleOut]:
+    returned: dict[int, dict[str, int]] = {}
+    if sales:
+        for row in conn.execute(
+                "SELECT r.transaction_id, i.product_barcode, SUM(i.quantity) AS n FROM sale_return_items i "
+                "JOIN sale_returns r ON r.id = i.return_id WHERE r.transaction_id = ANY(%s) "
+                "GROUP BY r.transaction_id, i.product_barcode", ([s.id for s in sales],)).fetchall():
+            returned.setdefault(row["transaction_id"], {})[row["product_barcode"]] = int(row["n"])
+    out = []
+    for sale in sales:
+        back = dict(returned.get(sale.id, {}))
+        if not back:
+            out.append(sale)
+            continue
+        kept = []
+        for line in sale.lines:
+            take = min(line.quantity, back.get(line.barcode, 0))
+            if take:
+                back[line.barcode] -= take
+            if line.quantity - take > 0:
+                kept.append(line.model_copy(update={"quantity": line.quantity - take}))
+        if kept:
+            out.append(sale.model_copy(update={"lines": kept, "total": round(sum(l.unit_price * l.quantity for l in kept), 2)}))
+    return out

@@ -183,7 +183,7 @@ def rejected_sales() -> list[dict]:
     return [{"client_uuid": r[0], "created_at": r[1], "error": r[2], "payload": json.loads(r[3])} for r in rows]
 
 
-def list_between(start: datetime, end: datetime, dealership_code: str | None) -> list[Transaction]:
+def list_between(start: datetime, end: datetime, dealership_code: str | None, net: bool = True) -> list[Transaction]:
     """Sales in [start, end) (LOCAL times): the server's, plus this till's
     sales still waiting to be sent (id None). Oldest first, like the local list."""
     since = start.astimezone(timezone.utc).isoformat()
@@ -191,6 +191,8 @@ def list_between(start: datetime, end: datetime, dealership_code: str | None) ->
     params = {"since": since, "until": until}
     if dealership_code:
         params["dealership_code"] = dealership_code
+    if not net:
+        params["net"] = "false"
     try:
         sales = [_from_server(s) for s in remote.call("GET", "/sales?" + urlencode(params))]
     except remote.ServerUnavailableError:

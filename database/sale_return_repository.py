@@ -26,7 +26,7 @@ import sqlite3
 import uuid
 from datetime import datetime
 
-from database import account_repository, activity_repository, audit_repository
+from database import account_repository, activity_repository, audit_repository, remote, remote_returns
 from database.connection import connection_scope
 from database.exceptions import ReturnApprovalError, ReturnQuantityError, SessionInvalidError, TransactionNotFoundError
 from database.stock_repository import change_level
@@ -63,6 +63,8 @@ def _sold_lines(conn: sqlite3.Connection, transaction_id: int) -> dict[str, tupl
 
 def returnable_lines(transaction_id: int) -> list[ReturnableLine]:
     """What of this sale can still come back, per product (TransactionNotFoundError if no such sale)."""
+    if remote.active():
+        return remote_returns.returnable_lines(transaction_id)
     with connection_scope() as conn:
         if conn.execute("SELECT 1 FROM transactions WHERE id = ?", (transaction_id,)).fetchone() is None:
             raise TransactionNotFoundError(transaction_id)
@@ -163,7 +165,30 @@ def create(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str,
     return get(return_id)
 
 
+def create_with_approval(transaction_id: int, lines: list[tuple[str, int, bool]], reason: str, approver_badge: str,
+                         approver_pin: str, terminal: str, requested_by: Actor | None = None,
+                         client_uuid: str | None = None) -> SaleReturn:
+    """create(), with the manager's badge and PIN checked as part of it. On this computer the PIN is
+    checked here (event pin_confirmed); in server mode the SERVER checks it, with its own lockout and
+    log, so the manager's PIN is spent once."""
+    reason = (reason or "").strip()
+    if not reason:
+        raise UserError("err.return_reason")
+    if len(reason) > MAX_REASON_LENGTH:
+        raise UserError("err.return_reason_long", n=MAX_REASON_LENGTH)
+    if not lines or any(isinstance(q, bool) or int(q) != q or q <= 0 for _b, q, _r in lines):
+        raise UserError("err.return_lines")
+    if remote.active():
+        return remote_returns.create(transaction_id, lines, reason, approver_badge, approver_pin, terminal,
+                                     (client_uuid or "").strip() or uuid.uuid4().hex)
+    approver = account_repository.authenticate(approver_badge, approver_pin, AREA_DEPOT_CONSOLE, terminal,
+                                               event="pin_confirmed").actor
+    return create(transaction_id, lines, reason, approver, requested_by, client_uuid=client_uuid)
+
+
 def get(return_id: int) -> SaleReturn:
+    if remote.active():
+        return remote_returns.get(return_id)
     with connection_scope() as conn:
         header = conn.execute("SELECT * FROM sale_returns WHERE id = ?", (return_id,)).fetchone()
         if header is None:
@@ -172,6 +197,8 @@ def get(return_id: int) -> SaleReturn:
 
 
 def list_for_transaction(transaction_id: int) -> list[SaleReturn]:
+    if remote.active():
+        return remote_returns.list_for_transaction(transaction_id)
     with connection_scope() as conn:
         headers = conn.execute(
             "SELECT * FROM sale_returns WHERE transaction_id = ? ORDER BY id", (transaction_id,)
@@ -181,6 +208,8 @@ def list_for_transaction(transaction_id: int) -> list[SaleReturn]:
 
 def list_between(start: datetime, end: datetime, dealership_code: str | None = None) -> list[SaleReturn]:
     """Refunds paid out in [start, end) (LOCAL times, as transaction_repository.list_between)."""
+    if remote.active():
+        return remote_returns.list_between(start, end, dealership_code)
     sql = "SELECT * FROM sale_returns WHERE created_at >= ? AND created_at < ?"
     params: list = [to_db_timestamp(start), to_db_timestamp(end)]
     if dealership_code is not None:

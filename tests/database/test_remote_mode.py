@@ -528,3 +528,69 @@ def test_roster_in_server_mode(db_connection):
     assert [(r["badge_id"], r["status"]) for r in roster] == [("E-100", "Present"), ("E-200", "Off")]
     events = attendance.list_punches("2026-11-02")
     assert [(e["badge_id"], e["action"]) for e in events] == [("E-100", "IN")]
+
+
+def test_refunds_and_day_close_in_server_mode(db_connection):
+    import datetime as dt
+
+    from database import day_close_repository as closes
+    from database import sale_return_repository as returns
+    from database import transaction_repository
+    from database.exceptions import ReturnApprovalError, ReturnQuantityError, TransactionNotFoundError
+
+    refund = {"id": 6, "transaction_id": 9, "created_at": "2026-11-02T10:00:00+00:00", "dealership_code": "CST-04",
+              "payment_method": "cash", "reason": "Broken", "requested_by": "Cy · C-1", "approved_by": "Mo · M-1",
+              "client_uuid": "u1u1u1u1", "total": 10.0,
+              "lines": [{"barcode": "A1", "name": "Anvil", "unit_price": 5.0, "quantity": 2, "restock": True}]}
+    close = {"id": 2, "created_at": "2026-11-02T18:00:00+00:00", "dealership_code": "CST-04",
+             "business_date": "2026-11-02", "sales_count": 3, "cash_sales": 30.0, "card_sales": 5.0, "other_sales": 0.0,
+             "cash_refunds": 10.0, "card_refunds": 0.0, "expected_cash": 20.0, "counted_cash": 19.0, "difference": -1.0,
+             "note": "short", "closed_by": "Cy · C-1"}
+    sale = {"id": 9, "client_uuid": "s", "created_at": "2026-11-02T09:00:00+00:00", "total": 15.0,
+            "dealership_code": "CST-04", "cashier": "Cy", "payment_method": "cash", "duplicate": False,
+            "lines": [{"barcode": "A1", "name": "Anvil", "unit_price": 5.0, "quantity": 3, "unit_cost": 0.0,
+                       "cost_known": False}]}
+    client = on({
+        ("GET", "/sales/9"): sale,
+        ("GET", "/sales/8"): ServerError("none", 404),
+        ("GET", "/returns/returnable/9"): [{"barcode": "A1", "name": "Anvil", "unit_price": 5.0, "sold": 3, "returned": 1}],
+        ("POST", "/returns"): refund,
+        ("GET", "/returns/6"): refund,
+        ("GET", "/returns?transaction_id=9"): [refund],
+        ("POST", "/day-close"): close,
+        ("GET", "/day-closes?limit=5&only_differences=false"): [close],
+        ("GET", "/day-closes/latest?business_date=2026-11-02&dealership_code=CST-04"): None,
+    })
+    assert transaction_repository.get_by_id(9).items[0].quantity == 3
+    with pytest.raises(TransactionNotFoundError):
+        transaction_repository.get_by_id(8)
+    line = returns.returnable_lines(9)[0]
+    assert (line.sold, line.returned, line.available) == (3, 1, 2)
+    made = returns.create_with_approval(9, [("A1", 2, True)], " Broken ", " m-1 ", "2468", "POS refund",
+                                        client_uuid="u1u1u1u1")
+    assert (made.number, made.total, made.approved_by) == ("RF-00006", 10.0, "Mo · M-1")
+    assert client.calls[-1][2] == {"transaction_id": 9, "reason": "Broken", "client_uuid": "u1u1u1u1",
+                                   "approver_badge": "m-1", "approver_pin": "2468", "terminal": "POS refund",
+                                   "lines": [{"barcode": "A1", "quantity": 2, "restock": True}]}
+    assert returns.get(6).reason == "Broken"
+    assert [r.id for r in returns.list_for_transaction(9)] == [6]
+    with pytest.raises(UserError):
+        returns.create_with_approval(9, [("A1", 2, True)], "  ", "m-1", "2468", "POS")
+    with pytest.raises(UserError):
+        returns.create_with_approval(9, [], "x", "m-1", "2468", "POS")
+
+    client.answers[("POST", "/returns")] = ServerError("A manager must approve a refund.", 403)
+    with pytest.raises(ReturnApprovalError):
+        returns.create_with_approval(9, [("A1", 1, True)], "x", "c-1", "2468", "POS")
+    client.answers[("POST", "/returns")] = ServerError("Only 0 of Anvil can still come back; 1 were asked for.", 409)
+    with pytest.raises(ReturnQuantityError) as over:
+        returns.create_with_approval(9, [("A1", 1, True)], "x", "m-1", "2468", "POS")
+    assert over.value.available == 0
+
+    done = closes.close("CST-04", 19, dt.date(2026, 11, 2), actor=None, note="short")
+    assert (done.difference, done.business_date, done.closed_by) == (-1.0, dt.date(2026, 11, 2), "Cy · C-1")
+    assert client.calls[-1][2]["counted_cash"] == 19.0 and client.calls[-1][2]["business_date"] == "2026-11-02"
+    assert [c.id for c in closes.list_recent(5)] == [2]
+    assert closes.latest_for("CST-04", dt.date(2026, 11, 2)) is None
+    with pytest.raises(UserError):
+        closes.close("CST-04", -1, dt.date(2026, 11, 2))

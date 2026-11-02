@@ -12,7 +12,7 @@ from __future__ import annotations
 
 from datetime import date, datetime, time, timedelta
 
-from database import activity_repository, sale_return_repository, transaction_repository
+from database import activity_repository, remote, remote_returns, sale_return_repository, transaction_repository
 from database.connection import connection_scope
 from shared.auth import Actor, actor_label
 from shared.i18n import UserError
@@ -28,6 +28,8 @@ def _bounds(day: date) -> tuple[datetime, datetime]:
 
 def summarize(dealership_code: str | None, day: date | None = None) -> DaySummary:
     day = day or date.today()
+    if remote.active():
+        return remote_returns.summarize(dealership_code, day)
     start, end = _bounds(day)
     sales = [t for t in transaction_repository.list_between(start, end, net_of_returns=False)
              if t.dealership_code == dealership_code]
@@ -58,6 +60,8 @@ def close(dealership_code: str | None, counted_cash: float, day: date | None = N
     note = (note or "").strip() or None
     if note is not None and len(note) > MAX_NOTE_LENGTH:
         raise UserError("err.close_note_long", n=MAX_NOTE_LENGTH)
+    if remote.active():
+        return remote_returns.close(dealership_code, counted, day or date.today(), note)
     summary = summarize(dealership_code, day)
     expected = summary.expected_cash
     with connection_scope() as conn:
@@ -86,6 +90,8 @@ def close(dealership_code: str | None, counted_cash: float, day: date | None = N
 
 
 def list_recent(limit: int = 60, dealership_code: str | None = None, only_differences: bool = False) -> list[DayClose]:
+    if remote.active():
+        return remote_returns.list_recent(limit, dealership_code, only_differences)
     sql, params = "SELECT * FROM day_closes WHERE 1 = 1", []
     if dealership_code is not None:
         sql += " AND dealership_code = ?"
@@ -99,6 +105,8 @@ def list_recent(limit: int = 60, dealership_code: str | None = None, only_differ
 
 
 def latest_for(dealership_code: str | None, day: date) -> DayClose | None:
+    if remote.active():
+        return remote_returns.latest_for(dealership_code, day)
     with connection_scope() as conn:
         row = conn.execute(
             "SELECT * FROM day_closes WHERE business_date = ? AND dealership_code IS ? ORDER BY id DESC LIMIT 1",
