@@ -31,7 +31,7 @@ import sqlite3
 from datetime import date
 
 from shared.i18n import UserError
-from database import authz
+from database import authz, remote, remote_ledger
 from database.connection import connection_scope
 from database.exceptions import (
     DataAccessError,
@@ -119,6 +119,8 @@ def _clean(entry: LedgerEntry) -> LedgerEntry:
 
 @_wrap_sqlite
 def get(entry_id: int) -> LedgerEntry:
+    if remote.active():
+        return remote_ledger.get(entry_id)
     with connection_scope() as conn:
         row = conn.execute("SELECT * FROM ledger_entries WHERE id = ?", (entry_id,)).fetchone()
     if row is None:
@@ -131,6 +133,8 @@ def list_entries(direction: str | None = None, site: str | None = None) -> list[
     """Entries ordered by due date (soonest first), optionally filtered
     by direction and/or site (compared by warehouse code, so a renamed
     warehouse keeps its entries)."""
+    if remote.active():
+        return remote_ledger.list_entries(direction, site)
     clauses, params = [], []
     if direction is not None:
         clauses.append("direction = ?")
@@ -212,6 +216,8 @@ def create(entry: LedgerEntry, actor: Actor | None = None) -> LedgerEntry:
     actor = _require_actor(actor)
     entry = _clean(entry)
     label = actor_label(actor)
+    if remote.active():
+        return remote_ledger.create(entry)
 
     def work(conn):
         authz.require_live_role(conn, actor, AREA_DEPOT_CONSOLE)
@@ -254,6 +260,8 @@ def update(entry: LedgerEntry, actor: Actor | None = None) -> LedgerEntry:
     if entry.id is None:
         raise UserError("err.ledger_unsaved")
     entry = _clean(entry)
+    if remote.active():
+        return remote_ledger.update(entry)
 
     def work(conn):
         authz.require_live_role(conn, actor, AREA_ADMIN)
@@ -306,6 +314,8 @@ def delete(entry_id: int, actor: Actor | None = None) -> None:
     Never silent: the entry's last state is written to the audit trail
     ('deleted', in the same transaction) before the row goes."""
     actor = _require_actor(actor)
+    if remote.active():
+        return remote_ledger.delete(entry_id)
 
     def work(conn):
         authz.require_live_role(conn, actor, AREA_ADMIN)
@@ -326,6 +336,8 @@ def _transition(entry_id: int, new_status: str, allowed_from: tuple[str, ...], a
     row is written in the same transaction."""
     actor = _require_actor(actor)
     label = actor_label(actor)
+    if remote.active():
+        return remote_ledger.transition(entry_id, {"cleared": "clear", "endorsed": "endorse", "pending": "reopen"}[new_status])
     settled = _NOW if new_status != "pending" else "NULL"
     marks = ", ".join("?" for _ in allowed_from)
 
@@ -397,6 +409,8 @@ def list_audit(entry_id: int) -> list[LedgerAuditRecord]:
     """The history of one entry, oldest first - also for an entry that has
     since been deleted. Empty for a legacy entry nobody has touched since
     auditing began."""
+    if remote.active():
+        return remote_ledger.list_audit(entry_id)
     with connection_scope() as conn:
         rows = conn.execute("SELECT * FROM ledger_audit WHERE entry_id = ? ORDER BY id", (entry_id,)).fetchall()
     return [_row_to_audit(row) for row in rows]
@@ -405,6 +419,8 @@ def list_audit(entry_id: int) -> list[LedgerAuditRecord]:
 @_wrap_sqlite
 def list_recent_audit(limit: int = 50) -> list[LedgerAuditRecord]:
     """The latest changes across the whole ledger, newest first."""
+    if remote.active():
+        return remote_ledger.list_recent_audit(limit)
     with connection_scope() as conn:
         rows = conn.execute("SELECT * FROM ledger_audit ORDER BY id DESC LIMIT ?", (max(0, int(limit)),)).fetchall()
     return [_row_to_audit(row) for row in rows]
@@ -415,6 +431,8 @@ def known_counterparties() -> list[str]:
     """Names to suggest while typing a counterparty: everyone already in
     the ledger, every dealership, and every supplier seen on a purchase
     order or safe price band. Sorted, de-duplicated (case-insensitive)."""
+    if remote.active():
+        return remote_ledger.known_counterparties()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT counterparty AS name FROM ledger_entries "

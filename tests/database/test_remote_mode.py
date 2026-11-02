@@ -688,3 +688,63 @@ def test_purchasing_in_server_mode(db_connection):
     with pytest.raises(PurchaseOrderCancelNotAllowedError) as denied:
         orders.cancel_order(7, admin)
     assert denied.value.reason == "admin_only"
+
+
+LEDGER = {"id": 4, "direction": "in", "doc_type": "check", "doc_no": "CHK 1", "counterparty": "Acme", "detail": None,
+          "site": "WH-01 · MAIN", "issue_date": "2026-11-01", "due_date": "2026-11-20", "amount": 100.0,
+          "status": "pending", "settled_at": None, "created_at": "2026-11-02T10:00:00+00:00",
+          "created_by": "Ali · B-001", "settled_by": None, "updated_by": "Ali · B-001"}
+
+
+def test_ledger_in_server_mode(db_connection):
+    import datetime as dt
+    from database import ledger_repository as ledger
+    from database.exceptions import DuplicateLedgerDocumentError, LedgerEntryNotFoundError, LedgerEntryStateError
+    from shared.auth import Actor
+    from shared.models import LedgerEntry
+
+    audit = {"id": 1, "entry_id": 4, "at": "2026-11-02T10:00:00+00:00", "actor_badge": "B-001", "actor_name": "Ali",
+             "action": "created", "before": None, "after": {"doc_no": "CHK 1"}}
+    client = on({
+        ("POST", "/ledger"): LEDGER,
+        ("GET", "/ledger/4"): LEDGER,
+        ("GET", "/ledger/5"): ServerError("none", 404),
+        ("GET", "/ledger?direction=in&site=WH-01"): [LEDGER],
+        ("PUT", "/ledger/4"): {**LEDGER, "counterparty": "Zed"},
+        ("DELETE", "/ledger/4"): None,
+        ("POST", "/ledger/4/clear"): {**LEDGER, "status": "cleared", "settled_at": "2026-11-02T11:00:00+00:00"},
+        ("POST", "/ledger/4/endorse"): ServerError("Only a received check or note can be endorsed.", 422),
+        ("POST", "/ledger/4/reopen"): ServerError("Entry 4 is pending; it can't be reopened now.", 409),
+        ("GET", "/ledger/4/audit"): [audit],
+        ("GET", "/ledger/audit?limit=5"): [audit],
+        ("GET", "/ledger/counterparties"): ["Acme"],
+    })
+    admin = Actor("B-001", "Ali")
+    entry = LedgerEntry("in", "check", "chk 1", " Acme ", dt.date(2026, 11, 1), dt.date(2026, 11, 20), 100.0, site="wh-01")
+    made = ledger.create(entry, admin)
+    assert (made.id, made.doc_no, made.issue_date, made.created_at) == (4, "CHK 1", dt.date(2026, 11, 1), "2026-11-02T10:00:00.000Z")
+    assert client.calls[-1][2]["doc_no"] == "CHK 1" and client.calls[-1][2]["site"] == "WH-01"
+    with pytest.raises(UserError):
+        ledger.create(LedgerEntry("in", "check", " ", "A", dt.date(2026, 11, 1), dt.date(2026, 11, 2), 1), admin)
+    with pytest.raises(UserError):
+        ledger.create(entry, None)
+    assert ledger.get(4).amount == 100.0
+    with pytest.raises(LedgerEntryNotFoundError):
+        ledger.get(5)
+    assert [e.id for e in ledger.list_entries("in", "WH-01")] == [4]
+    made.counterparty = "Zed"
+    assert ledger.update(made, admin).counterparty == "Zed"
+    ledger.delete(4, admin)
+    assert ledger.mark_cleared(4, admin).settled_at == "2026-11-02T11:00:00.000Z"
+    with pytest.raises(UserError):
+        ledger.mark_endorsed(4, admin)
+    with pytest.raises(LedgerEntryStateError) as state:
+        ledger.reopen(4, admin)
+    assert (state.value.status, state.value.action) == ("pending", "reopen")
+    client.answers[("POST", "/ledger")] = ServerError("Document CHK 1 is already recorded.", 409)
+    with pytest.raises(DuplicateLedgerDocumentError):
+        ledger.create(entry, admin)
+    history = ledger.list_audit(4)
+    assert (history[0].action, history[0].after, history[0].at) == ("created", {"doc_no": "CHK 1"}, "2026-11-02T10:00:00.000Z")
+    assert ledger.list_recent_audit(5)[0].actor_badge == "B-001"
+    assert ledger.known_counterparties() == ["Acme"]

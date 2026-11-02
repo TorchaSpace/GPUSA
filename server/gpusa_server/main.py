@@ -16,6 +16,7 @@ from .product_routes import router as product_router
 from .read_routes import router as read_router
 from .sale_routes import router as sale_router
 from .shipment_routes import router as shipment_router
+from .ledger_routes import router as ledger_router
 from .people_routes import router as people_router
 from .purchase_routes import router as purchase_router
 from .return_routes import router as return_router
@@ -39,6 +40,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(people_router)
     app.include_router(return_router)
     app.include_router(purchase_router)
+    app.include_router(ledger_router)
 
     @app.get("/health")
     def health() -> dict:
