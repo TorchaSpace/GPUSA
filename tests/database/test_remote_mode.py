@@ -857,3 +857,43 @@ def test_data_watcher_follows_the_server_counter(qapp):
     client.answers[("GET", "/changes")] = {"version": 11}
     assert watcher.check() is True
     watcher.stop()
+
+
+def test_recovery_in_server_mode(db_connection, monkeypatch):
+    from database import account_repository as accounts
+    from database.exceptions import AuthError
+    from shared import paths
+    from shared.auth import Session
+
+    calls = []
+
+    def fake(self, method, path, body=None):
+        calls.append((method, path, body))
+        value = fake.answers[(method, path)]
+        if isinstance(value, ServerError):
+            raise value
+        return value
+
+    fake.answers = {("GET", "/recovery/status"): {"has_code": True, "question": "First pet?"},
+                    ("POST", "/recovery/reset"): None}
+    monkeypatch.setattr("shared.server_client.ServerClient._request", fake)
+    monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
+    assert accounts.has_recovery_code() is True
+    assert accounts.get_security_question() == "First pet?"
+    accounts.reset_with_recovery_code("k7qd-2mxh-9pra-tc4w", "b-001", "753159", "Till 1")
+    assert calls[-1] == ("POST", "/recovery/reset", {"method": "code", "secret": "k7qd-2mxh-9pra-tc4w",
+                                                     "badge_id": "b-001", "new_pin": "753159", "terminal": "Till 1"})
+    with pytest.raises(ValueError):
+        accounts.reset_with_security_answer("fistik", "b-001", "123", "Till 1")  # weak PIN: stopped before the server
+    for status, key in ((404, None), (401, None), (423, None), (403, None)):
+        fake.answers[("POST", "/recovery/reset")] = ServerError(
+            "Recovery is locked until 2026-11-02T10:00:00+00:00." if status == 423 else "no", status)
+        with pytest.raises(AuthError):
+            accounts.reset_with_security_answer("fistik", "b-001", "753159", "Till 1")
+
+    on({("POST", "/recovery/code"): {"code": "AAAA-BBBB-CCCC-DDDD"}, ("PUT", "/recovery/question"): None})
+    admin = Session(account_id=1, badge_id="B-001", name="Ali", role="admin", signed_in_at="2026-11-02T10:00:00.000Z",
+                    area="admin", terminal="Admin")
+    assert accounts.create_recovery_code(admin) == "AAAA-BBBB-CCCC-DDDD"
+    accounts.set_security_question(admin, "753159", "Name of my first pet?", "Fistik")
+    remote.use_server(None)
