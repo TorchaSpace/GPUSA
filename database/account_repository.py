@@ -37,7 +37,9 @@ from database.exceptions import (
     SignInFailedError,
     localized_auth,
 )
-from database import activity_repository, audit_repository, authz, employee_repository, remote, remote_people
+from database import (
+    activity_repository, audit_repository, authz, employee_repository, remote, remote_people, remote_recovery,
+)
 from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
@@ -579,6 +581,15 @@ def _set_pin(badge_id: str, new_pin: str, by: Actor | None, *, own: bool) -> Non
 
 def list_active_admins() -> list[Account]:
     """Active administrator accounts, for the "forgot PIN" screen."""
+    url = paths.get_server_url()
+    if url and not remote.active():
+        # Nobody is signed in, so the server can't be asked who the administrators are (it would have to tell
+        # strangers). The ones who signed in here through this server before are known from those sign-ins.
+        with connection_scope() as conn:
+            rows = conn.execute("SELECT badge_id, name FROM server_sign_ins WHERE server_url = ? AND role = 'admin' "
+                                "ORDER BY name", (url,)).fetchall()
+        return [Account(badge_id=r["badge_id"], name=r["name"], role="admin", is_active=True, employee_active=True,
+                        location_type="", location_name="") for r in rows]
     return [a for a in list_accounts() if a.role == "admin" and a.is_active and a.employee_active]
 
 
@@ -592,6 +603,8 @@ _SQ_QUESTION, _SQ_HASH = "recovery.question", "recovery.answer_hash"
 
 
 def has_recovery_code() -> bool:
+    if paths.get_server_url():
+        return remote_recovery.has_code()
     with connection_scope() as conn:
         row = conn.execute("SELECT 1 FROM app_settings WHERE key = ?", (_RC_HASH,)).fetchone()
     return row is not None
@@ -602,6 +615,8 @@ def create_recovery_code(by: Session) -> str:
     can be read. Administrators only; the old code stops working."""
     if by.role != "admin":
         raise localized_auth("err.recovery_admin_only")
+    if remote.active():
+        return remote_recovery.make_code()
     actor = by.actor
     code = recovery_code.generate()
     code_hash = auth.hash_pin(recovery_code.normalize(code))
@@ -625,6 +640,9 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
     Wrong codes are counted; after MAX_FAILED_ATTEMPTS recovery locks for
     LOCK_MINUTES. Raises AuthError with a message fit to show."""
     normalized = recovery_code.normalize(code)
+    if paths.get_server_url():
+        _check_pin(new_pin, "admin")
+        return remote_recovery.reset("code", code, badge_id, new_pin, terminal)
     _reset_with_secret(
         _RC_HASH, normalized, len(normalized) == recovery_code.CODE_LENGTH, badge_id, new_pin, terminal,
         "Reset with the recovery code", "err.rc_none",
@@ -634,6 +652,8 @@ def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: s
 
 def get_security_question() -> str | None:
     """The question to ask on the sign-in screen, or None if none is set."""
+    if paths.get_server_url():
+        return remote_recovery.question()
     with connection_scope() as conn:
         row = conn.execute("SELECT value FROM app_settings WHERE key = ?", (_SQ_QUESTION,)).fetchone()
     return row["value"] if row and row["value"] else None
@@ -660,6 +680,8 @@ def set_security_question(session: Session, current_pin: str, question: str, ans
     if session.role != "admin":
         raise localized_auth("err.question_admin_only")
     question, answer = validate_security_answer(question, answer)
+    if remote.active():
+        return remote_recovery.set_question(current_pin, question, answer)
     _confirm_current_pin(session, current_pin, admin=True)
     answer_hash = auth.hash_pin(security_question.normalize_answer(answer))
 
@@ -681,6 +703,9 @@ def reset_with_security_answer(answer: str, badge_id: str, new_pin: str, termina
     question is answered. Shares the wrong-guess counter (and lock) with
     the recovery code, so trying both doesn't double the guesses."""
     normalized = security_question.normalize_answer(answer)
+    if paths.get_server_url():
+        _check_pin(new_pin, "admin")
+        return remote_recovery.reset("answer", answer, badge_id, new_pin, terminal)
     _reset_with_secret(
         _SQ_HASH, normalized, len(normalized) >= MIN_SECURITY_ANSWER_LENGTH, badge_id, new_pin, terminal,
         "Reset by answering the security question", "err.sq_none",
