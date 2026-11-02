@@ -13,6 +13,7 @@ themselves (it just writes the same values again).
 
 from __future__ import annotations
 
+from database import remote
 from database.connection import connection_scope
 from shared.models import Transaction
 
@@ -25,6 +26,8 @@ def attach_costs(transactions: list[Transaction]) -> list[Transaction]:
     stored rows by order within the sale, falling back to the first unused
     row for the same product; a line with no stored row keeps "cost
     unknown". Transactions without an id (never saved) are left alone."""
+    if remote.active():  # the server already sends each line's cost snapshot
+        return transactions
     by_id = {t.id: t for t in transactions if t.id is not None}
     if not by_id:
         return transactions

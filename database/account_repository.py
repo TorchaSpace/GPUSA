@@ -223,6 +223,8 @@ def guard_last_admin(conn, employee_id: int) -> None:
 def admin_exists() -> bool:
     """Whether anyone can open Admin - False only on a fresh system, which
     is when Admin shows its "create the first administrator" screen."""
+    if remote.active():  # nobody is signed in to the server without one
+        return True
     with connection_scope() as conn:
         return bool(_active_admin_employee_ids(conn))
 

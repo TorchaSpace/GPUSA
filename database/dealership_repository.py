@@ -45,6 +45,10 @@ def canonical_code(code: str | None) -> str:
     """The code as STORED for the dealership `code` names (any letter case,
     so a legacy lower-case row answers with its lower-case code), or the
     normalised input when there is no such row."""
+    if remote.active():
+        wanted = normalize_code(code)
+        match = next((d for d in remote_places.dealerships() if d.code.upper() == wanted), None)
+        return match.code if match is not None else wanted
     with connection_scope() as conn:
         row = _find_row(conn, code or "")
     return row["code"] if row is not None else normalize_code(code)

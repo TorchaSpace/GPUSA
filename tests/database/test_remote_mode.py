@@ -814,3 +814,46 @@ def test_places_settings_and_audit_in_server_mode(db_connection):
     assert client.calls[-1][2] == {"values": {"alerts.low_stock": "0", "alerts.pending_approvals": "1"}}
     entries = audit_repository.list_recent(5, "product")
     assert (entries[0].id, entries[0].target, entries[0].at) == (3, "A1", "2026-11-02T10:00:00.000Z")
+
+
+def test_activity_feed_and_leftover_reads_in_server_mode(db_connection):
+    from database import account_repository, activity_repository, dealership_repository, sale_cost_repository
+    from shared.models import Transaction
+
+    ev = {"id": 5, "at": "2026-11-02T10:00:00+00:00", "kind": "sale", "severity": "notice", "source": "pos",
+          "location_kind": "dealership", "location_code": "CST-04", "location_name": "Coast", "actor": "Ali",
+          "data": {"total": 9}}
+    client = on({
+        ("GET", "/activity/latest"): {"id": 5},
+        ("GET", "/activity/since?after_id=2&limit=50"): [ev],
+        ("GET", "/activity/recent?limit=8&min_severity=info"): [ev],
+        ("GET", "/activity/recent?limit=3&min_severity=notice&sources=pos&sources=depot"): [ev],
+        ("GET", "/activity/count?after_id=2&min_severity=notice"): {"count": 3},
+        ("GET", "/dealerships"): [{"id": 1, "code": "CST-04", "name": "Coast", "region": "Coastal", "city": "Izmir",
+                                   "manager_name": None, "is_active": True}],
+    })
+    assert activity_repository.latest_id() == 5
+    got = activity_repository.list_since(2, 50)[0]
+    assert (got.id, got.kind, got.data, got.location_code) == (5, "sale", {"total": 9}, "CST-04")
+    assert [e.id for e in activity_repository.list_recent(8, "info")] == [5]
+    assert [e.id for e in activity_repository.list_recent(3, "notice", ("pos", "depot"))] == [5]
+    assert activity_repository.count_since(2) == 3
+    assert activity_repository.prune() == 0
+    assert dealership_repository.canonical_code(" cst-04 ") == "CST-04"
+    assert dealership_repository.canonical_code("zz-9") == "ZZ-9"
+    assert account_repository.admin_exists() is True
+    sales = [Transaction(items=[], id=1)]
+    assert sale_cost_repository.attach_costs(sales) is sales
+    assert not [c for c in client.calls if c[0] != "GET"]
+
+
+def test_data_watcher_follows_the_server_counter(qapp):
+    from shared.gui_kit.live_updates import DataWatcher
+
+    client = on({("GET", "/changes"): {"version": 10}})
+    watcher = DataWatcher(interval_ms=10_000, settle_ms=0, min_gap_ms=0)
+    watcher.start()
+    assert watcher.check() is False
+    client.answers[("GET", "/changes")] = {"version": 11}
+    assert watcher.check() is True
+    watcher.stop()

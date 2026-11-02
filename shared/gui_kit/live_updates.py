@@ -67,6 +67,11 @@ class DataWatcher(QObject):
 
     def _read_version(self) -> int | None:
         try:
+            from database import remote
+
+            if remote.active():  # server mode: the server's change counter replaces the local file's
+                self._version = int(remote.call("GET", "/changes")["version"])
+                return self._version
             if self._conn is None:
                 self._conn = get_connection()
             self._version = int(self._conn.execute("PRAGMA data_version").fetchone()[0])
