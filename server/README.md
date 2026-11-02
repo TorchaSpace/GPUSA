@@ -34,6 +34,20 @@ alembic current           # shows the applied version (0001)
 Never run `alembic downgrade` on a database that holds real data: it drops the
 tables. New columns/tables go in a new file under `migrations/versions/`.
 
+## Start everything with one double click (Linux server PC)
+
+```bash
+bash server/scripts/make_launcher.sh   # once: puts "GPUSA Sunucusu" on the Desktop
+```
+
+Double-clicking it opens a terminal that starts Docker if needed, starts the
+Postgres container (`gpusa-db`), waits until it answers, reads `.env`, checks
+the database connection, runs `alembic upgrade head`, starts the API on port
+8000 and then checks `/health` and `/health/db`, printing the address to type
+into Admin > Server (test). Ctrl+C stops the API. Run `bash server/scripts/start_server.sh`
+directly to see the same thing in an open terminal. Options: `GPUSA_DB_CONTAINER`,
+`GPUSA_PORT`, `GPUSA_VENV`, `GPUSA_SKIP_DOCKER=1`.
+
 ## Sign-in and first data
 
 1. Put a secret in `.env` (32+ characters, never commit it):
