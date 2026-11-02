@@ -364,7 +364,10 @@ class OverviewPage(AdminPage):
             table.setItem(r, total_col + 2, status)
         header = table.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        # A Stretch name column shrinks to nothing ("...") once the warehouse columns fill a normal-sized
+        # window; give it a real width instead (the table scrolls sideways if the rest needs more room).
+        header.setSectionResizeMode(1, QHeaderView.Interactive)
+        table.setColumnWidth(1, 220)
         shown_note = "" if self._filter == overview.FILTER_ALL else tr("admin.overview.footer_totals_note")
         self._stock_footer.setText(
             tr("admin.overview.stock_footer").format(shown=len(grid.rows), total=len(self._products), note=shown_note)

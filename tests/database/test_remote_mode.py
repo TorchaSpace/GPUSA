@@ -253,3 +253,50 @@ def test_places_read_from_the_server_and_writes_wait():
     assert dealership_repository.get_by_code(" cst-04 ").city == "Izmir"
     with pytest.raises(remote.NotOnServerYetError):
         warehouse_repository.create(Warehouse("WH-03", "New"))
+
+
+def test_check_cart_reads_the_server_shelf_in_server_mode():
+    """The till checks its cart against the server's shelf, not this computer's
+    (empty) SQLite file: a product the server sells must not be 'no longer sold'."""
+    dealer = StockLocation("dealership", "CST-04")
+    row = {"barcode": "A1", "name": "Anvil", "price": 9.5, "quantity": 3, "critical_stock_level": 1,
+           "is_active": True, "stocked_here": True}
+    gone = {**row, "barcode": "B2", "name": "Bolt", "is_active": False}
+    on({("GET", "/stock/products-at?kind=dealership&code=CST-04&include_inactive=true"): [row, gone]})
+    assert product_repository.check_cart(dealer, [("a1", 9.5, 3)]) == []  # scanner case
+    kinds = {i.barcode: i.kind for i in product_repository.check_cart(
+        dealer, [("A1", 9.5, 4), ("B2", 1.0, 1), ("NOPE", 1.0, 1)])}
+    assert kinds == {"A1": "stock", "B2": "unavailable", "NOPE": "unavailable"}
+
+
+def test_floor_receipt_goes_to_the_server_in_server_mode(db_connection):
+    """Depot Floor 'Log receipt' in server mode must hit the server (the local file has no such product)."""
+    from database import inventory_repository
+
+    client = on({("POST", "/stock-movements"): {"level_after": 7}})
+    inventory_repository.receive_stock("A1", 4, "note", location=WH, reference="PO-1", bin_code="A-03")
+    method, path, body = client.calls[-1]
+    assert (method, path) == ("POST", "/stock-movements")
+    assert (body["direction"], body["barcode"], body["quantity"], body["location_code"]) == ("receive", "A1", 4, "WH-01")
+
+
+def test_an_unreachable_server_is_not_asked_again_straight_away(monkeypatch):
+    """One timeout, then a short pause where calls fail at once - a screen must not freeze on every click."""
+    from database.exceptions import DataAccessError
+
+    class Down:
+        base_url, token, calls = "http://server.test", "tok", 0
+
+        def get(self, path):
+            Down.calls += 1
+            raise ServerError("Cannot reach the server (timed out).")
+
+    remote.use_server(Down())
+    for _ in range(3):
+        with pytest.raises(DataAccessError):
+            remote.call("GET", "/stock/movement-totals")
+    assert Down.calls == 1  # the other two did not wait for the network
+    monkeypatch.setattr(remote, "_down_until", 0.0)  # pause over
+    with pytest.raises(DataAccessError):
+        remote.call("GET", "/stock/movement-totals")
+    assert Down.calls == 2

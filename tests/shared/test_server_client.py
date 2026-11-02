@@ -47,3 +47,21 @@ def test_unreachable_server_is_a_readable_error():
 def test_empty_address_is_asked_for():
     with pytest.raises(ServerError):
         ServerClient("").get("/products")
+
+
+def test_a_refused_connection_is_explained_in_plain_words(monkeypatch):
+    import urllib.error
+    import urllib.request
+
+    import pytest
+
+    from shared.server_client import ServerClient, ServerError
+
+    def refuse(*_a, **_k):
+        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+
+    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    with pytest.raises(ServerError) as info:
+        ServerClient("http://127.0.0.1:9").get("/health")
+    assert "Cannot reach the server" in str(info.value) and "is the server running" in str(info.value)
+    assert "Errno" not in str(info.value)

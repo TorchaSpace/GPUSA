@@ -24,7 +24,7 @@ from dataclasses import dataclass
 
 from shared.auth import Actor
 from shared.i18n import UserError, tr
-from database import audit_repository, authz, remote, remote_products
+from database import audit_repository, authz, remote, remote_products, remote_stock
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBarcodeError,
@@ -394,6 +394,13 @@ def check_cart(location: StockLocation, lines: list[tuple[str, float, int]]) -> 
     `location` from the database and return what no longer holds (empty
     list: safe to finalize). Call right before finalizing a sale."""
     current: dict[str, Product | None] = {}
+    if remote.active():
+        # Server mode: the products live on the server (or in its offline cache), not in this
+        # computer's SQLite file, so the lines are checked against that shelf.
+        here = {p.barcode.upper(): p for p in remote_stock.products_at(location, include_inactive=True)}
+        for barcode, _price, _quantity in lines:
+            current[barcode] = here.get(str(barcode).strip().upper())
+        return cart_issues(lines, current)
     with connection_scope() as conn:
         for barcode, _price, _quantity in lines:
             row = _find(conn, barcode)

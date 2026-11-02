@@ -181,3 +181,25 @@ def test_day_close_explains_a_negative_expected_cash(page, monkeypatch):
                         lambda *a, **k: dataclasses.replace(real(*a, **k), cash_refunds=100.0))
     dialog = DayCloseDialog("001")
     assert dialog.negative_label.isVisibleTo(dialog) and "exceed" in dialog.negative_label.text()
+
+
+def test_pill_buttons_are_never_narrower_than_their_label(qapp):
+    """A crowded header row must not cut 'Return items' / 'Close the day' short."""
+    from PySide6.QtGui import QFont, QFontMetrics
+    from PySide6.QtWidgets import QHBoxLayout, QWidget
+
+    from pos_app.gui.stock_requests import dark_button, primary_button
+
+    box = QWidget()
+    row = QHBoxLayout(box)
+    buttons = [primary_button("Return items", 52), dark_button("Close the day", 52)]
+    for button in buttons:
+        row.addWidget(button)
+    box.resize(120, 80)  # far too small for both
+    box.show()
+    for button in buttons:
+        font = QFont(button.font())
+        font.setPixelSize(17)
+        font.setBold(True)
+        assert button.minimumSizeHint().width() >= QFontMetrics(font).horizontalAdvance(button.text())
+        assert button.width() >= button.minimumSizeHint().width()

@@ -69,7 +69,7 @@ class StatCard(QFrame):
         self._footer_frame = QWidget()
         self._footer_layout = QHBoxLayout(self._footer_frame)
         self._footer_layout.setContentsMargins(0, 10, 0, 0)
-        self._footer_layout.setSpacing(0)
+        self._footer_layout.setSpacing(14)  # 0 ran neighbours together: "Sales & serviceManagement"
         # Scoped by object name: a selector-less stylesheet cascades to every
         # child label, drawing a stray line/box around each of them.
         self._footer_frame.setObjectName("statCardFooter")

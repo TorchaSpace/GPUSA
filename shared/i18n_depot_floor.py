@@ -22,7 +22,7 @@ EN = {
     "depot.checkin.checked_in_msg": "Badge {badge} checked in at {time}.",
     "depot.checkin.checked_out_msg": "Badge {badge} checked out at {time}.",
     "depot.checkin.on_floor_count": "{on} / {total} on floor",
-    "depot.checkin.no_staff": "No staff are assigned to this warehouse. Set an employee's Location in Admin > Personnel.",
+    "depot.checkin.no_staff": "No staff are assigned to this warehouse. Set an employee's Location in Admin > Workforce.",
     "depot.checkin.no_punches": "No punches yet today.",
     "depot.checkin.state_on": "ON FLOOR",
     "depot.checkin.state_out": "CHECKED OUT",

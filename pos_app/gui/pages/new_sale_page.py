@@ -496,7 +496,7 @@ class NewSalePage(QWidget):
 
         bg = soften(p["surface_raised"])
         card = _ProductCard(bg, bg if out else _ACCENT_100, bg if out else _ACCENT_200, dimmed=out)
-        card.setMinimumHeight(164)
+        card.setMinimumHeight(204)  # room for a two-line name (the 56px avatar row + name + code + price)
         card.setEnabled(not out)
         card.clicked.connect(lambda _checked=False, item=product: self._add_to_cart(item))
 

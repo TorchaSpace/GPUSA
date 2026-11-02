@@ -129,7 +129,8 @@ class InventoryTable(QTableView):
         self.horizontalHeader().setStretchLastSection(True)
         header = self.horizontalHeader()
         header.setSectionResizeMode(QHeaderView.ResizeToContents)  # a title is never cut off
-        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(1, QHeaderView.Interactive)  # Stretch squeezed names to "Filtre ..."
+        self.setColumnWidth(1, 200)
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
         self.verticalHeader().setVisible(False)
 
