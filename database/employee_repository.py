@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError, enum_label, tr
-from database import audit_repository, authz
+from database import audit_repository, authz, remote, remote_people
 from database.connection import connection_scope
 from database.exceptions import DuplicateBadgeIdError, EmployeeNotFoundError, SelfActionError
 from shared.auth import Actor, normalize_badge_id
@@ -82,6 +82,8 @@ def location_choices(include_codes: bool = False) -> dict[str, list[str]]:
     """{"Warehouse": [names...], "Dealership": [names...]} that exist now -
     the pick list for the employee form. With include_codes, each place's
     code is listed too (what check_location() accepts)."""
+    if remote.active():
+        return remote_people.location_choices(include_codes)
     with connection_scope() as conn:
         warehouses = conn.execute("SELECT name, code FROM warehouses ORDER BY name").fetchall()
         dealerships = conn.execute("SELECT name, code FROM dealerships ORDER BY name").fetchall()
@@ -129,6 +131,8 @@ def _row_to_employee(row: sqlite3.Row) -> Employee:
 def get_by_badge_id(badge_id: str) -> Employee:
     """Return the Employee for `badge_id` (any letter case, stray spaces
     ignored), or raise EmployeeNotFoundError."""
+    if remote.active():
+        return remote_people.get_employee(badge_id)
     with connection_scope() as conn:
         row = find_row(conn, badge_id)
     if row is None:
@@ -138,6 +142,8 @@ def get_by_badge_id(badge_id: str) -> Employee:
 
 def list_all() -> list[Employee]:
     """Return every employee, e.g. for admin_app's Workforce page."""
+    if remote.active():
+        return remote_people.list_employees()
     with connection_scope() as conn:
         rows = conn.execute("SELECT * FROM employees ORDER BY name").fetchall()
     return [_row_to_employee(row) for row in rows]
@@ -172,6 +178,8 @@ def create(employee: Employee, *, check_location: bool = False) -> None:
     _validate_location_type(employee.location_type)
     _clean(employee)
     validate_fields(employee)
+    if remote.active():
+        return remote_people.create_employee(employee)
     if check_location:
         _check_location(employee)
     with connection_scope() as conn:
@@ -217,6 +225,8 @@ def update(employee: Employee, *, by: Actor | None = None, check_location: bool 
     _validate_location_type(employee.location_type)
     _clean(employee)
     validate_fields(employee)
+    if remote.active():
+        return remote_people.update_employee(employee)
     known = location_choices(include_codes=True) if check_location else None
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
@@ -264,6 +274,8 @@ def delete(badge_id: str, by: Actor | None = None) -> None:
     employee has attendance history (the `employees` row is a FK target of
     `attendance_records` - deactivate via update() instead), LastAdminError,
     and SelfActionError when `by` is the employee being removed."""
+    if remote.active():
+        return remote_people.delete_employee(badge_id)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:

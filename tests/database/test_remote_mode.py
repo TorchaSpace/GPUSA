@@ -62,6 +62,9 @@ class FakeClient:
     def put(self, path, body):
         return self._answer("PUT", path, body)
 
+    def delete(self, path):
+        return self._answer("DELETE", path)
+
 
 def on(answers: dict) -> FakeClient:
     client = FakeClient(answers)
@@ -394,3 +397,134 @@ def test_dealership_shortages_in_server_mode(db_connection):
     })
     [shortage] = requests.dealership_shortages()
     assert (shortage.on_hand, shortage.reorder_level, shortage.incoming_qty, shortage.requested_qty) == (1, 5, 3, 5)
+
+
+EMP = {"id": 3, "badge_id": "E-100", "name": "Mia Stone", "title": "Picker", "role": "Operations",
+       "location_type": "Warehouse", "location_name": "Main", "is_active": True}
+ACC = {"id": 5, "badge_id": "E-100", "name": "Mia Stone", "role": "cashier", "is_active": True, "employee_active": True,
+       "location_type": "Warehouse", "location_name": "Main", "failed_attempts": 0, "locked_until": None,
+       "last_sign_in_at": "2026-11-02T09:00:00.123456+00:00"}
+
+
+def test_employees_and_accounts_in_server_mode(db_connection):
+    from database import account_repository as accounts
+    from database import employee_repository as employees
+    from database.exceptions import (
+        AccountNotFoundError, DuplicateBadgeIdError, EmployeeNotFoundError, LastAdminError,
+    )
+    from shared.models import Employee
+
+    client = on({
+        ("GET", "/employees"): [EMP],
+        ("GET", "/employees/E-100"): EMP,
+        ("GET", "/employees/NOPE"): ServerError("none", 404),
+        ("GET", "/employees/locations"): {"Warehouse": [{"name": "Main", "code": "WH-01"}], "Dealership": []},
+        ("POST", "/employees"): EMP,
+        ("PATCH", "/employees/E-100"): EMP,
+        ("DELETE", "/employees/E-100"): None,
+        ("GET", "/accounts"): [ACC],
+        ("GET", "/accounts/without"): [{"badge_id": "E-9", "name": "New"}],
+        ("GET", "/accounts/events?limit=5"): [{"created_at": "2026-11-02T09:00:00+00:00", "badge_id": "E-100",
+                                               "name": "Mia", "event": "sign_in", "area": "pos", "terminal": "",
+                                               "detail": None}],
+        ("POST", "/accounts"): ACC,
+        ("POST", "/accounts/E-100/pin"): None,
+        ("POST", "/accounts/me/pin"): None,
+        ("POST", "/accounts/E-100/role"): None,
+        ("POST", "/accounts/E-100/active"): ServerError("That is the only active administrator; someone else must be one first.", 409),
+        ("POST", "/accounts/E-100/unlock"): None,
+        ("DELETE", "/accounts/E-100"): None,
+        ("DELETE", "/accounts/NOPE"): ServerError("none", 404),
+    })
+    assert [e.badge_id for e in employees.list_all()] == ["E-100"]
+    assert employees.get_by_badge_id(" e-100 ").name == "Mia Stone"
+    with pytest.raises(EmployeeNotFoundError):
+        employees.get_by_badge_id("nope")
+    assert employees.location_choices() == {"Warehouse": ["Main"], "Dealership": []}
+    assert employees.location_choices(include_codes=True)["Warehouse"] == ["Main", "WH-01"]
+    new = Employee(badge_id=" e-100 ", name=" Mia   Stone ", title=None, role="Operations",
+                   location_type="Warehouse", location_name="Main")
+    employees.create(new)
+    assert client.calls[-1] == ("POST", "/employees", {"name": "Mia Stone", "title": None, "role": "Operations",
+                                                       "location_type": "Warehouse", "location_name": "Main",
+                                                       "is_active": True, "badge_id": "E-100"})
+    employees.update(new)
+    assert client.calls[-1][:2] == ("PATCH", "/employees/E-100")
+    employees.delete("e-100")
+    assert client.calls[-1][:2] == ("DELETE", "/employees/E-100")
+    with pytest.raises(ValueError):
+        employees.create(Employee(badge_id="", name="x", title=None, role="Operations",
+                                  location_type="Warehouse", location_name="Main"))
+
+    account = accounts.list_accounts()[0]
+    assert (account.role, account.last_sign_in_at) == ("cashier", "2026-11-02T09:00:00.123Z")
+    assert accounts.get("e-100").id == 5
+    with pytest.raises(AccountNotFoundError):
+        accounts.get("nobody")
+    assert accounts.employees_without_account() == [("E-9", "New")]
+    assert accounts.list_events(5)[0]["created_at"] == "2026-11-02T09:00:00.000Z"
+    accounts.create_account(" e-100 ", "cashier", "2468")
+    assert client.calls[-1][2] == {"badge_id": "E-100", "role": "cashier", "pin": "2468"}
+    accounts.set_pin("E-100", "7391")
+    assert client.calls[-1][2] == {"pin": "7391"}
+    accounts.change_own_pin(None, "2468", "7391")
+    assert client.calls[-1][2] == {"current_pin": "2468", "new_pin": "7391"}
+    accounts.set_role("E-100", "admin", new_pin="135792")
+    assert client.calls[-1][2] == {"role": "admin", "new_pin": "135792"}
+    with pytest.raises(LastAdminError):
+        accounts.set_active("E-100", False)
+    accounts.unlock("E-100")
+    accounts.delete("E-100")
+    with pytest.raises(AccountNotFoundError):
+        accounts.delete("nope")
+
+
+def test_attendance_in_server_mode(db_connection):
+    from database import attendance_repository as attendance
+    from database.exceptions import AlreadyCheckedInError, NoOpenAttendanceRecordError
+
+    client = on({
+        ("POST", "/attendance/check-in"): {"id": 11},
+        ("POST", "/attendance/check-out"): {"id": 11},
+        ("GET", "/attendance/open"): [{"badge_id": "E-100", "name": "Mia", "role": "Operations",
+                                       "check_in_at": "2026-11-02T08:00:00+00:00"}],
+        ("GET", "/attendance/operator?badge_id=E-100&warehouse_code=WH-01"): {"badge_id": "E-100", "name": "Mia"},
+        ("POST", "/attendance/never"): None,
+    })
+    assert attendance.check_in("e-100", "early", warehouse_code="WH-01") == 11
+    assert client.calls[-1][2] == {"badge_id": "E-100", "note": "early", "warehouse_code": "WH-01"}
+    assert attendance.check_out("E-100") == 11
+    assert attendance.list_open()[0]["check_in_at"] == "2026-11-02T08:00:00.000Z"
+    assert attendance.operator_actor("e-100", warehouse_code="WH-01").badge_id == "E-100"
+
+    client.answers[("POST", "/attendance/check-in")] = ServerError("E-100 is already checked in.", 409)
+    client.answers[("POST", "/attendance/check-out")] = ServerError("E-100 is not checked in.", 409)
+    with pytest.raises(AlreadyCheckedInError):
+        attendance.check_in("E-100")
+    with pytest.raises(NoOpenAttendanceRecordError):
+        attendance.check_out("E-100")
+
+
+def test_roster_in_server_mode(db_connection):
+    from datetime import datetime, timezone
+
+    from database import attendance_repository as attendance
+
+    def answer(path):
+        return None
+
+    class Roster(FakeClient):
+        def get(self, path):
+            self.calls.append(("GET", path, None))
+            if path == "/employees":
+                return [EMP, {**EMP, "id": 4, "badge_id": "E-200", "name": "Zed"}]
+            assert path.startswith("/attendance/records?")
+            return [{"id": 1, "employee_id": 3, "badge_id": "E-100", "name": "Mia Stone",
+                     "check_in_at": "2026-11-02T08:00:00+00:00", "check_out_at": None}]
+
+    remote.use_server(Roster({}))
+    now = datetime(2026, 11, 2, 12, 0, tzinfo=timezone.utc)
+    roster = attendance.list_roster("2026-11-02", now=now)
+    assert [(r["badge_id"], r["status"]) for r in roster] == [("E-100", "Present"), ("E-200", "Off")]
+    events = attendance.list_punches("2026-11-02")
+    assert [(e["badge_id"], e["action"]) for e in events] == [("E-100", "IN")]

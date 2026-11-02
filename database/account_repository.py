@@ -37,7 +37,7 @@ from database.exceptions import (
     SignInFailedError,
     localized_auth,
 )
-from database import activity_repository, audit_repository, authz, employee_repository, remote
+from database import activity_repository, audit_repository, authz, employee_repository, remote, remote_people
 from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
@@ -228,6 +228,8 @@ def admin_exists() -> bool:
 
 
 def get(badge_id: str) -> Account:
+    if remote.active():
+        return remote_people.get_account(badge_id)
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     if row is None:
@@ -236,6 +238,8 @@ def get(badge_id: str) -> Account:
 
 
 def list_accounts() -> list[Account]:
+    if remote.active():
+        return remote_people.list_accounts()
     with connection_scope() as conn:
         rows = conn.execute(_SELECT + " ORDER BY e.name").fetchall()
     return [_row_to_account(row) for row in rows]
@@ -243,6 +247,8 @@ def list_accounts() -> list[Account]:
 
 def employees_without_account() -> list[tuple[str, str]]:
     """(badge_id, name) of active employees who can be given an account."""
+    if remote.active():
+        return remote_people.employees_without_account()
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT badge_id, name FROM employees e WHERE is_active = 1 "
@@ -254,6 +260,8 @@ def employees_without_account() -> list[tuple[str, str]]:
 def list_events(limit: int = 100) -> list[dict]:
     """Newest first: created_at, badge_id, name (if the badge is a known
     employee), event, area, terminal, detail."""
+    if remote.active():
+        return remote_people.list_events(limit)
     with connection_scope() as conn:
         rows = conn.execute(
             "SELECT v.created_at, v.badge_id, e.name, v.event, v.area, v.terminal, v.detail "
@@ -278,6 +286,8 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) 
     """Give an existing, active employee a sign-in account. Raises
     ValueError (bad PIN / role, already has an account, inactive employee),
     EmployeeNotFoundError."""
+    if remote.active():
+        return remote_people.create_account(badge_id, role, pin)
     badge_id = auth.normalize_badge_id(badge_id)
     _check_pin(pin, role)
     pin_hash = auth.hash_pin(pin)
@@ -541,6 +551,8 @@ def set_pin(badge_id: str, new_pin: str, by: Actor | None = None) -> None:
     active administrator, and it may not be the account itself
     (SelfActionError - a reset without the current PIN would let anyone at an
     unlocked screen take over the account; use change_own_pin, which asks)."""
+    if remote.active():
+        return remote_people.set_pin(badge_id, new_pin)
     _set_pin(badge_id, new_pin, by, own=False)
 
 
@@ -731,6 +743,8 @@ def _reset_with_secret(hash_key, secret, plausible, badge_id, new_pin, terminal,
 def change_own_pin(session: Session, current_pin: str, new_pin: str) -> None:
     """Signed-in person changes their own PIN; the current one must match
     (checked with the sign-in lockout against the account as it is NOW)."""
+    if remote.active():
+        return remote_people.change_own_pin(current_pin, new_pin)
     row = _confirm_current_pin(session, current_pin)
     _set_pin(row["badge_id"], new_pin, session.actor, own=True)
 
@@ -743,6 +757,8 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
     Raises ValueError (missing / weak / unchanged PIN), LastAdminError,
     SelfActionError (`by` changing their own role), SessionInvalidError
     (`by` is no longer an administrator)."""
+    if remote.active():
+        return remote_people.set_role(badge_id, role, new_pin)
     if role not in auth.ROLES:
         raise ValueError(f"Unknown role {role!r}")
     current = get(badge_id)
@@ -785,6 +801,8 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
 def set_active(badge_id: str, active: bool, by: Actor | None = None) -> None:
     """Switch an account on or off. Raises LastAdminError,
     SelfActionError (`by` switching themselves off), SessionInvalidError."""
+    if remote.active():
+        return remote_people.set_active(badge_id, active)
     def run(conn):
         row = _account_row(conn, badge_id)
         same = _check_actor(conn, by, row["badge_id"])
@@ -801,6 +819,8 @@ def set_active(badge_id: str, active: bool, by: Actor | None = None) -> None:
 
 
 def unlock(badge_id: str, by: Actor | None = None) -> None:
+    if remote.active():
+        return remote_people.unlock(badge_id)
     def run(conn):
         row = _account_row(conn, badge_id)
         _check_actor(conn, by, row["badge_id"])
@@ -814,6 +834,8 @@ def delete(badge_id: str, by: Actor | None = None) -> None:
     """Remove the account (the employee stays in Workforce). Raises
     LastAdminError, SelfActionError (`by` removing their own account),
     SessionInvalidError."""
+    if remote.active():
+        return remote_people.delete_account(badge_id)
     def run(conn):
         row = _account_row(conn, badge_id)
         same = _check_actor(conn, by, row["badge_id"])
