@@ -10,6 +10,7 @@ import logging
 from fastapi import FastAPI, Response, status
 
 from . import __version__, db
+from .activity_routes import changes_router, router as activity_router
 from .auth_routes import router as auth_router
 from .config import Settings, load_settings
 from .product_routes import router as product_router
@@ -43,6 +44,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(purchase_router)
     app.include_router(ledger_router)
     app.include_router(place_router)
+    app.include_router(activity_router)
+    app.include_router(changes_router)
 
     @app.get("/health")
     def health() -> dict:

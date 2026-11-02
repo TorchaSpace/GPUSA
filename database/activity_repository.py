@@ -18,6 +18,7 @@ import json
 import sqlite3
 from datetime import datetime, timedelta, timezone
 
+from database import remote, remote_activity
 from database.connection import connection_scope
 from shared.auth import Actor, actor_label
 from shared.formatting import to_db_timestamp
@@ -92,12 +93,16 @@ def _event(row: sqlite3.Row) -> ActivityEvent:
 
 
 def latest_id() -> int:
+    if remote.active():
+        return remote_activity.latest_id()
     with connection_scope() as conn:
         return int(conn.execute("SELECT COALESCE(MAX(id), 0) FROM activity_events").fetchone()[0])
 
 
 def list_since(after_id: int, limit: int = 200) -> list[ActivityEvent]:
     """Events with id > after_id, oldest first (what arrived since you last looked)."""
+    if remote.active():
+        return remote_activity.list_since(after_id, limit)
     with connection_scope() as conn:
         rows = conn.execute("SELECT * FROM activity_events WHERE id > ? ORDER BY id LIMIT ?",
                             (int(after_id), int(limit))).fetchall()
@@ -106,6 +111,8 @@ def list_since(after_id: int, limit: int = 200) -> list[ActivityEvent]:
 
 def list_recent(limit: int = 50, min_severity: str = "info", sources: tuple[str, ...] | None = None) -> list[ActivityEvent]:
     """Newest first, at least `min_severity`, optionally only from some sources."""
+    if remote.active():
+        return remote_activity.list_recent(limit, min_severity, sources)
     allowed = ACTIVITY_SEVERITIES[ACTIVITY_SEVERITIES.index(min_severity):]
     sql = f"SELECT * FROM activity_events WHERE severity IN ({','.join('?' * len(allowed))})"
     params: list = list(allowed)
@@ -119,6 +126,8 @@ def list_recent(limit: int = 50, min_severity: str = "info", sources: tuple[str,
 
 
 def count_since(after_id: int, min_severity: str = "notice") -> int:
+    if remote.active():
+        return remote_activity.count_since(after_id, min_severity)
     allowed = ACTIVITY_SEVERITIES[ACTIVITY_SEVERITIES.index(min_severity):]
     with connection_scope() as conn:
         return int(conn.execute(
@@ -127,7 +136,9 @@ def count_since(after_id: int, min_severity: str = "notice") -> int:
 
 
 def prune(days: int = RETENTION_DAYS) -> int:
-    """Delete events older than `days`; returns how many went."""
+    """Delete events older than `days`; returns how many went. (In server mode the server keeps its own feed.)"""
+    if remote.active():
+        return 0
     cutoff = to_db_timestamp(datetime.now(timezone.utc) - timedelta(days=days))
     with connection_scope() as conn:
         return conn.execute("DELETE FROM activity_events WHERE at < ?", (cutoff,)).rowcount
