@@ -910,3 +910,15 @@ def test_server_required_blocks_local_sign_in(monkeypatch):
         accounts.authenticate("B-001", "753159", "admin", "Admin")
     monkeypatch.setenv(paths.SERVER_REQUIRED_ENV, "0")
     assert paths.server_required() is False
+
+
+def test_server_address_skips_the_first_administrator_screen(monkeypatch):
+    """With a server address the local file is only a cache: an empty one must not offer to create a
+    "first administrator" there, who could never sign in to the server."""
+    from database import account_repository as accounts
+    from shared import paths
+
+    monkeypatch.setattr(paths, "get_server_url", lambda: None)
+    assert accounts.admin_exists() is False  # fresh local file, no server: the set-up screen
+    monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
+    assert accounts.admin_exists() is True   # server installation: straight to sign-in

@@ -43,6 +43,40 @@ account for 5 minutes; an administrator can unlock it in Settings.
 Admin and the POS sign out by themselves after 15 minutes with nobody at
 the screen (the POS asks "Who's on the till?" again, as at a shift change).
 
+## Sunucu PC'de hepsi birlikte (sunucu + Admin + POS + Depo)
+
+Linux sunucu PC'de (fish ya da bash, ikisinde de aynı komutlar) her biri ayrı terminal sekmesinde:
+
+```
+# 1. Sunucu
+cd ~/GPUSA; git pull
+sudo systemctl start docker      # bir kere 'sudo systemctl enable docker' derse açılışta kendisi başlar
+docker start gpusa-db
+cd server
+env (grep -v '^#' .env) .venv/bin/alembic upgrade head      # bash'te: env $(grep -v '^#' .env) ...
+.venv/bin/uvicorn gpusa_server.main:app --env-file .env --host 0.0.0.0 --port 8000
+
+# 2. Uygulama ortamı (sadece ilk sefer)
+cd ~/GPUSA
+python -m venv .venv
+.venv/bin/pip install -r requirements.txt
+
+# 3. Uygulamalar (her biri ayrı sekme)
+env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m admin_app.main
+env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m pos_app.main
+env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m depot_app.main
+```
+
+Girişte sunucudaki rozet ve PIN kullanılır (`python -m gpusa_server.create_admin` ile açılan).
+Başka bilgisayarlar aynı adresi PC'nin IP'siyle kullanır (`http://192.168.x.x:8000`, ya da
+Admin > Sunucu (test)). Qt "libEGL / xcb" hatasıyla kapanırsa (CachyOS/Arch):
+`sudo pacman -S --needed xcb-util-cursor libglvnd mesa libxkbcommon-x11`.
+
+Tek komutla aynısı: `bash start_all.sh` (ya da `bash start_all.sh admin pos`). Sunucuyu
+`server/scripts/start_server.sh` ile açar (Docker, Postgres, tablolar, sağlık kontrolü), uygulama
+ortamını ilk seferde kurar, uygulamaları `GPUSA_SERVER_URL` + `GPUSA_SERVER_REQUIRED=1` ile açar;
+Ctrl+C hepsini kapatır. `bash server/scripts/make_launcher.sh` masaüstüne "GPUSA Hepsi" simgesini de koyar.
+
 ## Testing
 
 ```
