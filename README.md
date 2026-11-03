@@ -50,6 +50,7 @@ Linux sunucu PC'de (fish ya da bash, ikisinde de aynı komutlar) her biri ayrı 
 ```
 # 1. Sunucu
 cd ~/GPUSA; git pull
+sudo systemctl start docker      # bir kere 'sudo systemctl enable docker' derse açılışta kendisi başlar
 docker start gpusa-db
 cd server
 env (grep -v '^#' .env) .venv/bin/alembic upgrade head      # bash'te: env $(grep -v '^#' .env) ...
