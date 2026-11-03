@@ -227,6 +227,11 @@ def admin_exists() -> bool:
     is when Admin shows its "create the first administrator" screen."""
     if remote.active():  # nobody is signed in to the server without one
         return True
+    if paths.get_server_url():
+        # A server installation: the administrators live on the server (the first one is made there with
+        # `python -m gpusa_server.create_admin`). This PC's own file is only a cache and may be empty, and
+        # a first administrator written to it could never sign in to the server.
+        return True
     with connection_scope() as conn:
         return bool(_active_admin_employee_ids(conn))
 
