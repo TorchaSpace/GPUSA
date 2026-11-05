@@ -321,7 +321,12 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) 
     return get(badge_id)
 
 
-def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admin") -> Session:
+def needs_setup_code() -> bool:
+    """True when the server asks for its setup code before the first administrator can be made."""
+    return bool(paths.get_server_url()) and remote_setup.needs_setup_code()
+
+
+def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admin", setup_code: str = "") -> Session:
     """The one-time setup on a fresh system: make `badge_id` the first
     administrator - an existing employee, or a new one named `name` - and
     sign them in. Refused once any active administrator exists."""
@@ -334,7 +339,7 @@ def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admi
         raise UserError("err.name_too_long", n=employee_repository.MAX_NAME_LENGTH)
     _check_pin(pin, "admin")
     if paths.get_server_url():  # the administrator is made on the server, then signs in there
-        remote_setup.create_first_admin(badge_id, name, pin, terminal)
+        remote_setup.create_first_admin(badge_id, name, pin, terminal, setup_code)
         return authenticate(badge_id, pin, auth.AREA_ADMIN, terminal)
     pin_hash = auth.hash_pin(pin)
 

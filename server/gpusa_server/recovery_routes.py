@@ -30,6 +30,8 @@ ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789"  # no 0/O, 1/I/L
 CODE_LENGTH = 16
 MIN_QUESTION, MAX_QUESTION, MIN_ANSWER = 8, 120, 4
 CODE_HASH, FAILED, LOCKED = "recovery.code_hash", "recovery.failed", "recovery.locked_until"
+ALL_FAILED = "recovery.failed_all"  # wrong guesses from anywhere; a high ceiling against many-address guessing
+ALL_LIMIT = MAX_FAILED_ATTEMPTS * 10
 QUESTION, ANSWER_HASH = "recovery.question", "recovery.answer_hash"
 ADMINS = frozenset({"admin"})
 ADMIN_AREA = frozenset({"admin"})
@@ -170,9 +172,13 @@ def reset(body: ResetIn, request: Request) -> dict:
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         conn.execute("SELECT pg_advisory_xact_lock(hashtext('gpusa-recovery'))")  # one guess at a time
-        values = _values(conn, hash_key, FAILED, LOCKED)
+        # Wrong guesses are counted per address, so one PC mistyping (or attacking) cannot lock everyone else
+        # out; a much higher ceiling over all addresses still stops guessing from many.
+        who = (request.client.host if request.client else "?")
+        f_key, l_key = f"{FAILED}:{who}", f"{LOCKED}:{who}"
+        values = _values(conn, hash_key, f_key, l_key, ALL_FAILED, LOCKED)
         stored = values.get(hash_key)
-        locked = values.get(LOCKED) or ""
+        locked = max(values.get(l_key) or "", values.get(LOCKED) or "")
         locked_until = datetime.fromisoformat(locked) if locked else None
         if not stored:
             error = _fail(404, "No recovery code has been set up." if body.method == "code"
@@ -182,10 +188,15 @@ def reset(body: ResetIn, request: Request) -> dict:
         else:
             ok = security.verify_pin(secret, stored) and plausible  # always hash, right or wrong
             if not ok:
-                failed = int(values.get(FAILED) or 0) + 1
+                failed = int(values.get(f_key) or 0) + 1
+                total = int(values.get(ALL_FAILED) or 0) + 1
                 expiry = now + timedelta(minutes=LOCK_MINUTES) if failed >= MAX_FAILED_ATTEMPTS else None
-                _put(conn, FAILED, "0" if expiry else str(failed))
-                _put(conn, LOCKED, expiry.isoformat() if expiry else "")
+                _put(conn, f_key, "0" if expiry else str(failed))
+                _put(conn, l_key, expiry.isoformat() if expiry else "")
+                if total >= ALL_LIMIT:  # lock everyone for a while
+                    _put(conn, LOCKED, (now + timedelta(minutes=LOCK_MINUTES)).isoformat())
+                    total = 0
+                _put(conn, ALL_FAILED, str(total))
                 _auth_log(conn, "recovery_failed", badge or None, "admin", body.terminal,
                           f"Locked for {LOCK_MINUTES} minutes" if expiry else None)
                 error = _fail(401, "That recovery code is wrong." if body.method == "code" else "That answer is wrong.")
@@ -208,7 +219,9 @@ def reset(body: ResetIn, request: Request) -> dict:
                                      (new_badge, row["employee_id"]))
                         detail += f"; badge changed from {row['badge_id']} to {new_badge}"
                         result_badge = new_badge
-                    _put(conn, FAILED, "0")
+                    _put(conn, f_key, "0")
+                    _put(conn, l_key, "")
+                    _put(conn, ALL_FAILED, "0")
                     _put(conn, LOCKED, "")
                     _auth_log(conn, "pin_reset", result_badge, "admin", body.terminal, detail)
     if error is not None:

@@ -77,6 +77,12 @@ Tek komutla aynısı: `bash start_all.sh` (ya da `bash start_all.sh admin pos`).
 ortamını ilk seferde kurar, uygulamaları `GPUSA_SERVER_URL` + `GPUSA_SERVER_REQUIRED=1` ile açar;
 Ctrl+C hepsini kapatır. `bash server/scripts/make_launcher.sh` masaüstüne "GPUSA Hepsi" simgesini de koyar.
 
+## Sunucu PC'de yedek ve güvenlik
+
+- **Yedek:** sunucu her açılışta günde bir kez `~/gpusa-backups/` altına yedek alır (son 14 tutulur). Elle: `bash server/scripts/backup_db.sh`. Geri yükleme (önce API'yi durdur): `bash server/scripts/restore_db.sh ~/gpusa-backups/<dosya>.dump`. Yedek dosyasını başkasıyla paylaşma, yedekleri ara sıra başka bir diske/USB'ye de kopyala.
+- **Kurulum kodu:** ilk açılışta `server/.env` dosyasına `GPUSA_SETUP_CODE` yazılır ve sunucu penceresinde gösterilir. İlk yöneticiyi Admin'den oluştururken bu kod sorulur, ağdaki yabancı ilk yönetici olamaz. Yönetici oluştuktan sonra kod gerekmez.
+- **Şifresiz ağ (HTTP):** PIN'ler ağ üzerinde şifresiz gider. Sadece güvendiğin ofis ağında kullan; başka şehirden erişim için sunucuyu internete açma, Tailscale/VPN kullan.
+
 ## Testing
 
 ```

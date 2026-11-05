@@ -18,13 +18,20 @@ def needs_first_admin() -> bool:
         return False
 
 
-def create_first_admin(badge_id: str, name: str, pin: str, terminal: str) -> None:
+def needs_setup_code() -> bool:
+    try:
+        return bool(remote_recovery._public("GET", "/setup/status").get("needs_setup_code"))
+    except remote.ServerUnavailableError:
+        return False
+
+
+def create_first_admin(badge_id: str, name: str, pin: str, terminal: str, setup_code: str = "") -> None:
     try:
         remote_recovery._public("POST", "/setup/first-admin", {"badge_id": badge_id, "name": name, "pin": pin,
-                                                               "terminal": terminal})
+                                                               "terminal": terminal, "setup_code": setup_code})
     except remote.ServerRefusedError as exc:
         if exc.status == 409:
             raise localized_auth("err.admin_exists") from None
-        if exc.status == 422:
+        if exc.status in (403, 422):
             raise ValueError(str(exc).removeprefix("The server said no: ")) from None
         raise
