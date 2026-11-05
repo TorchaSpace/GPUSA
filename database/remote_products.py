@@ -77,7 +77,7 @@ def levels_for_product(barcode: str) -> list[StockLevel]:
 
 
 def _move(direction: str, location: StockLocation, barcode: str, quantity: int, note: str | None,
-          reference: str | None, bin_code: str | None) -> int:
+          reference: str | None, bin_code: str | None, actor=None) -> int:
     def not_enough() -> Exception:
         # For a dispatch the server's 409 means "not enough stock here". (A receipt's
         # 409 - switched-off product, full or switched-off warehouse - keeps the
@@ -88,6 +88,8 @@ def _move(direction: str, location: StockLocation, barcode: str, quantity: int, 
     body = {"direction": direction, "barcode": str(barcode).strip(), "location_kind": location.kind,
             "location_code": location.code, "quantity": int(quantity), "note": note, "reference": reference,
             "bin_code": bin_code}
+    if actor is not None:  # the Floor operator who typed their badge; the server checks it again
+        body["operator_badge"] = actor.badge_id
     errors = {404: lambda: _not_found(location, barcode)}
     if direction == "dispatch":
         errors[409] = not_enough
@@ -104,10 +106,10 @@ def _not_found(location: StockLocation, barcode: str) -> Exception:
 
 
 def receive(location: StockLocation, barcode: str, quantity: int, note: str | None = None,
-            reference: str | None = None, bin_code: str | None = None) -> int:
-    return _move("receive", location, barcode, quantity, note, reference, bin_code)
+            reference: str | None = None, bin_code: str | None = None, actor=None) -> int:
+    return _move("receive", location, barcode, quantity, note, reference, bin_code, actor)
 
 
 def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | None = None,
-             reference: str | None = None, bin_code: str | None = None) -> int:
-    return _move("dispatch", location, barcode, quantity, note, reference, bin_code)
+             reference: str | None = None, bin_code: str | None = None, actor=None) -> int:
+    return _move("dispatch", location, barcode, quantity, note, reference, bin_code, actor)
