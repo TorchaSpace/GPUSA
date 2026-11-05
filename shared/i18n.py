@@ -141,6 +141,7 @@ _STRINGS: dict[str, dict[str, str]] = {
         # Forgotten PIN
         "signin.forgot": "Forgot your PIN or badge ID?",
         "recovery.erase_intro": "No way back in is set up for this account. You can start over: everything is saved to a backup file beside the database, the app is emptied, and you create a new administrator.",
+        "recovery.server_help": "Your data lives on the server, so nothing here can erase it. If the security question and the recovery code are not available, set a new PIN on the server PC: open a terminal in the GPUSA folder and run\n\ncd server && python -m gpusa_server.create_admin BADGE \"Full Name\"\n\nIt changes only that account's PIN; every product, sale and stock record stays. (Forgot the badge? On the server PC: docker exec -it gpusa-db psql -U postgres gpusa -c \"select e.badge_id, e.name from accounts a join employees e on e.id = a.employee_id where a.role = 'admin'\")",
         "recovery.erase_confirm": "I understand all data will be erased (a backup file is kept)",
         "recovery.erase": "Erase and start over",
         "recovery.title": "Get back into Admin",
@@ -151,6 +152,9 @@ _STRINGS: dict[str, dict[str, str]] = {
         "recovery.step2": "File found. Choose the administrator and set a new PIN.",
         "recovery.admin": "Administrator",
         "recovery.new_pin": "New PIN ({n}+ digits)",
+        "recovery.admin_or_badge": "Administrator (badge or full name)",
+        "recovery.new_badge": "New badge (optional)",
+        "recovery.new_badge_hint": "leave empty to keep the badge",
         "recovery.pin_again": "New PIN again",
         "recovery.mismatch": "The two PINs don't match.",
         "recovery.no_admins": "There is no active administrator. Close this window and restart Admin to create one.",

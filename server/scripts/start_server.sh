@@ -14,6 +14,7 @@ SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 SERVER_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
 CONTAINER="${GPUSA_DB_CONTAINER:-gpusa-db}"
 PORT="${GPUSA_PORT:-8000}"
+export GPUSA_PORT="$PORT"   # the API announces this port to PCs looking for the server
 VENV="${GPUSA_VENV:-$SERVER_DIR/.venv}"
 LOG="$HOME/gpusa-server.log"
 UVICORN_PID=""
@@ -138,7 +139,7 @@ case "$dbh" in *'"database":"ok"'*) ok "/health/db: veritabanı ok" ;; *) bad "/
 if ! command -v ufw >/dev/null 2>&1 || ! ufw status 2>/dev/null | grep -q "Status: active"; then
     :
 else
-    warn "ufw açık: başka bilgisayardan erişim için 'sudo ufw allow $PORT/tcp' gerekebilir"
+    warn "ufw açık: başka bilgisayardan erişim için 'sudo ufw allow $PORT/tcp' ve otomatik bulma için 'sudo ufw allow 47808/udp' gerekebilir"
 fi
 
 echo

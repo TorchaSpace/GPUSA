@@ -298,3 +298,52 @@ def test_a_locked_database_at_sign_in_shows_the_dialog_too(qapp, monkeypatch):
     monkeypatch.setattr(admin_main, "sign_in", locked)
     assert admin_main.main() == 1
     assert len(shown) == 1 and "database is locked" in shown[0][2]
+
+
+def test_forgot_pin_on_a_server_installation_never_offers_to_erase(qapp, monkeypatch):
+    """The data is on the server: 'start over' would only empty this PC's cache (and unsent sales), so it is
+    replaced by how to set a new PIN on the server PC - which changes the PIN and nothing else."""
+    from shared import paths
+    from admin_app.gui import auth_flow
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
+    monkeypatch.setattr(auth_flow.account_repository, "has_recovery_code", lambda: False)
+    monkeypatch.setattr(auth_flow.account_repository, "get_security_question", lambda: None)
+    monkeypatch.setattr(auth_flow.account_repository, "list_active_admins", lambda: [])
+    dialog = ResetAdminAccessDialog()
+    assert dialog.mode == "server_help" and "reset" not in dialog._modes
+    assert "create_admin" in dialog._intro.text()
+    assert not dialog._reset_host.isVisibleTo(dialog) and not dialog._form_host.isVisibleTo(dialog)
+    dialog.close()
+    dialog.deleteLater()
+
+
+def test_forgotten_badge_can_be_replaced_on_a_server_installation(qapp, monkeypatch):
+    """On a fresh PC the admin list is empty: type the name, set a new PIN and a new badge; the dialog hands
+    back the badge the server says to sign in with."""
+    from shared import paths
+    from admin_app.gui import auth_flow
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    seen = {}
+
+    def reset(secret, badge, pin, terminal, new_badge):
+        seen.update(secret=secret, badge=badge, pin=pin, new_badge=new_badge)
+        return "YENI-7"
+
+    monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
+    monkeypatch.setattr(auth_flow.account_repository, "has_recovery_code", lambda: True)
+    monkeypatch.setattr(auth_flow.account_repository, "get_security_question", lambda: None)
+    monkeypatch.setattr(auth_flow.account_repository, "list_active_admins", lambda: [])
+    monkeypatch.setattr(auth_flow.account_repository, "reset_with_recovery_code", reset)
+    dialog = ResetAdminAccessDialog()
+    assert dialog.mode == "code" and dialog.admin_input.isEditable()
+    dialog.code_input.setText("AAAA-BBBB-CCCC-DDDD")
+    dialog.admin_input.setEditText("Ali Emre")
+    dialog.new_badge_input.setText("yeni-7")
+    dialog.pin_input.setText("753159")
+    dialog.pin_again_input.setText("753159")
+    assert dialog.save() is True
+    assert seen["badge"] == "Ali Emre" and seen["new_badge"] == "yeni-7" and dialog.reset_badge == "YENI-7"
+    dialog.deleteLater()

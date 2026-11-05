@@ -59,12 +59,14 @@ def set_question(current_pin: str, question_text: str, answer: str) -> None:
         raise
 
 
-def reset(method: str, secret: str, badge_id: str, new_pin: str, terminal: str) -> None:
-    """method: 'code' or 'answer'."""
+def reset(method: str, secret: str, badge_id: str, new_pin: str, terminal: str, new_badge: str | None = None) -> str:
+    """method: 'code' or 'answer'. Returns the badge to sign in with (changed if `new_badge` was given)."""
     none_key, wrong_key = ("err.rc_none", "err.rc_wrong") if method == "code" else ("err.sq_none", "err.sq_wrong")
     try:
-        _public("POST", "/recovery/reset", {"method": method, "secret": secret, "badge_id": badge_id,
-                                            "new_pin": new_pin, "terminal": terminal})
+        answer = _public("POST", "/recovery/reset", {"method": method, "secret": secret, "badge_id": badge_id,
+                                                     "new_pin": new_pin, "terminal": terminal,
+                                                     "new_badge_id": new_badge or None})
+        return (answer or {}).get("badge_id") or badge_id
     except remote.ServerRefusedError as exc:
         text = str(exc)
         if exc.status == 404:
@@ -77,4 +79,6 @@ def reset(method: str, secret: str, badge_id: str, new_pin: str, terminal: str) 
             raise localized_auth(wrong_key) from None
         if exc.status == 403:
             raise localized_auth("err.not_active_admin") from None
+        if exc.status in (409, 422):
+            raise ValueError(text) from None
         raise

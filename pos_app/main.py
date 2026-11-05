@@ -8,7 +8,7 @@ from PySide6.QtWidgets import QApplication
 from pos_app.gui.main_window import MainWindow
 from pos_app.theme import ORGANIC_PALETTE
 from pos_app.gui.auth_flow import till_sign_in_dialog
-from database import dealership_repository, settings_repository
+from database import account_repository, dealership_repository, server_discovery, settings_repository
 from database.connection import check_database, pin_db_path
 from database.exceptions import DATABASE_ERRORS
 from shared import currency, i18n
@@ -38,6 +38,7 @@ def main() -> int:
     # A cashier signs in before the till opens (pos_app/gui/auth_flow.py).
     try:
         check_database()
+        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
         identity = load_dealership_identity()
         code = identity["code"] if identity else None
         if code:

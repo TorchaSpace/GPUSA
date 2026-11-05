@@ -31,7 +31,7 @@ def test_code_is_shown_once_and_resets_the_pin(client):
     assert len(code) == 19 and code.count("-") == 3
     assert client.get("/recovery/status").json()["has_code"] is True
     assert reset(client, "code", code.lower().replace("-", " "), "123").status_code == 422  # a weak PIN is refused
-    assert reset(client, "code", code).status_code == 204
+    assert reset(client, "code", code).json() == {"badge_id": "B-001"}
     assert sign_in(client, "753159") == 200 and sign_in(client, PIN) == 401
     assert sql("SELECT event FROM auth_events WHERE event IN ('recovery_code_created', 'pin_reset') ORDER BY id") == [
         ("recovery_code_created",), ("pin_reset",)]
@@ -51,7 +51,7 @@ def test_wrong_guesses_lock_recovery_for_both_methods(client):
     locked = reset(client, "answer", "fistik")
     assert locked.status_code == 423 and "locked" in locked.json()["detail"]
     sql("UPDATE app_settings SET value = '' WHERE key = 'recovery.locked_until'")
-    assert reset(client, "answer", " FISTIK ").status_code == 204  # case, accents and spaces don't matter
+    assert reset(client, "answer", " FISTIK ").status_code == 200  # case, accents and spaces don't matter
 
 
 def test_question_needs_the_current_pin_and_valid_text(client):
@@ -74,7 +74,7 @@ def test_nothing_set_up_and_non_admin_targets(client):
     refused = reset(client, "code", code, badge="M-1")
     assert refused.status_code == 403
     assert reset(client, "code", code, badge="nobody").status_code == 403
-    assert reset(client, "code", code).status_code == 204
+    assert reset(client, "code", code).json() == {"badge_id": "B-001"}
 
 
 def test_only_signed_in_administrators_make_secrets(client):
@@ -85,3 +85,39 @@ def test_only_signed_in_administrators_make_secrets(client):
         "current_pin": "2468", "question": "Name of my first pet?", "answer": "Rex1"}).status_code == 403
     assert client.post("/recovery/code").status_code in (401, 403)
     assert client.get("/settings").json() == {}  # recovery keys are never served
+
+
+def _code(client):
+    return client.post("/recovery/code", headers=login(client)).json()["code"]
+
+
+def test_reset_can_change_the_badge_and_keeps_the_account(client):
+    before = sql("SELECT id FROM employees WHERE upper(badge_id) = 'B-001'")
+    code = _code(client)
+    r = client.post("/recovery/reset", json={"method": "code", "secret": code, "badge_id": "b-001",
+                                             "new_pin": "753159", "new_badge_id": " yeni-7 "})
+    assert r.status_code == 200 and r.json() == {"badge_id": "YENI-7"}
+    assert sql("SELECT id FROM employees WHERE upper(badge_id) = 'YENI-7'") == before  # same employee row
+    assert client.post("/auth/login", json={"badge_id": "YENI-7", "pin": "753159", "area": "admin"}).status_code == 200
+    assert client.post("/auth/login", json={"badge_id": "B-001", "pin": "753159", "area": "admin"}).status_code != 200
+
+
+def test_reset_finds_the_admin_by_name_when_the_badge_is_forgotten(client):
+    name = sql("SELECT name FROM employees WHERE upper(badge_id) = 'B-001'")[0][0]
+    code = _code(client)
+    r = client.post("/recovery/reset", json={"method": "code", "secret": code, "badge_id": name.upper(),
+                                             "new_pin": "753159"})
+    assert r.status_code == 200 and r.json() == {"badge_id": "B-001"}
+
+
+def test_reset_refuses_a_badge_someone_else_has(client):
+    h = login(client)
+    r = client.post("/employees", headers=h, json={"badge_id": "M-1", "name": "Mo", "role": "Logistics",
+                                                  "location_type": "Warehouse", "location_name": "Main"})
+    assert r.status_code == 201, r.text
+    other = "m-1"
+    code = _code(client)
+    r = client.post("/recovery/reset", json={"method": "code", "secret": code, "badge_id": "B-001",
+                                             "new_pin": "753159", "new_badge_id": other})
+    assert r.status_code == 409
+    assert sign_in(client, PIN) == 200  # nothing changed

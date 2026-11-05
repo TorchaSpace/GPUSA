@@ -5,7 +5,7 @@ import sys
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication
 
-from database import settings_repository
+from database import account_repository, server_discovery, settings_repository
 from database.connection import check_database, pin_db_path
 from database.exceptions import DATABASE_ERRORS
 from depot_app.gui.main_window import MainWindow
@@ -33,6 +33,7 @@ def main() -> int:
     currency.set_currency(settings_repository.safe_currency())
     try:
         check_database()
+        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
         window = MainWindow()
     except DATABASE_ERRORS as exc:  # a damaged or locked file: say so, never crash without a window
         show_database_error(exc)

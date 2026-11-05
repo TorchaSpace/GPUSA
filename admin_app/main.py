@@ -12,7 +12,7 @@ from admin_app.gui.motion import install_dialog_fade
 from admin_app.theme import CLASSICAL_PALETTE
 from shared.dealership_bootstrap import register_sidecars_beside_this_exe
 from shared.warehouse_bootstrap import register_warehouse_sidecars_beside_this_exe
-from database import settings_repository
+from database import account_repository, server_discovery, settings_repository
 from database.connection import check_database, pin_db_path
 from database.exceptions import DATABASE_ERRORS
 from shared import currency, i18n
@@ -47,6 +47,7 @@ def main() -> int:
     # the first administrator is created here on a fresh system.
     try:
         check_database()
+        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
         session = sign_in()
         if session is None:
             return 0
