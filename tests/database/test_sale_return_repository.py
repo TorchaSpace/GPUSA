@@ -39,7 +39,7 @@ def sale():
     stock_repository.transfer(UNASSIGNED, SHELF, "RICE", 10)
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
     accounts.create_first_admin("B-1", "Erol Admin", "482913")
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     return sales.finalize_transaction(
         Transaction(items=[LineItem("OIL", "Oil", 10.0, 3), LineItem("RICE", "Rice", 4.0, 2)], payment_method="cash"),
         SHELF, CASHIER)

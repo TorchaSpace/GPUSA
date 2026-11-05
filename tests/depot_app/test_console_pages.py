@@ -44,8 +44,8 @@ def world():
                      "VALUES ('warehouse', 'WH-01', 'TAPE', 0)")
     account_repository.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(Employee("M-1", "Murat", "Operations", "Warehouse", "merkez"))
-    account_repository.create_account("M-1", "depot_manager", "7351")
-    session = account_repository.authenticate("M-1", "7351", auth.AREA_DEPOT_CONSOLE, "Depot WH-01")
+    account_repository.create_account("M-1", "depot_manager", "735102")
+    session = account_repository.authenticate("M-1", "735102", auth.AREA_DEPOT_CONSOLE, "Depot WH-01")
     current_session.set(session)
     attendance_repository.check_in("M-1")
     stock_repository.transfer(UNASSIGNED, w.location, "BOX", 280, actor=session.actor)
@@ -145,7 +145,7 @@ def test_portal_unlock_checks_the_pin(qapp, world):
     dialog.pin_input.setText("0000")
     dialog.try_sign_in()
     assert dialog.error_label.text().startswith("Badge or PIN is wrong.")
-    dialog.pin_input.setText("7351")
+    dialog.pin_input.setText("735102")
     dialog.try_sign_in()
     assert dialog.session == session
     assert account_repository.list_events(1)[0]["event"] == "pin_confirmed"

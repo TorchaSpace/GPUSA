@@ -27,7 +27,7 @@ def settings(qapp):
     admin = account_repository.create_first_admin("A-1", "Erol", "482913")
     current_session.set(admin)
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
-    account_repository.create_account("B-2", "cashier", "1357")
+    account_repository.create_account("B-2", "cashier", "135702")
     from admin_app.gui.pages.settings_page import SettingsPage
 
     page = SettingsPage()
@@ -92,7 +92,7 @@ def test_promoting_to_admin_asks_for_a_new_pin_and_sets_it(settings, silent_boxe
     assert account_repository.get("B-2").role == "admin"
     assert account_repository.authenticate("B-2", "739184", auth.AREA_ADMIN, "Admin").role == "admin"
     with pytest.raises(Exception):  # the old cashier PIN is no key to Admin
-        account_repository.authenticate("B-2", "1357", auth.AREA_ADMIN, "Admin")
+        account_repository.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
 
 
 def test_cancelling_the_promotion_pin_changes_nothing(settings, silent_boxes, monkeypatch):
@@ -101,7 +101,7 @@ def test_cancelling_the_promotion_pin_changes_nothing(settings, silent_boxes, mo
     _patch_pin_popup(monkeypatch, "739184", accept=False)
     settings.change_role()
     assert account_repository.get("B-2").role == "cashier"
-    assert account_repository.authenticate("B-2", "1357", auth.AREA_POS, "POS").role == "cashier"
+    assert account_repository.authenticate("B-2", "135702", auth.AREA_POS, "POS").role == "cashier"
 
 
 def test_a_weak_promotion_pin_is_refused_by_the_popup_itself(qapp):
@@ -237,14 +237,14 @@ def test_a_switched_off_dealership_closes_its_till(qapp):
 
     account_repository.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(Employee("B-2", "Selin", "Sales & service", "Dealership", "Harbor Point"))
-    account_repository.create_account("B-2", "cashier", "5831")
+    account_repository.create_account("B-2", "cashier", "583102")
     dealership_repository.create(Dealership(code="001", name="Harbor Point", region="Coastal", city="Norfolk"))
 
     assert till_dealership_problem("001") is None and till_dealership_problem(None) is None
     assert till_dealership_problem("999") is None  # not registered (yet): don't block a dev till
     dialog = till_sign_in_dialog("001", "Harbor Point")
     dialog.badge_input.setText("B-2")
-    dialog.pin_input.setText("5831")
+    dialog.pin_input.setText("583102")
     dialog.try_sign_in()
     assert dialog.session is not None
 
@@ -254,7 +254,7 @@ def test_a_switched_off_dealership_closes_its_till(qapp):
     assert till_dealership_problem("001")
     dialog = till_sign_in_dialog("001", "Harbor Point")
     dialog.badge_input.setText("B-2")
-    dialog.pin_input.setText("5831")
+    dialog.pin_input.setText("583102")
     dialog.try_sign_in()
     assert dialog.session is None and "switched off" in dialog.error_label.text()
     off.is_active = True

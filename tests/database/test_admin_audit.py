@@ -56,8 +56,8 @@ def test_the_trail_cannot_be_rewritten():
 def _staff():
     for badge, name in (("C-1", "Can"), ("C-2", "Cem"), ("C-3", "Cana")):
         employee_repository.create(Employee(badge, name, "Sales & service", "Dealership", "HQ"))
-    account_repository.create_account("C-1", "cashier", "1357")
-    account_repository.create_account("C-2", "cashier", "1357")
+    account_repository.create_account("C-1", "cashier", "135702")
+    account_repository.create_account("C-2", "cashier", "135702")
 
 
 def test_employee_account_and_price_band_deletions_are_audited():

@@ -45,7 +45,7 @@ def shop():
     stock_repository.transfer(UNASSIGNED, SHELF, "RICE", 10)
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
     accounts.create_first_admin("B-1", "Erol Admin", "482913")
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
 
 
 def _sale(*lines) -> Transaction:

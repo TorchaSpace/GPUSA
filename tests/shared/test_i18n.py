@@ -227,10 +227,10 @@ def test_role_and_area_labels_follow_the_language(turkish):
 
     assert auth.ROLE_LABELS["admin"] == "Y\u00f6netici" and auth.role_label("cashier") == "Kasiyer"
     assert auth.AREA_LABELS.get("pos") == "kasay\u0131" and auth.AREA_LABELS.get("nope") is None
-    assert auth.pin_problem("12", "cashier") == "Bu PIN, kasiyer hesaplar\u0131 i\u00e7in en az 4 haneli olmal\u0131."
+    assert auth.pin_problem("12", "cashier") == "Bu PIN, kasiyer hesaplar\u0131 i\u00e7in en az 6 haneli olmal\u0131."
     i18n.set_language("en")
     assert auth.ROLE_LABELS == {"admin": "Administrator", "depot_manager": "Depot manager", "cashier": "Cashier"}
-    assert auth.pin_problem("12", "cashier") == "A cashier PIN needs at least 4 digits."
+    assert auth.pin_problem("12", "cashier") == "A cashier PIN needs at least 6 digits."
 
 
 def test_user_error_is_a_value_error_with_english_args_and_translated_text():

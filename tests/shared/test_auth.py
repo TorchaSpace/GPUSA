@@ -20,7 +20,7 @@ def test_hash_and_verify():
 
 
 @pytest.mark.parametrize("pin, role, ok", [
-    ("4829", "cashier", True), ("482", "cashier", False), ("4829", "admin", False), ("482913", "admin", True),
+    ("482913", "cashier", True), ("4829", "cashier", False), ("482", "cashier", False), ("4829", "admin", False), ("482913", "admin", True),
     ("12a4", "cashier", False), ("1111", "cashier", False), ("1234", "cashier", False), ("9876", "cashier", False),
     ("٤٨٢٩", "cashier", False), ("4" * 13, "cashier", False),
 ])

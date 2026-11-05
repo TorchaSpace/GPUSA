@@ -29,7 +29,7 @@ from gpusa_server.main import create_app  # noqa: E402
 from test_server_writes import PIN, URL, _schema, client, login, move, sql  # noqa: E402,F401
 
 SECRET = "x" * 40
-CASHIER_PIN = "2468"
+CASHIER_PIN = "246802"
 
 # Open on purpose: nothing secret is behind these (health, sign-in itself, the recovery/set-up doors that
 # have their own guards and tests, the public store settings).
@@ -142,6 +142,8 @@ def test_a_switched_off_or_demoted_account_loses_access_on_its_very_next_request
     assert client.post("/accounts/C-1/active", headers=admin, json={"active": True}).status_code == 204
     # demoted: the token still says "cashier"/"pos"; the account now is a depot manager
     cass2 = world["sign_in"]("C-1", "pos")
+    assert client.post("/accounts/C-1/role", headers=admin, json={"role": "depot_manager"}).status_code == 422
+    sql("UPDATE employees SET location_type = 'Warehouse', location_name = 'WH-01' WHERE badge_id = 'C-1'")
     assert client.post("/accounts/C-1/role", headers=admin, json={"role": "depot_manager"}).status_code == 204
     assert client.post("/sales", headers=cass2, json=sale_body("CST-04", "demoted-0001")).status_code in (401, 403)
     assert client.get("/sales", headers=cass2, params={"since": "2020-01-01T00:00:00Z",
@@ -152,9 +154,9 @@ def test_a_switched_off_or_demoted_account_loses_access_on_its_very_next_request
 def test_changing_a_pin_signs_that_person_out_everywhere(world, client):
     admin, cass = world["admin"], world["cass"]
     assert client.get("/products", headers=cass).status_code == 200
-    assert client.post("/accounts/C-1/pin", headers=admin, json={"pin": "1357"}).status_code == 204
+    assert client.post("/accounts/C-1/pin", headers=admin, json={"pin": "135702"}).status_code == 204
     assert client.get("/products", headers=cass).status_code == 401      # the old token stopped working
-    r = client.post("/auth/login", json={"badge_id": "C-1", "pin": "1357", "area": "pos"})
+    r = client.post("/auth/login", json={"badge_id": "C-1", "pin": "135702", "area": "pos"})
     assert r.status_code == 200
     assert client.get("/products", headers={"Authorization": "Bearer " + r.json()["token"]}).status_code == 200
 

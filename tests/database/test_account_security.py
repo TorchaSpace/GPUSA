@@ -36,7 +36,7 @@ def people():
 # --- 1. promotion to administrator ------------------------------------------------
 
 def test_promoting_to_admin_needs_a_new_admin_pin_in_the_same_call(people):
-    accounts.create_account("B-2", "cashier", "1357")  # valid for a cashier, too short for an admin
+    accounts.create_account("B-2", "cashier", "135702")  # valid for a cashier, too short for an admin
     with pytest.raises(ValueError):
         accounts.set_role("B-2", "admin", by=people.actor)  # no PIN given
     with pytest.raises(ValueError):
@@ -45,13 +45,13 @@ def test_promoting_to_admin_needs_a_new_admin_pin_in_the_same_call(people):
         accounts.set_role("B-2", "admin", by=people.actor, new_pin="73918")  # 5 digits: still short
     assert accounts.get("B-2").role == "cashier"
     # nothing was half-applied: the cashier PIN still works as a cashier PIN
-    assert accounts.authenticate("B-2", "1357", auth.AREA_POS, "POS").role == "cashier"
+    assert accounts.authenticate("B-2", "135702", auth.AREA_POS, "POS").role == "cashier"
 
     accounts.set_role("B-2", "admin", by=people.actor, new_pin="739184")
     assert accounts.get("B-2").role == "admin"
     assert accounts.authenticate("B-2", "739184", auth.AREA_ADMIN, "Admin").role == "admin"
     with pytest.raises(SignInFailedError):  # the old cashier PIN is gone
-        accounts.authenticate("B-2", "1357", auth.AREA_ADMIN, "Admin")
+        accounts.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
 
 
 def test_promotion_pin_must_differ_from_the_current_one(people):
@@ -93,26 +93,26 @@ def test_an_admin_cannot_demote_switch_off_or_remove_themselves(people):
 
 def test_the_actor_is_rechecked_in_the_database(people):
     accounts.create_account("B-3", "admin", "739184")
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     stale = Actor("B-3", "Murat Yılmaz")
     accounts.set_role("B-3", "cashier", by=people.actor)  # B-3's old session still says admin
     with pytest.raises(SessionInvalidError):
-        accounts.set_pin("B-2", "6042", by=stale)
+        accounts.set_pin("B-2", "604271", by=stale)
     with pytest.raises(SessionInvalidError):
         accounts.set_active("B-2", False, by=stale)
     with pytest.raises(SessionInvalidError):
-        accounts.create_account("B-3", "cashier", "5831", by=stale)
+        accounts.create_account("B-3", "cashier", "583102", by=stale)
     # but anyone may change their OWN pin - with the current one (set_pin refuses a self-reset)
     with pytest.raises(SessionInvalidError):  # a demoted admin cannot "reset" even their own PIN
-        accounts.set_pin("B-3", "6042", by=stale)
+        accounts.set_pin("B-3", "604271", by=stale)
     own = accounts.authenticate("B-3", "739184", auth.AREA_POS, "POS")
-    accounts.change_own_pin(own, "739184", "6042")
-    assert accounts.authenticate("B-3", "6042", auth.AREA_POS, "POS")
+    accounts.change_own_pin(own, "739184", "604271")
+    assert accounts.authenticate("B-3", "604271", auth.AREA_POS, "POS")
 
 
 def test_a_switched_off_actor_cannot_act(people):
     accounts.create_account("B-3", "admin", "739184")
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     accounts.set_active("B-3", False, by=people.actor)
     with pytest.raises(SessionInvalidError):
         accounts.unlock("B-2", by=Actor("B-3", "Murat"))
@@ -130,8 +130,8 @@ def test_recovery_code_and_question_recheck_the_session(people):
 
 
 def test_is_session_valid_follows_the_account(people):
-    accounts.create_account("B-2", "cashier", "5831")
-    session = accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    accounts.create_account("B-2", "cashier", "583102")
+    session = accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     assert accounts.is_session_valid(session) and accounts.is_session_valid(people)
     assert not accounts.is_session_valid(None)
     accounts.require_valid_session(session)
@@ -157,23 +157,23 @@ def test_is_session_valid_follows_the_account(people):
 
 
 def test_change_own_pin_uses_the_lockout_and_the_live_account(people):
-    accounts.create_account("B-2", "cashier", "5831")
-    session = accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    accounts.create_account("B-2", "cashier", "583102")
+    session = accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     for _ in range(auth.MAX_FAILED_ATTEMPTS - 1):
         with pytest.raises(SignInFailedError):
-            accounts.change_own_pin(session, "0000", "6042")
+            accounts.change_own_pin(session, "0000", "604271")
     with pytest.raises(AccountLockedError):  # guessing the "current PIN" locks like sign-in does
-        accounts.change_own_pin(session, "0000", "6042")
+        accounts.change_own_pin(session, "0000", "604271")
     accounts.unlock("B-2", by=people.actor)
     accounts.set_active("B-2", False, by=people.actor)
     with pytest.raises(SessionInvalidError):
-        accounts.change_own_pin(session, "5831", "6042")
+        accounts.change_own_pin(session, "583102", "604271")
 
 
 # --- 10. sign-in secrecy, recovery -----------------------------------------------
 
 def test_failures_say_the_same_for_unknown_and_real_badges_every_time(people):
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     messages = set()
     for _ in range(auth.MAX_FAILED_ATTEMPTS - 1):  # real badge: all attempts before the lock
         with pytest.raises(SignInFailedError) as real:
@@ -232,9 +232,9 @@ def test_recovery_failures_and_successes_share_one_counter_by_design(people):
 # --- 3. badge normalisation ---------------------------------------------------------
 
 def test_badges_are_matched_in_any_case_with_stray_spaces(people):
-    accounts.create_account(" b-2 ", "cashier", "5831")
+    accounts.create_account(" b-2 ", "cashier", "583102")
     assert accounts.get("b-2").badge_id == "B-2"
-    session = accounts.authenticate("  b-2", "5831", auth.AREA_POS, "POS")
+    session = accounts.authenticate("  b-2", "583102", auth.AREA_POS, "POS")
     assert session.badge_id == "B-2"
     accounts.set_active("b-2", False, by=people.actor)
     assert not accounts.get("B-2").is_active
@@ -246,9 +246,9 @@ def test_legacy_lowercase_rows_still_sign_in():
         conn.execute("INSERT INTO employees (badge_id, name, role, location_type, location_name) "
                      "VALUES ('b-9', 'Old Timer', 'Operations', 'Warehouse', 'WH-01')")
     accounts.create_first_admin("A-1", "Erol", "482913")
-    accounts.create_account("B-9", "cashier", "5831")
-    assert accounts.authenticate("B-9", "5831", auth.AREA_POS, "POS").badge_id == "b-9"
-    assert accounts.authenticate("b-9", "5831", auth.AREA_POS, "POS").badge_id == "b-9"
+    accounts.create_account("B-9", "cashier", "583102")
+    assert accounts.authenticate("B-9", "583102", auth.AREA_POS, "POS").badge_id == "b-9"
+    assert accounts.authenticate("b-9", "583102", auth.AREA_POS, "POS").badge_id == "b-9"
     assert employee_repository.get_by_badge_id("B-9").badge_id == "b-9"
 
 
@@ -268,17 +268,17 @@ def test_signing_in_upgrades_a_hash_made_with_fewer_iterations(monkeypatch):
 
     employee_repository.create(Employee("B-7", "Old Hash", "Sales & service", "Dealership", "Harbor Point"))
     accounts.create_first_admin("B-1", "Erol Admin", "482913")
-    accounts.create_account("B-7", "cashier", "5831")
+    accounts.create_account("B-7", "cashier", "583102")
     with connection.connection_scope() as conn:
         conn.execute("UPDATE accounts SET pin_hash = ? WHERE employee_id = (SELECT id FROM employees WHERE badge_id = 'B-7')",
-                     (_auth.hash_pin("5831", iterations=100),))
+                     (_auth.hash_pin("583102", iterations=100),))
         conn.commit()
-    accounts.authenticate("B-7", "5831", "pos", "Till 1")
+    accounts.authenticate("B-7", "583102", "pos", "Till 1")
     with connection.connection_scope() as conn:
         stored = conn.execute("SELECT pin_hash FROM accounts a JOIN employees e ON e.id = a.employee_id "
                               "WHERE e.badge_id = 'B-7'").fetchone()[0]
     assert stored.split("$")[1] == str(_auth.PBKDF2_ITERATIONS)
-    accounts.authenticate("B-7", "5831", "pos", "Till 1")  # still works after the upgrade
+    accounts.authenticate("B-7", "583102", "pos", "Till 1")  # still works after the upgrade
 
 
 # --- the wrong-PIN count is cleared by ANY correct PIN check ------------------------
@@ -323,6 +323,6 @@ def test_a_reset_of_your_own_pin_needs_the_current_pin_flow(people):
     assert accounts.authenticate("B-1", "913574", auth.AREA_ADMIN, "Admin")
 
     employee_repository.create(Employee("B-4", "Ece", "Management", "Dealership", "HQ"))
-    accounts.create_account("B-4", "cashier", "5831")
-    accounts.set_pin("B-4", "6042", by=people.actor)  # an administrator may still reset someone else's
-    assert accounts.authenticate("B-4", "6042", auth.AREA_POS, "POS")
+    accounts.create_account("B-4", "cashier", "583102")
+    accounts.set_pin("B-4", "604271", by=people.actor)  # an administrator may still reset someone else's
+    assert accounts.authenticate("B-4", "604271", auth.AREA_POS, "POS")

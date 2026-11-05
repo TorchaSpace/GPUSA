@@ -259,7 +259,7 @@ def test_updating_an_already_inactive_employee_does_not_touch_attendance():
 def test_deleting_an_employee_removes_their_account():
     accounts.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(_employee("B-2"))
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     employee_repository.delete("B-2")
     with pytest.raises(AccountNotFoundError):
         accounts.get("B-2")

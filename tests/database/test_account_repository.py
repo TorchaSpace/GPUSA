@@ -57,18 +57,18 @@ def test_no_admin_on_a_fresh_system():
 
 
 def test_cashier_signs_in_at_the_till_only(people):
-    accounts.create_account("B-2", "cashier", "5831")
-    session = accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS 001")
+    accounts.create_account("B-2", "cashier", "583102")
+    session = accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS 001")
     assert session.role == "cashier" and accounts.get("B-2").last_sign_in_at
     with pytest.raises(NotAllowedError):
-        accounts.authenticate("B-2", "5831", auth.AREA_ADMIN, "Admin")
+        accounts.authenticate("B-2", "583102", auth.AREA_ADMIN, "Admin")
     with pytest.raises(NotAllowedError):
-        accounts.authenticate("B-2", "5831", auth.AREA_DEPOT_CONSOLE, "Depot WH-01")
+        accounts.authenticate("B-2", "583102", auth.AREA_DEPOT_CONSOLE, "Depot WH-01")
 
 
 def test_wrong_badge_and_wrong_pin_look_the_same(people):
     with pytest.raises(SignInFailedError) as unknown:
-        accounts.authenticate("B-404", "5831", auth.AREA_POS, "POS")
+        accounts.authenticate("B-404", "583102", auth.AREA_POS, "POS")
     with pytest.raises(SignInFailedError) as wrong:
         accounts.authenticate("B-1", "000000", auth.AREA_ADMIN, "Admin")
     assert str(unknown.value).startswith("Badge or PIN is wrong.")
@@ -78,7 +78,7 @@ def test_wrong_badge_and_wrong_pin_look_the_same(people):
 
 
 def test_lockout_after_repeated_wrong_pins_and_unlock(people):
-    accounts.create_account("B-3", "depot_manager", "7351")
+    accounts.create_account("B-3", "depot_manager", "735102")
     for attempt in range(auth.MAX_FAILED_ATTEMPTS - 1):
         with pytest.raises(SignInFailedError) as info:
             accounts.authenticate("B-3", "9999", auth.AREA_DEPOT_CONSOLE, "Depot")
@@ -87,32 +87,32 @@ def test_lockout_after_repeated_wrong_pins_and_unlock(people):
     with pytest.raises(AccountLockedError):
         accounts.authenticate("B-3", "9999", auth.AREA_DEPOT_CONSOLE, "Depot")
     with pytest.raises(AccountLockedError):  # even the right PIN, while locked
-        accounts.authenticate("B-3", "7351", auth.AREA_DEPOT_CONSOLE, "Depot")
+        accounts.authenticate("B-3", "735102", auth.AREA_DEPOT_CONSOLE, "Depot")
     assert accounts.is_locked(accounts.get("B-3"))
     accounts.unlock("B-3", by=people.actor)
-    assert accounts.authenticate("B-3", "7351", auth.AREA_DEPOT_CONSOLE, "Depot").name == "Murat Yılmaz"
+    assert accounts.authenticate("B-3", "735102", auth.AREA_DEPOT_CONSOLE, "Depot").name == "Murat Yılmaz"
     assert accounts.get("B-3").failed_attempts == 0
 
 
 def test_lock_expires(people):
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     past = to_db_timestamp(datetime.now(timezone.utc) - timedelta(minutes=1))
     with connection.connection_scope() as conn:
         conn.execute("UPDATE accounts SET locked_until = ? WHERE id = ?", (past, accounts.get("B-2").id))
-    assert accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS").badge_id == "B-2"
+    assert accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS").badge_id == "B-2"
 
 
 def test_switched_off_account_or_employee_is_refused(people):
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
     accounts.set_active("B-2", False, by=people.actor)
     with pytest.raises(AccountDisabledError):
-        accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+        accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     accounts.set_active("B-2", True)
     selin = employee_repository.get_by_badge_id("B-2")
     selin.is_active = False
     employee_repository.update(selin)
     with pytest.raises(AccountDisabledError):
-        accounts.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+        accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS")
 
 
 def test_create_account_validation(people):
@@ -121,14 +121,14 @@ def test_create_account_validation(people):
     with pytest.raises(ValueError):
         accounts.create_account("B-2", "admin", "5831")  # admin PIN too short
     with pytest.raises(ValueError):
-        accounts.create_account("B-1", "cashier", "5831")  # already has one
+        accounts.create_account("B-1", "cashier", "583102")  # already has one
     assert accounts.employees_without_account() == [("B-3", "Murat Yılmaz"), ("B-2", "Selin Kaya")]
 
 
 def test_pin_changes(people):
-    accounts.create_account("B-2", "cashier", "5831")
-    accounts.set_pin("B-2", "6042", by=people.actor)
-    assert accounts.authenticate("B-2", "6042", auth.AREA_POS, "POS")
+    accounts.create_account("B-2", "cashier", "583102")
+    accounts.set_pin("B-2", "604271", by=people.actor)
+    assert accounts.authenticate("B-2", "604271", auth.AREA_POS, "POS")
     with pytest.raises(SignInFailedError):
         accounts.change_own_pin(people, "000000", "739184")
     accounts.change_own_pin(people, "482913", "739184")
