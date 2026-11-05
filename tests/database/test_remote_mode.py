@@ -167,6 +167,12 @@ def test_stock_in_and_out():
     body = client.calls[-1][2]
     assert (body["direction"], body["location_code"], body["quantity"], body["note"]) == ("receive", "WH-01", 5,
                                                                                          "supplier")
+    assert "operator_badge" not in body  # nobody typed a badge: the signed-in account is credited
+    from shared.auth import Actor
+
+    stock_repository.receive(WH, "A1", 1, actor=Actor("E-100", "Mia"))
+    stock_repository.dispatch(WH, "A1", 1, actor=Actor("E-100", "Mia"))
+    assert [c[2]["operator_badge"] for c in client.calls[-2:]] == ["E-100", "E-100"]  # the server credits them
     with pytest.raises(ValueError):
         stock_repository.dispatch(WH, "A1", 0)
     [level] = stock_repository.levels_for_product("A1")

@@ -236,7 +236,7 @@ def receive(location: StockLocation, barcode: str, quantity: int, note: str | No
     Floor's Inbound). Returns the new level there."""
     if remote.active():
         return remote_products.receive(location, barcode, _positive(quantity), _clean(note), _clean(reference),
-                                       bin_code)
+                                       bin_code, actor)
     quantity = _positive(quantity)
     return _write(lambda conn: receive_in(conn, location, barcode, quantity, note=note, actor=actor,
                                           reference=_clean(reference), bin_code=bin_code))
@@ -250,7 +250,7 @@ def dispatch(location: StockLocation, barcode: str, quantity: int, note: str | N
     InsufficientStockError if `location` has fewer than `quantity`."""
     if remote.active():
         return remote_products.dispatch(location, barcode, _positive(quantity), _clean(note), _clean(reference),
-                                        bin_code)
+                                        bin_code, actor)
     quantity = _positive(quantity)
 
     def run(conn):

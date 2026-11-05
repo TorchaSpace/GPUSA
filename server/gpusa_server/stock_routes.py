@@ -157,6 +157,9 @@ class MovementIn(BaseModel):
     note: str | None = Field(default=None, max_length=500)
     reference: str | None = Field(default=None, max_length=100)
     bin_code: str | None = Field(default=None, max_length=32)
+    # The depot Floor: the person at the shelf typed their badge, the movement is credited to them
+    # (the signed-in console account stays the one that is allowed to write it).
+    operator_badge: str | None = Field(default=None, max_length=32)
 
 
 class MovementOut(BaseModel):
@@ -199,9 +202,14 @@ def book_movement(body: MovementIn, request: Request, session: Session = Depends
         _require_place(conn, kind, code)
         if body.direction == "receive":
             _require_can_hold(conn, kind, code, body.quantity)
+        actor = authz.actor_label(session)
+        if _clean(body.operator_badge):
+            from .people_routes import operator_label  # people_routes imports this module
+
+            actor = operator_label(conn, body.operator_badge, code if kind == "warehouse" else None)
         new = _change(conn, kind, code, product["barcode"], sign * body.quantity, change_total=True)
         row = _log(conn, kind, code, product["barcode"], body.direction, body.quantity, reason=body.direction,
-                   actor=authz.actor_label(session), note=_clean(body.note), reference=_clean(body.reference),
+                   actor=actor, note=_clean(body.note), reference=_clean(body.reference),
                    bin_code=_clean(body.bin_code))
         return _movement(row, level_after=new)
 

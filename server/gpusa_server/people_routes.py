@@ -23,7 +23,7 @@ import unicodedata
 from datetime import datetime, timedelta, timezone
 
 import psycopg
-from fastapi import APIRouter, Depends, Request
+from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
@@ -326,19 +326,36 @@ def check_out(body: PunchIn, request: Request, session: Session = Depends(curren
     return _write(request, session, PUNCH_ROLES, work)
 
 
+def _floor_operator(conn, badge_id: str, warehouse_code: str | None):
+    """The employee a Floor movement is credited to: active, at this depot, and checked in right now."""
+    employee = _need_employee(conn, badge_id)
+    if not employee["is_active"]:
+        raise _fail(409, f"{employee['badge_id']} is switched off.")
+    _require_site(conn, employee, warehouse_code)
+    if conn.execute("SELECT 1 FROM attendance_records WHERE employee_id = %s AND check_out_at IS NULL",
+                    (employee["id"],)).fetchone() is None:
+        raise _fail(409, f"{employee['badge_id']} is not checked in.")
+    return employee
+
+
+def operator_label(conn, badge_id: str, warehouse_code: str | None) -> str:
+    """handled_by text ("Name · BADGE") for a movement typed in under another person's badge. Checked again
+    here, inside the movement's own transaction, because the Floor's earlier check may be minutes old. Any
+    problem is a 422 so it is never mistaken for the movement's own 404 / 409 answers."""
+    try:
+        employee = _floor_operator(conn, badge_id, warehouse_code)
+    except HTTPException as exc:
+        raise _fail(422, f"Operator badge: {exc.detail}") from None
+    return f"{employee['name']} · {employee['badge_id']}"
+
+
 @router.get("/attendance/operator")
 def operator(badge_id: str, request: Request, warehouse_code: str | None = None,
              session: Session = Depends(current_session)) -> dict:
     """Who a Floor movement is credited to: active, at this depot, and checked in right now."""
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        employee = _need_employee(conn, badge_id)
-        if not employee["is_active"]:
-            raise _fail(409, f"{employee['badge_id']} is switched off.")
-        _require_site(conn, employee, warehouse_code)
-        if conn.execute("SELECT 1 FROM attendance_records WHERE employee_id = %s AND check_out_at IS NULL",
-                        (employee["id"],)).fetchone() is None:
-            raise _fail(409, f"{employee['badge_id']} is not checked in.")
+        employee = _floor_operator(conn, badge_id, warehouse_code)
         return {"badge_id": employee["badge_id"], "name": employee["name"]}
 
 

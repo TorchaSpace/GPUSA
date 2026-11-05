@@ -245,3 +245,31 @@ def test_account_changes_are_logged(client):
     assert client.get("/accounts", headers=h).json()[0]["name"] == "Ali"
     sql("UPDATE accounts SET role = 'cashier'")
     assert client.get("/accounts", headers=login(client, "pos")).status_code == 403
+
+
+def test_floor_movement_is_credited_to_the_operator_badge(client):
+    """The Floor console is signed in as a manager, but the person at the shelf types their own badge:
+    the movement is written under their name, and only if they are on the floor of THIS depot."""
+    h = login(client)
+    make(client, h, "E-1", location_name="Main")
+    make(client, h, "E-2", location_name="Spare")
+    move = lambda badge, code="WH-01": client.post("/stock-movements", headers=h, json={
+        "direction": "receive", "barcode": "A1", "location_kind": "warehouse", "location_code": code,
+        "quantity": 2, "operator_badge": badge})
+    assert move("e-1").status_code == 422                       # active but not checked in
+    client.post("/attendance/check-in", headers=h, json={"badge_id": "E-1", "warehouse_code": "WH-01"})
+    client.post("/attendance/check-in", headers=h, json={"badge_id": "E-2", "warehouse_code": "WH-02"})
+    ok = move("e-1")
+    assert ok.status_code == 201, ok.text
+    assert ok.json()["handled_by"] == "Mia Stone · E-1"
+    assert move("E-2").status_code == 422                       # works at another depot
+    assert move("NOPE").status_code == 422                      # unknown badge
+    assert move("E-2", "WH-02").status_code == 201
+    sql("UPDATE employees SET is_active = FALSE WHERE badge_id = 'E-1'")
+    assert move("E-1").status_code == 422                       # switched off since
+    # No badge typed: still the signed-in account.
+    plain = client.post("/stock-movements", headers=h, json={
+        "direction": "receive", "barcode": "A1", "location_kind": "warehouse", "location_code": "WH-01",
+        "quantity": 1})
+    assert plain.json()["handled_by"].endswith("· B-001")
+    assert sql("SELECT count(*) FROM stock_movements WHERE quantity = 2") == [(2,)]
