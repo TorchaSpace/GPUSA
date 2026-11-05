@@ -65,7 +65,9 @@ else
     [ "$ready" = "1" ] || stop_here "Postgres 60 saniyede hazır olmadı (docker logs $CONTAINER)"
     ok "Postgres kapsayıcısı '$CONTAINER' hazır"
     if ! docker port "$CONTAINER" 5432 >/dev/null 2>&1; then
-        bad "Kapsayıcının 5432 portu bilgisayara açık değil, API bağlanamaz (kapsayıcıyı -p 5432:5432 ile yeniden oluştur)"
+        bad "Kapsayıcının 5432 portu bilgisayara açık değil, API bağlanamaz (kapsayıcıyı -p 127.0.0.1:5432:5432 ile yeniden oluştur)"
+    elif docker port "$CONTAINER" 5432 2>/dev/null | grep -q '^0\.0\.0\.0:\|^\[::\]:'; then
+        warn "Veritabanı portu (5432) ağdaki herkese açık. Sadece bu bilgisayardan erişilmeli: kapsayıcıyı -p 127.0.0.1:5432:5432 ile yeniden oluştur (README: 'Veritabanı portunu kapat'). Verin silinmez, volume aynı kalır."
     fi
 fi
 
@@ -85,6 +87,7 @@ source "$VENV/bin/activate"
 ok "Python ortamı hazır"
 
 cd "$SERVER_DIR" || stop_here "$SERVER_DIR açılamadı"
+[ -f .env ] && chmod 600 .env 2>/dev/null   # PIN gizli anahtarı ve kurulum kodu başkası tarafından okunmasın
 [ -f .env ] || stop_here ".env dosyası yok ($SERVER_DIR/.env). README'deki 'Sign-in' adımlarına bak"
 set -a; . ./.env; set +a
 [ -n "${DATABASE_URL:-}" ] || stop_here ".env içinde DATABASE_URL yok"

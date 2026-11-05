@@ -58,11 +58,18 @@ def normalize_badge_id(text: str | None) -> str:
     return (text or "").strip().upper()
 
 
+def pin_fingerprint(pin_hash: str) -> str:
+    """A short fingerprint of the stored PIN hash. It goes into the token, so changing or resetting a PIN
+    signs the person out everywhere (the old tokens carry the old fingerprint)."""
+    return hashlib.sha256(pin_hash.encode()).hexdigest()[:16]
+
+
 def make_token(secret: str, *, account_id: int, badge_id: str, name: str, role: str, area: str,
-               now: datetime | None = None) -> str:
+               pin_hash: str, now: datetime | None = None) -> str:
     now = now or datetime.now(timezone.utc)
     claims = {
         "sub": str(account_id), "badge": badge_id, "name": name, "role": role, "area": area,
+        "pf": pin_fingerprint(pin_hash),
         "iat": int(now.timestamp()), "exp": int((now + timedelta(hours=TOKEN_HOURS)).timestamp()),
     }
     return jwt.encode(claims, secret, algorithm=JWT_ALG)

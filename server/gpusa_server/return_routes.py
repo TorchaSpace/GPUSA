@@ -56,7 +56,8 @@ def get_sale(sale_id: int, request: Request, session: Session = Depends(current_
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        if conn.execute("SELECT 1 FROM transactions WHERE id = %s", (sale_id,)).fetchone() is None:
+        found = conn.execute("SELECT dealership_code FROM transactions WHERE id = %s", (sale_id,)).fetchone()
+        if found is None or not authz.same_shop(conn, session, found["dealership_code"]):
             raise _fail(404, f"No sale with id {sale_id}.")
         return _read_sale(conn, sale_id)
 
@@ -70,7 +71,7 @@ class ReturnLineIn(BaseModel):
 
 
 class ReturnIn(BaseModel):
-    transaction_id: int
+    transaction_id: int = Field(gt=0, le=2_147_483_647)
     lines: list[ReturnLineIn] = Field(min_length=1, max_length=500)
     reason: str = Field(max_length=1000)
     client_uuid: str = Field(min_length=8, max_length=64, pattern=r"^[A-Za-z0-9_-]+$")
@@ -149,7 +150,8 @@ def returnable(sale_id: int, request: Request, session: Session = Depends(curren
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        if conn.execute("SELECT 1 FROM transactions WHERE id = %s", (sale_id,)).fetchone() is None:
+        found = conn.execute("SELECT dealership_code FROM transactions WHERE id = %s", (sale_id,)).fetchone()
+        if found is None or not authz.same_shop(conn, session, found["dealership_code"]):
             raise _fail(404, f"No sale with id {sale_id}.")
         returned = _returned(conn, sale_id)
         return [ReturnableOut(barcode=b, name=n, unit_price=float(p), sold=q, returned=returned.get(b, 0))
@@ -164,11 +166,12 @@ def list_returns(request: Request, since: datetime | None = None, until: datetim
     _readers(session)
     if transaction_id is None and (since is None or until is None):
         raise _fail(422, "Give a transaction_id, or both since and until.")
-    shop = (dealership_code or "").strip().upper() or None
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
+        shop = authz.scope_shop(conn, session, dealership_code)
         if transaction_id is not None:
-            return _returns(conn, "WHERE transaction_id = %s", (transaction_id,))
+            found = _returns(conn, "WHERE transaction_id = %s", (transaction_id,))
+            return [r for r in found if authz.same_shop(conn, session, r.dealership_code)]
         return _returns(conn, "WHERE created_at >= %s AND created_at < %s AND (%s::text IS NULL OR dealership_code = %s)",
                         (since, until, shop, shop))
 
@@ -179,7 +182,7 @@ def get_return(return_id: int, request: Request, session: Session = Depends(curr
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         found = _returns(conn, "WHERE id = %s", (return_id,))
-        if not found:
+        if not found or not authz.same_shop(conn, session, found[0].dealership_code):
             raise _fail(404, f"No refund with id {return_id}.")
         return found[0]
 
@@ -207,7 +210,7 @@ def create_return(body: ReturnIn, request: Request, session: Session = Depends(c
         if existing is not None:
             return _returns(conn, "WHERE id = %s", (existing["id"],))[0]
         sale = conn.execute("SELECT * FROM transactions WHERE id = %s FOR UPDATE", (body.transaction_id,)).fetchone()
-        if sale is None:
+        if sale is None or not authz.same_shop(conn, session, sale["dealership_code"]):
             raise _fail(404, f"No sale with id {body.transaction_id}.")
         live = conn.execute(
             "SELECT a.role FROM accounts a JOIN employees e ON e.id = a.employee_id "
@@ -338,7 +341,7 @@ def day_summary(start: datetime, end: datetime, request: Request, dealership_cod
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return _summary(conn, _shop(dealership_code), start, end)
+        return _summary(conn, _shop(authz.scope_shop(conn, session, dealership_code)), start, end)
 
 
 @router.post("/day-close", response_model=DayCloseOut, status_code=201)
@@ -353,6 +356,8 @@ def close_day(body: DayCloseIn, request: Request, session: Session = Depends(cur
     shop = _shop(body.dealership_code)
 
     def work(conn) -> DayCloseOut:
+        if authz.scope_shop(conn, session, shop) != shop:
+            raise _fail(403, "This till belongs to another dealership.")
         s = _summary(conn, shop, body.start, body.end)
         expected = round(s["cash_sales"] - s["cash_refunds"], 2)
         difference = round(counted - expected, 2)
@@ -376,9 +381,9 @@ def close_day(body: DayCloseIn, request: Request, session: Session = Depends(cur
 def list_closes(request: Request, limit: int = Query(default=60, ge=1, le=1000), dealership_code: str | None = None,
                 only_differences: bool = False, session: Session = Depends(current_session)) -> list[DayCloseOut]:
     _readers(session)
-    shop = _shop(dealership_code)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
+        shop = _shop(authz.scope_shop(conn, session, dealership_code))
         rows = conn.execute(
             "SELECT * FROM day_closes WHERE (%s::text IS NULL OR dealership_code = %s) "
             "AND (NOT %s OR difference <> 0) ORDER BY id DESC LIMIT %s", (shop, shop, only_differences, limit)).fetchall()
@@ -391,7 +396,8 @@ def latest_close(business_date: date, request: Request, dealership_code: str | N
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
+        shop = _shop(authz.scope_shop(conn, session, dealership_code))
         row = conn.execute(
             "SELECT * FROM day_closes WHERE business_date = %s AND dealership_code IS NOT DISTINCT FROM %s::text "
-            "ORDER BY id DESC LIMIT 1", (business_date, _shop(dealership_code))).fetchone()
+            "ORDER BY id DESC LIMIT 1", (business_date, shop)).fetchone()
         return _close_out(row) if row else None

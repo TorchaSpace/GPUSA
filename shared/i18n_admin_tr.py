@@ -1134,6 +1134,8 @@ TR_ADMIN = {
     "activity.stock_out.detail": "Rafta hiç kalmadı",
     "activity.refund.title": "{location}: {number} iade, {total}",
     "activity.refund.detail": "{reason} · onaylayan {actor}",
+    "activity.price_override.title": "{location}: çevrimdışı satış #{id} bugünkü fiyatın altında",
+    "activity.price_override.detail": "{lines} · kasiyer {actor}",
     "activity.day_close.title": "{location} günü kapattı",
     "activity.day_close.detail": "{date}: sayılan {counted}, beklenen {expected}, fark {difference}",
     "activity.request_new.title": "{location} {quantity} × {product} istedi",

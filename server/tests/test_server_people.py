@@ -184,7 +184,10 @@ def test_change_own_pin_needs_the_current_one(client):
     wrong = client.post("/accounts/me/pin", headers=h, json={"current_pin": "000999", "new_pin": "739104"})
     assert wrong.status_code == 401
     assert client.post("/accounts/me/pin", headers=h, json={"current_pin": PIN, "new_pin": "12"}).status_code == 422
-    assert client.post("/accounts/me/pin", headers=h, json={"current_pin": PIN, "new_pin": "739104"}).status_code == 204
+    done = client.post("/accounts/me/pin", headers=h, json={"current_pin": PIN, "new_pin": "739104"})
+    assert done.status_code == 200
+    assert client.get("/auth/me", headers=h).status_code == 401                      # the old token died with the old PIN
+    assert client.get("/auth/me", headers={"Authorization": "Bearer " + done.json()["token"]}).status_code == 200
     assert client.post("/auth/login", json={"badge_id": "B-001", "pin": PIN, "area": "admin"}).status_code == 401
     assert client.post("/auth/login", json={"badge_id": "B-001", "pin": "739104", "area": "admin"}).status_code == 200
 

@@ -81,8 +81,8 @@ class EmployeeIn(BaseModel):
     badge_id: str = Field(max_length=64)
     name: str = Field(max_length=300)
     title: str | None = Field(default=None, max_length=300)
-    role: str
-    location_type: str
+    role: str = Field(max_length=40)
+    location_type: str = Field(max_length=20)
     location_name: str = Field(max_length=300)
     is_active: bool = True
 
@@ -90,8 +90,8 @@ class EmployeeIn(BaseModel):
 class EmployeeUpdate(BaseModel):
     name: str = Field(max_length=300)
     title: str | None = Field(default=None, max_length=300)
-    role: str
-    location_type: str
+    role: str = Field(max_length=40)
+    location_type: str = Field(max_length=20)
     location_name: str = Field(max_length=300)
     is_active: bool = True
 
@@ -101,8 +101,8 @@ class EmployeeOut(BaseModel):
     badge_id: str
     name: str
     title: str | None
-    role: str
-    location_type: str
+    role: str = Field(max_length=40)
+    location_type: str = Field(max_length=20)
     location_name: str
     is_active: bool
 
@@ -422,7 +422,7 @@ def _event(conn, session: Session, event: str, badge: str, detail: str | None = 
 
 class AccountIn(BaseModel):
     badge_id: str = Field(max_length=64)
-    role: str
+    role: str = Field(max_length=40)
     pin: str = Field(max_length=64)
 
 
@@ -431,7 +431,7 @@ class PinIn(BaseModel):
 
 
 class RoleIn(BaseModel):
-    role: str
+    role: str = Field(max_length=40)
     new_pin: str | None = Field(default=None, max_length=64)
 
 
@@ -502,9 +502,11 @@ def _set_pin(conn, row, pin_hash: str, session: Session, detail: str | None = No
     _event(conn, session, "pin_changed", row["badge_id"], detail)
 
 
-@router.post("/accounts/me/pin", status_code=204)
-def change_own_pin(body: OwnPinIn, request: Request, session: Session = Depends(current_session)) -> None:
-    """Signed-in person changes their own PIN; the current one must match (and counts toward the lockout)."""
+@router.post("/accounts/me/pin")
+def change_own_pin(body: OwnPinIn, request: Request, session: Session = Depends(current_session)) -> dict:
+    """Signed-in person changes their own PIN; the current one must match (and counts toward the lockout).
+    Every old token stops working with the old PIN, so this answers with a fresh one for this person's session."""
+    fresh = None
     authz.require(session, roles=EVERY_ROLE, areas=EVERY_AREA)
     now = datetime.now(timezone.utc)
     error = None
@@ -534,9 +536,14 @@ def change_own_pin(body: OwnPinIn, request: Request, session: Session = Depends(
         elif problem := pin_problem(body.new_pin, row["role"]):
             error = _fail(422, problem)
         else:
-            _set_pin(conn, row, security.hash_pin(body.new_pin), session, "own PIN")
+            new_hash = security.hash_pin(body.new_pin)
+            _set_pin(conn, row, new_hash, session, "own PIN")
+            fresh = security.make_token(request.app.state.settings.jwt_secret, account_id=session.account_id,
+                                        badge_id=session.badge_id, name=session.name, role=row["role"],
+                                        area=session.area, pin_hash=new_hash)
     if error is not None:
         raise error
+    return {"token": fresh}
 
 
 @router.post("/accounts/{badge}/pin", status_code=204)

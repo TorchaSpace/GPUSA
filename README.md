@@ -83,6 +83,11 @@ Ctrl+C hepsini kapatır. `bash server/scripts/make_launcher.sh` masaüstüne "GP
 - **İkinci kopya:** yedekler aynı diskte kalırsa disk bozulunca ikisi de gider. `server/.env` dosyasına `GPUSA_BACKUP_COPY_DIR=/run/media/KULLANICI/USB/gpusa` (USB/ikinci disk) ve/ya `GPUSA_BACKUP_RSYNC=kullanici@baska-pc:/yedekler/gpusa/` yaz; her yedek oraya da kopyalanır, takılı değilse uyarı verir.
 - **Açılışta kendiliğinden başlasın:** bir kez `bash server/scripts/start_server.sh` ile kurulumu yap, pencereyi kapat, sonra `sudo bash server/scripts/install_service.sh`. PC her açıldığında Docker, veritabanı ve API kendiliğinden başlar, her gece 03:00'te yedek alınır. Durum: `systemctl status gpusa-server`, kayıt: `journalctl -u gpusa-server -f`, kaldırmak için `sudo bash server/scripts/install_service.sh remove`. Servis kuruluyken `start_all.sh` sunucuyu zaten açık bulur ve dokunmaz.
 - **Kurulum kodu:** ilk açılışta `server/.env` dosyasına `GPUSA_SETUP_CODE` yazılır ve sunucu penceresinde gösterilir. İlk yöneticiyi Admin'den oluştururken bu kod sorulur, ağdaki yabancı ilk yönetici olamaz. Yönetici oluştuktan sonra kod gerekmez.
+- **Veritabanı portunu kapat (önemli):** Postgres kapsayıcısı `-p 5432:5432` ile açıldıysa ağdaki herkes veritabanına şifre denemesi yapabilir (Docker, güvenlik duvarını atlar). Sadece sunucu PC'nin kendisi erişmeli. Önce yedek al (`bash server/scripts/backup_db.sh`), sonra (verin silinmez, volume aynı kalır):
+  1. `docker inspect gpusa-db --format '{{range .Mounts}}{{.Name}}{{end}}'` yaz, çıkan adı (ör. `abc123...`) not et.
+  2. `docker stop gpusa-db` ve `docker rm gpusa-db`
+  3. `docker run -d --name gpusa-db --restart unless-stopped -p 127.0.0.1:5432:5432 -v VOLUME_ADI:/var/lib/postgresql/data postgres:16` (VOLUME_ADI yerine 1. adımdaki ad). Şifre veritabanının içinde kayıtlı, değişmez.
+  Sunucu açılışında `start_server.sh` portun hâlâ herkese açık olup olmadığını uyarır.
 - **Şifresiz ağ (HTTP):** PIN'ler ağ üzerinde şifresiz gider. Sadece güvendiğin ofis ağında kullan; başka şehirden erişim için sunucuyu internete açma, Tailscale/VPN kullan.
 
 ## Testing

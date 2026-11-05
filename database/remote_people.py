@@ -184,7 +184,9 @@ def set_pin(badge_id: str, new_pin: str) -> None:
 
 
 def change_own_pin(current_pin: str, new_pin: str) -> None:
-    _call("POST", "/accounts/me/pin", {"current_pin": current_pin, "new_pin": new_pin})
+    answer = _call("POST", "/accounts/me/pin", {"current_pin": current_pin, "new_pin": new_pin})
+    if isinstance(answer, dict) and answer.get("token"):
+        remote._current_client().token = answer["token"]   # the old token died with the old PIN
 
 
 def set_role(badge_id: str, role: str, new_pin: str | None) -> None:
