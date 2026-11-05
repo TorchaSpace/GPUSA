@@ -52,9 +52,9 @@ def world():
     employee_repository.create(Employee("B-2", "Admin B", "Management", "Dealership", "HQ"))
     accounts.create_account("B-2", "admin", "246813")
     employee_repository.create(Employee("M-3", "Depot Manager", "Operations", "Warehouse", "WH-01"))
-    accounts.create_account("M-3", "depot_manager", "7351")
+    accounts.create_account("M-3", "depot_manager", "735102")
     stale = accounts.authenticate("B-2", "246813", "admin", "T2").actor
-    manager = accounts.authenticate("M-3", "7351", "depot_console", "T3").actor
+    manager = accounts.authenticate("M-3", "735102", "depot_console", "T3").actor
     product_repository.create(Product("P-1", "Widget", 10, 0, 0))
     dealership_repository.create(Dealership(code="D9", name="Shop", region="Metro", city="X"))
     warehouse_repository.create(Warehouse(code="WH-9", name="Annex"))

@@ -24,7 +24,7 @@ def _isolated_db(tmp_path, monkeypatch):
 def cashier():
     account_repository.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
-    account_repository.create_account("B-2", "cashier", "5831")
+    account_repository.create_account("B-2", "cashier", "583102")
 
 
 class _Dialog:
@@ -42,7 +42,7 @@ class _Dialog:
 def test_idle_lock_closes_an_open_dialog_and_hands_the_till_over(qapp, cashier, monkeypatch):
     import pos_app.gui.main_window as mw
 
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = mw.MainWindow(session)
     window._watcher.stop()
     window.show()
@@ -66,7 +66,7 @@ def test_idle_lock_closes_an_open_dialog_and_hands_the_till_over(qapp, cashier, 
 def test_idle_lock_does_not_close_the_sign_in_dialog(qapp, cashier, monkeypatch):
     import pos_app.gui.main_window as mw
 
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = mw.MainWindow(session)
     window._watcher.stop()
     window.show()

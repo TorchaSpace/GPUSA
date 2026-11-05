@@ -44,7 +44,7 @@ EMPLOYEE_ROLES = ("Operations", "Logistics", "Sales & service", "Management")
 LOCATION_TYPES = ("Warehouse", "Dealership")
 ACCOUNT_ROLES = ("admin", "depot_manager", "cashier")
 MAX_BADGE, MAX_NAME, MAX_TITLE, MAX_LOCATION = 32, 120, 120, 120
-MIN_PIN, MIN_ADMIN_PIN, MAX_PIN = 4, 6, 12
+MIN_PIN, MIN_ADMIN_PIN, MAX_PIN = 6, 6, 12
 
 
 def _badge(text: str | None) -> str:
@@ -222,6 +222,10 @@ def update_employee(badge: str, body: EmployeeUpdate, request: Request,
             body.location_type, fields["location_name"].casefold())
         if moved and (problem := _location_problem(conn, body.location_type, fields["location_name"])):
             raise _fail(422, problem)
+        if body.location_type != "Warehouse" and conn.execute(
+                "SELECT 1 FROM accounts WHERE employee_id = %s AND role = 'depot_manager'", (row["id"],)).fetchone():
+            raise _fail(422, f"{row['badge_id']} is a depot manager; they must stay at a warehouse "
+                             "(change their role first).")
         if not body.is_active and row["is_active"]:
             if _badge(row["badge_id"]) == _badge(session.badge_id):
                 raise _fail(409, "You cannot switch off your own record.")
@@ -270,6 +274,12 @@ def _close_shifts(conn, employee_id: int, note: str) -> int:
         "UPDATE attendance_records SET check_out_at = now(), "
         "note = CASE WHEN note IS NULL OR note = '' THEN %s ELSE note || ' · ' || %s END "
         "WHERE employee_id = %s AND check_out_at IS NULL", (note, note, employee_id)).rowcount
+
+
+def _depot_manager_needs_warehouse(employee) -> None:
+    if employee["location_type"] != "Warehouse":
+        raise _fail(422, f"{employee['badge_id']} must work at a warehouse (set it under Employees) "
+                         "before becoming a depot manager.")
 
 
 def _require_site(conn, employee, warehouse_code: str | None) -> None:
@@ -488,6 +498,8 @@ def create_account(body: AccountIn, request: Request, session: Session = Depends
             raise _fail(409, f"{employee['badge_id']} is switched off; switch them on first.")
         if conn.execute("SELECT 1 FROM accounts WHERE employee_id = %s", (employee["id"],)).fetchone():
             raise _fail(409, f"{employee['badge_id']} has an account already.")
+        if body.role == "depot_manager":
+            _depot_manager_needs_warehouse(employee)
         conn.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (%s, %s, %s)",
                      (employee["id"], body.role, pin_hash))
         _event(conn, session, "account_created", employee["badge_id"], body.role)
@@ -574,6 +586,8 @@ def set_role(badge: str, body: RoleIn, request: Request, session: Session = Depe
             return
         if _same_person(session, row):
             raise _fail(409, "You cannot change your own role.")
+        if body.role == "depot_manager":
+            _depot_manager_needs_warehouse(_need_employee(conn, row["badge_id"]))
         promoting = body.role == "admin"
         new_hash = None
         if promoting:

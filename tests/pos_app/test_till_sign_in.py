@@ -22,9 +22,9 @@ def _isolated_db(tmp_path, monkeypatch):
 def cashier():
     account_repository.create_first_admin("A-1", "Erol", "482913")
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
-    account_repository.create_account("B-2", "cashier", "5831")
+    account_repository.create_account("B-2", "cashier", "583102")
     employee_repository.create(Employee("M-1", "Murat", "Operations", "Warehouse", "WH-01"))
-    account_repository.create_account("M-1", "depot_manager", "7351")
+    account_repository.create_account("M-1", "depot_manager", "735102")
 
 
 def test_cashiers_and_admins_can_open_the_till_but_not_depot_managers(qapp, cashier):
@@ -32,11 +32,11 @@ def test_cashiers_and_admins_can_open_the_till_but_not_depot_managers(qapp, cash
 
     dialog = till_sign_in_dialog("001", "Harbor Point")
     dialog.badge_input.setText("M-1")
-    dialog.pin_input.setText("7351")
+    dialog.pin_input.setText("735102")
     dialog.try_sign_in()
     assert "can't open the till" in dialog.error_label.text()
     dialog.badge_input.setText("B-2")
-    dialog.pin_input.setText("5831")
+    dialog.pin_input.setText("583102")
     dialog.try_sign_in()
     assert dialog.session.name == "Selin Kaya"
     assert account_repository.list_events(1)[0]["terminal"] == "POS 001"
@@ -46,7 +46,7 @@ def test_window_shows_the_cashier_and_sales_record_them(qapp, cashier, monkeypat
     from pos_app.gui.main_window import MainWindow
     from shared import current_session
 
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = MainWindow(session)
     window.show()
     pump(qapp)
@@ -63,7 +63,7 @@ def test_window_shows_the_cashier_and_sales_record_them(qapp, cashier, monkeypat
 def test_a_till_left_alone_is_handed_over_as_at_a_shift_change(qapp, cashier, monkeypatch):
     from pos_app.gui.main_window import MainWindow
 
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = MainWindow(session)
     window.show()
     pump(qapp)
@@ -160,7 +160,7 @@ def test_a_locked_database_on_sign_out_does_not_block_the_shift_change(qapp, cas
 
     import pos_app.gui.main_window as mw
 
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = mw.MainWindow(session)
     window._watcher.stop()
     window._idle_lock.stop()
@@ -185,7 +185,7 @@ def test_the_next_cashier_signs_in_at_the_home_shop_and_the_till_goes_back_to_it
         dealership_repository.create(Dealership(code=code, name=f"Shop {code}", region="Metro", city="Town"))
     monkeypatch.setattr(mw, "load_dealership_identity",
                         lambda: {"code": "D-A", "name": "Shop D-A", "location_line": "Town · Metro"})
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = mw.MainWindow(session)
     window._watcher.stop()
     window._idle_lock.stop()
@@ -212,7 +212,7 @@ def test_a_lower_case_setup_code_still_sells_and_receives(qapp, cashier, monkeyp
         pos_main_window, "load_dealership_identity",
         lambda: {"code": "ist-01", "name": "Kadikoy", "location_line": "Istanbul"},
     )
-    session = account_repository.authenticate("B-2", "5831", auth.AREA_POS, "POS")
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
     window = pos_main_window.MainWindow(session)
     window.show()
     pump(qapp)

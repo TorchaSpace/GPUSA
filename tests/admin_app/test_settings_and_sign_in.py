@@ -82,7 +82,7 @@ def test_settings_lists_accounts_and_activity(settings):
 def test_settings_account_actions(settings, monkeypatch):
     from PySide6.QtWidgets import QMessageBox
 
-    account_repository.create_account("B-2", "cashier", "5831", by=current_session.actor())
+    account_repository.create_account("B-2", "cashier", "583102", by=current_session.actor())
     settings.reload()
     settings.select("B-2")
     settings.toggle_active()
@@ -102,7 +102,7 @@ def test_settings_account_actions(settings, monkeypatch):
 
 
 def test_locked_accounts_show_and_unlock(settings):
-    account_repository.create_account("B-2", "cashier", "5831")
+    account_repository.create_account("B-2", "cashier", "583102")
     for _ in range(auth.MAX_FAILED_ATTEMPTS):
         try:
             account_repository.authenticate("B-2", "0000", auth.AREA_POS, "POS")

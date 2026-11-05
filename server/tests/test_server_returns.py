@@ -32,7 +32,7 @@ def manager(client, admin):
     """A second person (depot manager) who can approve without it being a self-approval."""
     client.post("/employees", headers=admin, json={"badge_id": "M-1", "name": "Mo", "role": "Logistics",
                                                   "location_type": "Warehouse", "location_name": "Main"})
-    r = client.post("/accounts", headers=admin, json={"badge_id": "M-1", "role": "depot_manager", "pin": "2468"})
+    r = client.post("/accounts", headers=admin, json={"badge_id": "M-1", "role": "depot_manager", "pin": "246802"})
     assert r.status_code == 201, r.text
 
 
@@ -80,7 +80,7 @@ def test_a_manager_must_approve_with_the_right_pin(client, shelf):
     sid = made_sale(client, shelf, lines=(("A1", 5, 3),))
     assert refund(client, shelf, sid, badge="M-1", pin="9999").status_code == 401
     assert refund(client, shelf, sid, badge="nobody").status_code == 401
-    ok = refund(client, shelf, sid, badge="m-1", pin="2468")
+    ok = refund(client, shelf, sid, badge="m-1", pin="246802")
     assert ok.status_code == 200, ok.text
     assert ok.json()["approved_by"] == "Mo · M-1"
     assert sql("SELECT severity FROM activity_events WHERE kind = 'refund'") == [("notice",)]
@@ -92,9 +92,9 @@ def test_a_cashier_cannot_approve(client, shelf):
     admin = login(client)
     client.post("/employees", headers=admin, json={"badge_id": "C-1", "name": "Cy", "role": "Sales & service",
                                                   "location_type": "Dealership", "location_name": "Coast"})
-    client.post("/accounts", headers=admin, json={"badge_id": "C-1", "role": "cashier", "pin": "2468"})
+    client.post("/accounts", headers=admin, json={"badge_id": "C-1", "role": "cashier", "pin": "246802"})
     sid = made_sale(client, shelf, lines=(("A1", 5, 3),))
-    r = refund(client, shelf, sid, badge="C-1", pin="2468")
+    r = refund(client, shelf, sid, badge="C-1", pin="246802")
     assert r.status_code == 403
     assert level("dealership", "CST-04", "A1") == 2
 
@@ -105,7 +105,7 @@ def test_wrong_approver_pins_lock_the_account(client, shelf):
     sid = made_sale(client, shelf, lines=(("A1", 5, 3),))
     for n in range(5):
         refund(client, shelf, sid, badge="M-1", pin="9999", uuid=f"refund-bad{n}")
-    assert refund(client, shelf, sid, badge="M-1", pin="2468").status_code == 423
+    assert refund(client, shelf, sid, badge="M-1", pin="246802").status_code == 423
 
 
 def test_reason_and_roles(client, shelf):

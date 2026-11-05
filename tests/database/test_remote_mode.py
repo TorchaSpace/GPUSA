@@ -478,12 +478,12 @@ def test_employees_and_accounts_in_server_mode(db_connection):
         accounts.get("nobody")
     assert accounts.employees_without_account() == [("E-9", "New")]
     assert accounts.list_events(5)[0]["created_at"] == "2026-11-02T09:00:00.000Z"
-    accounts.create_account(" e-100 ", "cashier", "2468")
-    assert client.calls[-1][2] == {"badge_id": "E-100", "role": "cashier", "pin": "2468"}
-    accounts.set_pin("E-100", "7391")
-    assert client.calls[-1][2] == {"pin": "7391"}
-    accounts.change_own_pin(None, "2468", "7391")
-    assert client.calls[-1][2] == {"current_pin": "2468", "new_pin": "7391"}
+    accounts.create_account(" e-100 ", "cashier", "246802")
+    assert client.calls[-1][2] == {"badge_id": "E-100", "role": "cashier", "pin": "246802"}
+    accounts.set_pin("E-100", "739102")
+    assert client.calls[-1][2] == {"pin": "739102"}
+    accounts.change_own_pin(None, "246802", "739102")
+    assert client.calls[-1][2] == {"current_pin": "246802", "new_pin": "739102"}
     accounts.set_role("E-100", "admin", new_pin="135792")
     assert client.calls[-1][2] == {"role": "admin", "new_pin": "135792"}
     with pytest.raises(LastAdminError):
@@ -581,25 +581,25 @@ def test_refunds_and_day_close_in_server_mode(db_connection):
         transaction_repository.get_by_id(8)
     line = returns.returnable_lines(9)[0]
     assert (line.sold, line.returned, line.available) == (3, 1, 2)
-    made = returns.create_with_approval(9, [("A1", 2, True)], " Broken ", " m-1 ", "2468", "POS refund",
+    made = returns.create_with_approval(9, [("A1", 2, True)], " Broken ", " m-1 ", "246802", "POS refund",
                                         client_uuid="u1u1u1u1")
     assert (made.number, made.total, made.approved_by) == ("RF-00006", 10.0, "Mo · M-1")
     assert client.calls[-1][2] == {"transaction_id": 9, "reason": "Broken", "client_uuid": "u1u1u1u1",
-                                   "approver_badge": "m-1", "approver_pin": "2468", "terminal": "POS refund",
+                                   "approver_badge": "m-1", "approver_pin": "246802", "terminal": "POS refund",
                                    "lines": [{"barcode": "A1", "quantity": 2, "restock": True}]}
     assert returns.get(6).reason == "Broken"
     assert [r.id for r in returns.list_for_transaction(9)] == [6]
     with pytest.raises(UserError):
-        returns.create_with_approval(9, [("A1", 2, True)], "  ", "m-1", "2468", "POS")
+        returns.create_with_approval(9, [("A1", 2, True)], "  ", "m-1", "246802", "POS")
     with pytest.raises(UserError):
-        returns.create_with_approval(9, [], "x", "m-1", "2468", "POS")
+        returns.create_with_approval(9, [], "x", "m-1", "246802", "POS")
 
     client.answers[("POST", "/returns")] = ServerError("A manager must approve a refund.", 403)
     with pytest.raises(ReturnApprovalError):
-        returns.create_with_approval(9, [("A1", 1, True)], "x", "c-1", "2468", "POS")
+        returns.create_with_approval(9, [("A1", 1, True)], "x", "c-1", "246802", "POS")
     client.answers[("POST", "/returns")] = ServerError("Only 0 of Anvil can still come back; 1 were asked for.", 409)
     with pytest.raises(ReturnQuantityError) as over:
-        returns.create_with_approval(9, [("A1", 1, True)], "x", "m-1", "2468", "POS")
+        returns.create_with_approval(9, [("A1", 1, True)], "x", "m-1", "246802", "POS")
     assert over.value.available == 0
 
     done = closes.close("CST-04", 19, dt.date(2026, 11, 2), actor=None, note="short")

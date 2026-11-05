@@ -36,7 +36,7 @@ def day():
         stock_repository.transfer(UNASSIGNED, loc, "OIL", 30)
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Shop 001"))
     accounts.create_first_admin("B-1", "Erol Admin", "482913")
-    accounts.create_account("B-2", "cashier", "5831")
+    accounts.create_account("B-2", "cashier", "583102")
 
 
 def _sell(quantity, method, loc=SHELF):

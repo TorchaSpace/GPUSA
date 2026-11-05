@@ -84,6 +84,15 @@ PostgreSQL must be empty (the admin made by `create_admin` counts); add
 administrator's PIN. The stock rule (`stock_quantity = SUM(stock_levels) +
 units on the truck`) is re-checked and mismatches are listed.
 
+## Safety check of the server PC
+
+```
+server/scripts/check_security.sh
+```
+
+It warns when the database port is open to other computers (fix: `listen_addresses = 'localhost'` in
+`postgresql.conf`) and reminds you that the API is plain HTTP. Run it after every PostgreSQL change.
+
 ## Configuration (environment variables only)
 
 | Variable | Used for |

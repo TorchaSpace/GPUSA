@@ -80,7 +80,7 @@ def test_delete_needs_no_history_and_takes_the_account_with_it(client):
     make(client, h, "E-1")
     make(client, h, "E-2")
     client.post("/attendance/check-in", headers=h, json={"badge_id": "E-2"})
-    client.post("/accounts", headers=h, json={"badge_id": "E-1", "role": "cashier", "pin": "2468"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-1", "role": "cashier", "pin": "246802"})
     assert client.delete("/employees/E-2", headers=h).status_code == 409  # has attendance history
     assert client.delete("/employees/E-1", headers=h).status_code == 204
     assert sql("SELECT count(*) FROM accounts") == [(1,)]
@@ -148,16 +148,16 @@ def test_create_account_and_sign_in_with_it(client):
     h = login(client)
     make(client, h)
     assert [e["badge_id"] for e in client.get("/accounts/without", headers=h).json()] == ["E-100"]
-    r = client.post("/accounts", headers=h, json={"badge_id": "e-100", "role": "cashier", "pin": "2468"})
+    r = client.post("/accounts", headers=h, json={"badge_id": "e-100", "role": "cashier", "pin": "246802"})
     assert r.status_code == 201, r.text
     assert (r.json()["badge_id"], r.json()["role"], r.json()["is_active"]) == ("E-100", "cashier", True)
     assert client.get("/accounts/without", headers=h).json() == []
-    assert till_login(client, "E-100", "2468").status_code == 200
-    assert client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "2468"}).status_code == 409
+    assert till_login(client, "E-100", "246802").status_code == 200
+    assert client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"}).status_code == 409
 
 
 @pytest.mark.parametrize("pin,role", [("12", "cashier"), ("1111", "cashier"), ("1234", "cashier"), ("12ab", "cashier"),
-                                      ("2468", "admin"), ("1" * 13, "cashier")])
+                                      ("123456", "admin"), ("1" * 13, "cashier")])
 def test_weak_pins_are_refused(client, pin, role):
     h = login(client)
     make(client, h)
@@ -167,15 +167,15 @@ def test_weak_pins_are_refused(client, pin, role):
 def test_admin_sets_someone_elses_pin_and_clears_a_lock(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "2468"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
     for _ in range(5):
         till_login(client, "E-100", "9999")
-    assert till_login(client, "E-100", "2468").status_code == 423
+    assert till_login(client, "E-100", "246802").status_code == 423
     assert client.post("/accounts/E-100/unlock", headers=h).status_code == 204
-    assert till_login(client, "E-100", "2468").status_code == 200
-    assert client.post("/accounts/E-100/pin", headers=h, json={"pin": "7391"}).status_code == 204
-    assert till_login(client, "E-100", "2468").status_code == 401
-    assert till_login(client, "E-100", "7391").status_code == 200
+    assert till_login(client, "E-100", "246802").status_code == 200
+    assert client.post("/accounts/E-100/pin", headers=h, json={"pin": "739102"}).status_code == 204
+    assert till_login(client, "E-100", "246802").status_code == 401
+    assert till_login(client, "E-100", "739102").status_code == 200
     assert client.post("/accounts/B-001/pin", headers=h, json={"pin": "739104"}).status_code == 409  # not your own
 
 
@@ -202,11 +202,17 @@ def test_change_own_pin_wrong_five_times_locks(client):
 def test_role_changes_and_promotion_needs_a_new_pin(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "2468"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin"}).status_code == 422
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "2468"}).status_code == 422
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "135792"}).status_code == 204
     assert client.post("/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"}).status_code == 200
+    moved = client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Operations",
+                                                                "location_type": "Dealership", "location_name": "CST-04"})
+    assert moved.status_code == 200, moved.text
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "depot_manager"}).status_code == 422  # not at a warehouse
+    client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Logistics", "location_type": "Warehouse",
+                                                       "location_name": "Main"})
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "depot_manager"}).status_code == 204
     assert client.post("/accounts/B-001/role", headers=h, json={"role": "cashier"}).status_code == 409  # not your own
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "wizard"}).status_code == 422
@@ -229,9 +235,9 @@ def test_the_last_admin_is_protected(client):
 def test_switch_off_and_delete_an_account(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "2468"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
     assert client.post("/accounts/E-100/active", headers=h, json={"active": False}).status_code == 204
-    assert till_login(client, "E-100", "2468").status_code == 403
+    assert till_login(client, "E-100", "246802").status_code == 403
     assert client.delete("/accounts/E-100", headers=h).status_code == 204
     assert client.delete("/accounts/E-100", headers=h).status_code == 404
     assert client.delete("/accounts/B-001", headers=h).status_code == 409
@@ -241,8 +247,8 @@ def test_switch_off_and_delete_an_account(client):
 def test_account_changes_are_logged(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "2468"})
-    client.post("/accounts/E-100/pin", headers=h, json={"pin": "7391"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
+    client.post("/accounts/E-100/pin", headers=h, json={"pin": "739102"})
     events = client.get("/accounts/events", headers=h).json()
     assert [e["event"] for e in events if e["badge_id"] == "E-100"] == ["pin_changed", "account_created"]
     assert client.get("/accounts", headers=h).json()[0]["name"] == "Ali"
@@ -276,3 +282,12 @@ def test_floor_movement_is_credited_to_the_operator_badge(client):
         "quantity": 1})
     assert plain.json()["handled_by"].endswith("· B-001")
     assert sql("SELECT count(*) FROM stock_movements WHERE quantity = 2") == [(2,)]
+
+
+def test_a_depot_manager_cannot_be_moved_off_the_warehouse(client):
+    h = login(client)
+    make(client, h)
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "depot_manager", "pin": "246802"})
+    r = client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Operations", "location_type": "Dealership",
+                                                          "location_name": "CST-04"})
+    assert r.status_code == 422, r.text

@@ -82,7 +82,7 @@ def test_only_signed_in_administrators_make_secrets(client):
     mgr, _ = second_admin_and_manager(client, h)
     assert client.post("/recovery/code", headers=mgr).status_code == 403
     assert client.put("/recovery/question", headers=mgr, json={
-        "current_pin": "2468", "question": "Name of my first pet?", "answer": "Rex1"}).status_code == 403
+        "current_pin": "246802", "question": "Name of my first pet?", "answer": "Rex1"}).status_code == 403
     assert client.post("/recovery/code").status_code in (401, 403)
     assert client.get("/settings").json() == {}  # recovery keys are never served
 

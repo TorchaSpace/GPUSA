@@ -25,9 +25,9 @@ STRANGER = Actor("X-9", "No Account")
 
 _PEOPLE = (
     (ADMIN, "admin", "482913", "Management"),
-    (DEPOT, "depot_manager", "5831", "Operations"),
-    (OTHER_DEPOT, "depot_manager", "7294", "Operations"),
-    (CASHIER, "cashier", "6417", "Sales & service"),
+    (DEPOT, "depot_manager", "583102", "Operations"),
+    (OTHER_DEPOT, "depot_manager", "729402", "Operations"),
+    (CASHIER, "cashier", "641702", "Sales & service"),
 )
 
 

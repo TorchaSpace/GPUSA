@@ -36,8 +36,8 @@ def page(qapp):
     stock_repository.transfer(UNASSIGNED, SHELF, "OIL", 10)
     employee_repository.create(Employee("B-2", "Selin Kaya", "Sales & service", "Dealership", "Harbor Point"))
     accounts.create_first_admin("B-1", "Erol Admin", "482913")
-    accounts.create_account("B-2", "cashier", "5831")
-    session = accounts.authenticate("B-2", "5831", "pos", "Till 1")
+    accounts.create_account("B-2", "cashier", "583102")
+    session = accounts.authenticate("B-2", "583102", "pos", "Till 1")
     current_session.set(session)
     sales.finalize_transaction(
         Transaction(items=[LineItem("OIL", "Oil", 10.0, 3)], payment_method="cash"), SHELF, CASHIER)
@@ -79,7 +79,7 @@ def test_a_manager_signs_off_a_refund_and_the_shelf_gets_the_goods_back(page):
 def test_a_cashier_cannot_approve_their_own_refund(page):
     page.table.selectRow(0)
     dialog = page.return_dialog()
-    _fill(dialog, badge="B-2", pin="5831")
+    _fill(dialog, badge="B-2", pin="583102")
     assert not dialog.submit()
     assert dialog.error_label.isVisibleTo(dialog) and dialog.error_label.text()
     assert dialog.pin_input.text() == ""

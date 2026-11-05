@@ -29,10 +29,10 @@ def second_admin_and_manager(client, admin):
     client.post("/employees", headers=admin, json={"badge_id": "M-2", "name": "Mia", "role": "Logistics",
                                                   "location_type": "Warehouse", "location_name": "Main"})
     for badge in ("M-1", "M-2"):
-        r = client.post("/accounts", headers=admin, json={"badge_id": badge, "role": "depot_manager", "pin": "2468"})
+        r = client.post("/accounts", headers=admin, json={"badge_id": badge, "role": "depot_manager", "pin": "246802"})
         assert r.status_code == 201, r.text
     login_as = lambda badge: {"Authorization": "Bearer " + client.post(  # noqa: E731
-        "/auth/login", json={"badge_id": badge, "pin": "2468", "area": "depot_console"}).json()["token"]}
+        "/auth/login", json={"badge_id": badge, "pin": "246802", "area": "depot_console"}).json()["token"]}
     return login_as("M-1"), login_as("M-2")
 
 
