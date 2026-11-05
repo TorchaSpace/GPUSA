@@ -187,6 +187,8 @@ def create_shipment(body: ShipmentIn, request: Request, session: Session = Depen
     actor = authz.actor_label(session)
 
     def work(conn):
+        if authz.own_warehouse(conn, session) is not None:   # a depot manager ships from their own warehouse only
+            authz.scope_warehouse(conn, session, origin_code)
         if origin_code:
             _require_place(conn, "warehouse", origin_code)
         shop = conn.execute("SELECT name, is_active FROM dealerships WHERE code = %s", (shop_code,)).fetchone()
@@ -252,6 +254,8 @@ def dispatch_shipment(shipment_id: int, request: Request, session: Session = Dep
 
     def work(conn):
         shipment = _one(conn, shipment_id, lock=True)
+        if not authz.same_warehouse(conn, session, shipment.origin_code):
+            raise _fail(404, f"No shipment with id {shipment_id}.")
         number = _number("SH", shipment.id)
         if shipment.status != "scheduled":
             raise _fail(409, f"{number} can't be dispatched - it is {shipment.status.replace('_', ' ')}")
@@ -284,6 +288,8 @@ def retime_shipment(shipment_id: int, body: EtaIn, request: Request,
 
     def work(conn):
         shipment = _one(conn, shipment_id, lock=True)
+        if not authz.same_warehouse(conn, session, shipment.origin_code):
+            raise _fail(404, f"No shipment with id {shipment_id}.")
         if not _active(shipment):
             raise _fail(409, f"{_number('SH', shipment.id)} can't be re-timed - it is {shipment.status}")
         if shipment.departed_at:
@@ -303,6 +309,8 @@ def cancel_shipment(shipment_id: int, request: Request, session: Session = Depen
 
     def work(conn):
         shipment = _one(conn, shipment_id, lock=True)
+        if not authz.same_warehouse(conn, session, shipment.origin_code):
+            raise _fail(404, f"No shipment with id {shipment_id}.")
         number = _number("SH", shipment.id)
         if not _active(shipment):
             raise _fail(409, f"{number} can't be cancelled - it is {shipment.status}")

@@ -78,3 +78,37 @@ def same_shop(conn, session: Session, shop_code: str | None) -> bool:
     """Whether the person may see a record belonging to `shop_code` (everyone but a cashier always may)."""
     own = own_shop(conn, session)
     return own is None or (shop_code or "").upper() == own.upper()
+
+
+def own_warehouse(conn, session: Session) -> str | None:
+    """The warehouse a depot manager is limited to: the one their employee record is assigned to (matched by
+    code or name). None for every other role. A depot manager whose record is not assigned to a warehouse gets
+    403, so a depot console login can never act on another depot's stock, shipments, orders or ledger.
+    Needs a dict_row connection."""
+    if session.role != "depot_manager":
+        return None
+    row = conn.execute(
+        "SELECT w.code FROM employees e JOIN warehouses w ON e.location_type = 'Warehouse' AND "
+        "(upper(w.code) = upper(btrim(e.location_name)) OR lower(regexp_replace(btrim(w.name), '\\\\s+', ' ', 'g')) = "
+        "lower(regexp_replace(btrim(e.location_name), '\\\\s+', ' ', 'g'))) "
+        "WHERE upper(e.badge_id) = upper(%s) AND e.is_active LIMIT 1", (session.badge_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=403, detail="Your badge is not assigned to a warehouse. "
+                                                    "Ask an administrator to set it in Workforce.")
+    return row["code"]
+
+
+def scope_warehouse(conn, session: Session, code: str | None) -> None:
+    """403 unless `code` (a warehouse code, or a site label like "WH-01 · Main") is the depot manager's own
+    warehouse. Administrators may use any. An empty code is not anyone's, so a depot manager may not use it."""
+    own = own_warehouse(conn, session)
+    if own is None:
+        return
+    if (code or "").split("·")[0].strip().upper() != own.upper():
+        raise HTTPException(status_code=403, detail="That belongs to another warehouse.")
+
+
+def same_warehouse(conn, session: Session, code: str | None) -> bool:
+    """Whether the person may see a record belonging to warehouse `code` (everyone but a depot manager may)."""
+    own = own_warehouse(conn, session)
+    return own is None or (code or "").split("·")[0].strip().upper() == own.upper()
