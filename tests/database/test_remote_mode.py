@@ -888,7 +888,7 @@ def test_recovery_in_server_mode(db_connection, monkeypatch):
     assert accounts.get_security_question() == "First pet?"
     accounts.reset_with_recovery_code("k7qd-2mxh-9pra-tc4w", "b-001", "753159", "Till 1")
     assert calls[-1] == ("POST", "/recovery/reset", {"method": "code", "secret": "k7qd-2mxh-9pra-tc4w",
-                                                     "badge_id": "b-001", "new_pin": "753159", "terminal": "Till 1"})
+                                                     "badge_id": "b-001", "new_pin": "753159", "terminal": "Till 1", "new_badge_id": None})
     with pytest.raises(ValueError):
         accounts.reset_with_security_answer("fistik", "b-001", "123", "Till 1")  # weak PIN: stopped before the server
     for status, key in ((404, None), (401, None), (423, None), (403, None)):

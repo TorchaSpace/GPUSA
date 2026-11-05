@@ -146,14 +146,20 @@ class ResetIn(BaseModel):
     secret: str = Field(max_length=500)
     badge_id: str = Field(max_length=64)
     new_pin: str = Field(max_length=64)
+    new_badge_id: str | None = Field(default=None, max_length=32)  # optional: also give the account a new badge
     terminal: str = Field(default="Admin", max_length=100)
 
 
-@router.post("/reset", status_code=204)
-def reset(body: ResetIn, request: Request) -> None:
-    """Set a new PIN for an administrator after the recovery code or the security answer. No sign-in."""
+@router.post("/reset")
+def reset(body: ResetIn, request: Request) -> dict:
+    """Set a new PIN (and, if asked, a new badge) for an administrator after the recovery code or the security
+    answer. No sign-in. `badge_id` is the account's badge, or - for someone who forgot it - its exact name
+    (shown only if exactly one active administrator has it). Nothing else about the account changes: the
+    employee row keeps its id, so every sale, stock movement and record stays attached to it. Answers with
+    the badge to sign in with."""
     if problem := pin_problem(body.new_pin, "admin"):
         raise _fail(422, problem)
+    new_badge = security.normalize_badge_id(body.new_badge_id) if (body.new_badge_id or "").strip() else None
     hash_key = CODE_HASH if body.method == "code" else ANSWER_HASH
     secret = normalize_code(body.secret) if body.method == "code" else normalize_answer(body.secret)
     plausible = len(secret) == CODE_LENGTH if body.method == "code" else len(secret) >= MIN_ANSWER
@@ -184,19 +190,45 @@ def reset(body: ResetIn, request: Request) -> None:
                           f"Locked for {LOCK_MINUTES} minutes" if expiry else None)
                 error = _fail(401, "That recovery code is wrong." if body.method == "code" else "That answer is wrong.")
             else:
-                row = conn.execute(
-                    "SELECT a.id, a.role, a.is_active, e.is_active AS employee_active FROM accounts a "
-                    "JOIN employees e ON e.id = a.employee_id WHERE upper(e.badge_id) = %s FOR UPDATE OF a",
-                    (badge,)).fetchone()
-                if row is None or row["role"] != "admin" or not row["is_active"] or not row["employee_active"]:
-                    error = _fail(403, "That badge is not an active administrator.")
-                else:
+                row, error = _find_admin(conn, badge, body.badge_id)
+                if error is None and new_badge and new_badge != row["badge_id"].upper():
+                    if len(new_badge) > 32:
+                        error = _fail(422, "A badge can have at most 32 characters.")
+                    elif conn.execute("SELECT 1 FROM employees WHERE upper(badge_id) = %s AND id <> %s",
+                                      (new_badge, row["employee_id"])).fetchone():
+                        error = _fail(409, f"The badge {new_badge} is already used by someone else.")
+                if error is None:
                     conn.execute("UPDATE accounts SET pin_hash = %s, failed_attempts = 0, locked_until = NULL, "
                                  "updated_at = now() WHERE id = %s", (new_hash, row["id"]))
+                    result_badge = row["badge_id"]
+                    detail = ("Reset with the recovery code" if body.method == "code"
+                              else "Reset by answering the security question")
+                    if new_badge and new_badge != row["badge_id"].upper():
+                        conn.execute("UPDATE employees SET badge_id = %s, updated_at = now() WHERE id = %s",
+                                     (new_badge, row["employee_id"]))
+                        detail += f"; badge changed from {row['badge_id']} to {new_badge}"
+                        result_badge = new_badge
                     _put(conn, FAILED, "0")
                     _put(conn, LOCKED, "")
-                    _auth_log(conn, "pin_reset", badge, "admin", body.terminal,
-                              "Reset with the recovery code" if body.method == "code"
-                              else "Reset by answering the security question")
+                    _auth_log(conn, "pin_reset", result_badge, "admin", body.terminal, detail)
     if error is not None:
         raise error
+    return {"badge_id": result_badge}
+
+
+def _find_admin(conn, badge: str, typed: str):
+    """(account row, None) for an active administrator named by badge or, failing that, by exact name."""
+    cols = ("SELECT a.id, a.employee_id, e.badge_id FROM accounts a JOIN employees e ON e.id = a.employee_id "
+            "WHERE a.role = 'admin' AND a.is_active AND e.is_active AND ")
+    row = conn.execute(cols + "upper(e.badge_id) = %s FOR UPDATE OF a", (badge,)).fetchone()
+    if row is not None:
+        return row, None
+    wanted = normalize_answer(typed)
+    if wanted:
+        rows = [r for r in conn.execute(cols.replace("e.badge_id FROM", "e.badge_id, e.name FROM") + "TRUE "
+                                        "FOR UPDATE OF a").fetchall() if normalize_answer(r["name"]) == wanted]
+        if len(rows) == 1:
+            return rows[0], None
+        if len(rows) > 1:
+            return None, _fail(409, "More than one administrator has that name; type the badge instead.")
+    return None, _fail(403, "That badge is not an active administrator.")

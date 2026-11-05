@@ -280,7 +280,15 @@ class ResetAdminAccessDialog(QDialog):
         self._code_caption = QLabel()
         self._code_caption.setWordWrap(True)
         form.addRow(self._code_caption, self.code_input)
-        form.addRow(tr("recovery.admin"), self.admin_input)
+        # On a server installation the list may be empty (a fresh PC has no local accounts), and someone who
+        # forgot the badge can type their exact name: so the box is editable there.
+        self.admin_input.setEditable(on_server)
+        self.new_badge_input = QLineEdit()
+        self.new_badge_input.setMaxLength(32)
+        self.new_badge_input.setPlaceholderText(tr("recovery.new_badge_hint"))
+        form.addRow(tr("recovery.admin_or_badge") if on_server else tr("recovery.admin"), self.admin_input)
+        if on_server:
+            form.addRow(tr("recovery.new_badge"), self.new_badge_input)
         form.addRow(tr("recovery.new_pin").format(n=auth.MIN_ADMIN_PIN_LENGTH), self.pin_input)
         form.addRow(tr("recovery.pin_again"), self.pin_again_input)
         form_layout.addLayout(form)
@@ -377,6 +385,9 @@ class ResetAdminAccessDialog(QDialog):
             self._say(str(exc))
             return False
         if not admins:
+            if paths.get_server_url():
+                self.admin_input.clear()
+                return True  # type the badge or the name
             self._say(tr("recovery.no_admins"))
             return False
         self.admin_input.clear()
@@ -394,18 +405,19 @@ class ResetAdminAccessDialog(QDialog):
         if self.pin_input.text() != self.pin_again_input.text():
             self._say(tr("recovery.mismatch"))
             return False
-        badge = self.admin_input.currentData()
+        badge = self.admin_input.currentData() or self.admin_input.currentText().strip()
+        new_badge = self.new_badge_input.text().strip() or None
         try:
             if self._mode == "question":
-                account_repository.reset_with_security_answer(
-                    self.code_input.text(), badge, self.pin_input.text(), terminal_name())
+                signed_badge = account_repository.reset_with_security_answer(
+                    self.code_input.text(), badge, self.pin_input.text(), terminal_name(), new_badge)
             else:
-                account_repository.reset_with_recovery_code(
-                    self.code_input.text(), badge, self.pin_input.text(), terminal_name())
+                signed_badge = account_repository.reset_with_recovery_code(
+                    self.code_input.text(), badge, self.pin_input.text(), terminal_name(), new_badge)
         except (ValueError, *DATABASE_ERRORS) as exc:
             self._say(str(exc))
             return False
-        self.reset_badge = badge
+        self.reset_badge = signed_badge or badge
         self.accept()
         return True
 

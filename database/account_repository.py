@@ -648,14 +648,15 @@ def create_recovery_code(by: Session) -> str:
     return code
 
 
-def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: str = "Admin") -> None:
+def reset_with_recovery_code(code: str, badge_id: str, new_pin: str, terminal: str = "Admin",
+                             new_badge: str | None = None) -> str | None:
     """Set a new PIN for administrator `badge_id` using the recovery code.
     Wrong codes are counted; after MAX_FAILED_ATTEMPTS recovery locks for
     LOCK_MINUTES. Raises AuthError with a message fit to show."""
     normalized = recovery_code.normalize(code)
     if paths.get_server_url():
         _check_pin(new_pin, "admin")
-        return remote_recovery.reset("code", code, badge_id, new_pin, terminal)
+        return remote_recovery.reset("code", code, badge_id, new_pin, terminal, new_badge)
     _reset_with_secret(
         _RC_HASH, normalized, len(normalized) == recovery_code.CODE_LENGTH, badge_id, new_pin, terminal,
         "Reset with the recovery code", "err.rc_none",
@@ -711,14 +712,15 @@ def set_security_question(session: Session, current_pin: str, question: str, ans
     _write(run)
 
 
-def reset_with_security_answer(answer: str, badge_id: str, new_pin: str, terminal: str = "Admin") -> None:
+def reset_with_security_answer(answer: str, badge_id: str, new_pin: str, terminal: str = "Admin",
+                               new_badge: str | None = None) -> str | None:
     """Set a new PIN for administrator `badge_id` after the security
     question is answered. Shares the wrong-guess counter (and lock) with
     the recovery code, so trying both doesn't double the guesses."""
     normalized = security_question.normalize_answer(answer)
     if paths.get_server_url():
         _check_pin(new_pin, "admin")
-        return remote_recovery.reset("answer", answer, badge_id, new_pin, terminal)
+        return remote_recovery.reset("answer", answer, badge_id, new_pin, terminal, new_badge)
     _reset_with_secret(
         _SQ_HASH, normalized, len(normalized) >= MIN_SECURITY_ANSWER_LENGTH, badge_id, new_pin, terminal,
         "Reset by answering the security question", "err.sq_none",
