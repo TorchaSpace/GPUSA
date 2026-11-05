@@ -203,6 +203,8 @@ def book_movement(body: MovementIn, request: Request, session: Session = Depends
         product = _lock_product(conn, body.barcode)
         if body.direction == "receive" and not product["is_active"]:
             raise _fail(409, f"Product {product['barcode']} is switched off; it cannot receive stock.")
+        if kind == "warehouse":
+            authz.scope_warehouse(conn, session, code)   # a depot manager books only at their own warehouse
         _require_place(conn, kind, code)
         if body.direction == "receive":
             _require_can_hold(conn, kind, code, body.quantity)
@@ -287,6 +289,8 @@ def count(body: CountIn, request: Request, session: Session = Depends(current_se
 
     def work(conn):
         barcode = _lock_product(conn, body.barcode)["barcode"]
+        if kind == "warehouse":
+            authz.scope_warehouse(conn, session, code)
         _require_place(conn, kind, code)
         diff = body.counted - _level(conn, kind, code, barcode)
         if diff:

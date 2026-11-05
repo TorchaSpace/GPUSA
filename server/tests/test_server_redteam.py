@@ -43,11 +43,13 @@ PUBLIC = {("get", "/health"), ("get", "/health/db"), ("post", "/auth/login"), ("
 def world(client):
     """Admin (B-001), a cashier at CST-04 (C-1), a cashier at WST-01 (C-2), a depot manager (M-1)."""
     sql("TRUNCATE transactions, sale_returns, day_closes, activity_events RESTART IDENTITY CASCADE")
+    sql("TRUNCATE ledger_entries, ledger_audit, purchase_orders, shipments, stock_requests RESTART IDENTITY CASCADE")
     admin = login(client)
     sql("INSERT INTO dealerships (code, name, region, city) VALUES ('WST-01', 'West', 'Coastal', 'Bursa')")
     people = [("C-1", "Cass", "Sales & service", "Dealership", "CST-04", "cashier"),
               ("C-2", "Cory", "Sales & service", "Dealership", "WST-01", "cashier"),
-              ("M-1", "Mo", "Logistics", "Warehouse", "WH-01", "depot_manager")]
+              ("M-1", "Mo", "Logistics", "Warehouse", "WH-01", "depot_manager"),
+              ("M-2", "Mia", "Logistics", "Warehouse", "WH-02", "depot_manager")]
     for badge, name, role, kind, place, account_role in people:
         r = client.post("/employees", headers=admin, json={"badge_id": badge, "name": name, "role": role,
                                                            "location_type": kind, "location_name": place})
@@ -64,7 +66,8 @@ def world(client):
         return {"Authorization": f"Bearer {r.json()['token']}"}
 
     return {"admin": admin, "till": login(client, "pos"), "cass": sign_in("C-1", "pos"),
-            "cory": sign_in("C-2", "pos"), "mo": sign_in("M-1", "depot_console"), "sign_in": sign_in}
+            "cory": sign_in("C-2", "pos"), "mo": sign_in("M-1", "depot_console"),
+            "mia": sign_in("M-2", "depot_console"), "sign_in": sign_in}
 
 
 def sale_body(shop, uuid, price=5, qty=1, **extra):
@@ -193,6 +196,90 @@ def test_a_cashier_cannot_refund_or_close_the_day_for_another_shop(world, client
     assert client.get("/day-close/summary", headers=world["cass"],
                       params={"start": "2020-01-01T00:00:00Z", "end": "2031-01-01T00:00:00Z",
                               "dealership_code": "WST-01"}).status_code in (403, 422)
+
+
+# --- 2b. one depot manager, one warehouse ------------------------------------------------------
+
+def _shipment(client, h, origin_code, uuid=None):
+    eta = (datetime.now(timezone.utc) + timedelta(days=1)).isoformat()
+    return client.post("/shipments", headers=h, json={
+        "origin": origin_code or "Nowhere", "origin_code": origin_code, "dealership_code": "CST-04", "carrier": "Truck", "eta": eta,
+        "lines": [{"barcode": "A1", "quantity": 1}]})
+
+
+def _movement(client, h, code, direction="receive"):
+    return client.post("/stock-movements", headers=h, json={
+        "direction": direction, "barcode": "A1", "location_kind": "warehouse", "location_code": code, "quantity": 1})
+
+
+def test_a_depot_manager_books_and_counts_stock_only_at_their_own_warehouse(world, client):
+    assert _movement(client, world["mo"], "WH-01").status_code == 201
+    assert _movement(client, world["mo"], "WH-02").status_code == 403
+    assert _movement(client, world["mia"], "WH-02").status_code == 201
+    count = {"barcode": "A1", "place": {"kind": "warehouse", "code": "WH-02"}, "counted": 0}
+    assert client.post("/stock/counts", headers=world["mo"], json=count).status_code == 403
+    assert client.post("/stock/counts", headers=world["mia"], json=count).status_code == 200
+    assert client.post("/stock-movements", headers=world["admin"], json={   # administrators still go anywhere
+        "direction": "receive", "barcode": "A1", "location_kind": "warehouse", "location_code": "WH-02",
+        "quantity": 1}).status_code == 201
+
+
+def test_a_depot_manager_ships_only_from_their_own_warehouse(world, client):
+    move(client, world["admin"], "receive", 5, kind="warehouse", code="WH-02")
+    assert _shipment(client, world["mo"], "WH-02").status_code == 403
+    theirs = _shipment(client, world["mia"], "WH-02")
+    assert theirs.status_code == 201, theirs.text
+    sid = theirs.json()["id"]
+    for action, body in (("dispatch", {}), ("eta", {"eta": (datetime.now(timezone.utc) + timedelta(days=2)).isoformat()}),
+                         ("cancel", {})):
+        assert client.post(f"/shipments/{sid}/{action}", headers=world["mo"], json=body).status_code == 404, action
+    assert client.post(f"/shipments/{sid}/dispatch", headers=world["mia"], json={}).status_code == 200
+    assert _shipment(client, world["mo"], None).status_code == 403    # "no origin" is nobody's warehouse
+
+
+def test_a_depot_manager_sees_and_orders_for_their_own_warehouse_only(world, client):
+    def order(h, site):
+        return client.post("/purchase-orders", headers=h, json={
+            "barcode": "A1", "supplier": "Acme", "quantity": 2, "unit_price": 3, "site": site})
+
+    assert order(world["mo"], "WH-02").status_code == 403
+    mine, theirs = order(world["mo"], "WH-01"), order(world["mia"], "WH-02")
+    assert mine.status_code == 201 and theirs.status_code == 201, (mine.text, theirs.text)
+    listed = client.get("/purchase-orders", headers=world["mo"]).json()
+    assert [o["id"] for o in listed] == [mine.json()["id"]]
+    assert client.get(f"/purchase-orders/{theirs.json()['id']}", headers=world["mo"]).status_code == 404
+    assert client.post(f"/purchase-orders/{theirs.json()['id']}/receive", headers=world["mo"],
+                       json={"quantity": 1, "warehouse_code": "WH-02"}).status_code == 403
+    assert client.post(f"/purchase-orders/{theirs.json()['id']}/cancel", headers=world["mo"]).status_code == 404
+    assert client.post("/purchase-orders/receive-delivery", headers=world["mo"], json={
+        "warehouse_code": "WH-02", "barcode": "A1", "quantity": 1}).status_code == 403
+    assert len(client.get("/purchase-orders", headers=world["admin"]).json()) == 2
+
+
+def test_a_depot_manager_reads_and_writes_only_their_own_warehouses_ledger(world, client):
+    def entry(h, site, no):
+        return client.post("/ledger", headers=h, json={
+            "direction": "out", "doc_type": "check", "doc_no": no, "counterparty": f"Party {no}", "site": site,
+            "issue_date": "2026-01-01", "due_date": "2026-02-01", "amount": 10})
+
+    assert entry(world["mo"], "WH-02", "X-1").status_code == 403
+    assert entry(world["mo"], None, "X-2").status_code == 403                    # company-wide books: administrators
+    mine, theirs = entry(world["mo"], "WH-01", "X-3"), entry(world["mia"], "WH-02", "X-4")
+    assert mine.status_code == 201 and theirs.status_code == 201, (mine.text, theirs.text)
+    assert [e["doc_no"] for e in client.get("/ledger", headers=world["mo"]).json()] == ["X-3"]
+    assert client.get(f"/ledger/{theirs.json()['id']}", headers=world["mo"]).status_code == 404
+    assert client.get(f"/ledger/{theirs.json()['id']}/audit", headers=world["mo"]).json() == []
+    assert {a["entry_id"] for a in client.get("/ledger/audit", headers=world["mo"]).json()} == {mine.json()["id"]}
+    names = client.get("/ledger/counterparties", headers=world["mo"]).json()
+    assert "Party X-3" in names and "Party X-4" not in names
+    assert len(client.get("/ledger", headers=world["admin"]).json()) == 2
+
+
+def test_a_depot_manager_without_a_warehouse_can_do_nothing_at_a_depot(world, client):
+    sql("UPDATE employees SET location_type = 'Dealership', location_name = 'Coast' WHERE badge_id = 'M-1'")
+    assert _movement(client, world["mo"], "WH-01").status_code == 403
+    assert client.get("/ledger", headers=world["mo"]).status_code == 403
+    assert client.get("/purchase-orders", headers=world["mo"]).status_code == 403
 
 
 # --- 3. privilege escalation -------------------------------------------------------------------

@@ -251,7 +251,9 @@ def pending_ids(request: Request, session: Session = Depends(current_session)) -
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return [r["id"] for r in conn.execute("SELECT id FROM purchase_orders WHERE status = 'pending' ORDER BY id")]
+        own = authz.own_warehouse(conn, session)
+        return [r["id"] for r in conn.execute("SELECT id, site FROM purchase_orders WHERE status = 'pending' ORDER BY id")
+                if own is None or site_code(r["site"]) == own.upper()]
 
 
 @router.get("/purchase-orders", response_model=list[OrderOut])
@@ -265,6 +267,9 @@ def list_orders(request: Request, status: str | None = None, site: str | None = 
         conn.row_factory = dict_row
         rows = conn.execute("SELECT * FROM purchase_orders WHERE (%s::text IS NULL OR status = %s) "
                             "ORDER BY created_at DESC, id DESC", (status, status)).fetchall()
+        own = authz.own_warehouse(conn, session)
+    if own is not None:   # a depot manager sees their own warehouse's orders only
+        rows = [r for r in rows if site_code(r["site"]) == own.upper()]
     if site is not None:
         wanted = site_code(site)
         rows = [r for r in rows if site_code(r["site"]) == wanted]
@@ -278,6 +283,8 @@ def get_order(order_id: int, request: Request, session: Session = Depends(curren
         conn.row_factory = dict_row
         row = conn.execute("SELECT * FROM purchase_orders WHERE id = %s", (order_id,)).fetchone()
         if row is None:
+            raise _fail(404, f"No purchase order with id {order_id}.")
+        if not authz.same_warehouse(conn, session, row["site"]):
             raise _fail(404, f"No purchase order with id {order_id}.")
         return _order_out(row)
 
@@ -298,6 +305,7 @@ def submit(body: OrderIn, request: Request, session: Session = Depends(current_s
         raise _fail(422, "The unit price must be at least 0.01.")
 
     def work(conn):
+        authz.scope_warehouse(conn, session, site)   # a depot manager orders for their own warehouse only
         product = _lock_product(conn, body.barcode)
         if not product["is_active"]:
             raise _fail(409, f"Product {product['barcode']} is switched off; it cannot be ordered.")
@@ -384,7 +392,10 @@ def receive(order_id: int, body: ReceiveIn, request: Request, session: Session =
     code = body.warehouse_code.strip().upper()
 
     def work(conn):
+        authz.scope_warehouse(conn, session, code)
         row = _locked_order(conn, order_id)
+        if not authz.same_warehouse(conn, session, row["site"]):
+            raise _fail(404, f"No purchase order with id {order_id}.")
         if row["status"] not in _RECEIVABLE:
             raise _fail(409, f"{number(order_id)} is {row['status']}; it cannot be received now.")
         remaining = row["quantity"] - row["received_qty"]
@@ -405,6 +416,7 @@ def receive_delivery(body: DeliveryIn, request: Request, session: Session = Depe
     actor = authz.actor_label(session)
 
     def work(conn):
+        authz.scope_warehouse(conn, session, code)
         product = _lock_product(conn, body.barcode)
         if not product["is_active"]:
             raise _fail(409, f"Product {product['barcode']} is switched off; it cannot receive stock.")
@@ -440,6 +452,8 @@ def cancel(order_id: int, request: Request, session: Session = Depends(current_s
 
     def work(conn):
         row = _locked_order(conn, order_id)
+        if not authz.same_warehouse(conn, session, row["site"]):
+            raise _fail(404, f"No purchase order with id {order_id}.")
         role = _live_role(conn, session)
         if row["status"] not in _OPEN:
             raise _fail(409, f"{number(order_id)} is {row['status']}; it cannot be cancelled now.")

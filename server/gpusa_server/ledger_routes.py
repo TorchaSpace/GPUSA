@@ -117,6 +117,14 @@ def _snapshot(row) -> dict | None:
             for k in _SNAPSHOT}
 
 
+def _audit_site(row) -> str:
+    """The warehouse code an audit row is about (taken from the entry as it was, else as it became)."""
+    for snap in (row["after"], row["before"]):
+        if isinstance(snap, dict) and snap.get("site"):
+            return site_code(snap["site"])
+    return ""
+
+
 def _audit(conn, session: Session, entry_id: int, action: str, before: dict | None, after: dict | None) -> None:
     conn.execute(
         "INSERT INTO ledger_audit (entry_id, actor_badge, actor_name, action, before_json, after_json) "
@@ -153,6 +161,9 @@ def list_entries(request: Request, direction: Literal["in", "out"] | None = None
         conn.row_factory = dict_row
         rows = conn.execute("SELECT * FROM ledger_entries WHERE (%s::text IS NULL OR direction = %s) "
                             "ORDER BY due_date, id", (direction, direction)).fetchall()
+        own = authz.own_warehouse(conn, session)
+    if own is not None:   # a depot manager sees their own warehouse's documents only
+        rows = [r for r in rows if site_code(r["site"]) == own.upper()]
     if site is not None:
         wanted = site_code(site)
         rows = [r for r in rows if site_code(r["site"]) == wanted]
@@ -166,10 +177,19 @@ def counterparties(request: Request, session: Session = Depends(current_session)
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        rows = conn.execute(
-            "SELECT counterparty AS name FROM ledger_entries UNION SELECT name FROM dealerships "
-            "UNION SELECT supplier FROM purchase_orders "
-            "UNION SELECT default_supplier FROM purchase_price_ranges WHERE default_supplier IS NOT NULL").fetchall()
+        own = authz.own_warehouse(conn, session)
+        if own is None:
+            rows = conn.execute(
+                "SELECT counterparty AS name FROM ledger_entries UNION SELECT name FROM dealerships "
+                "UNION SELECT supplier FROM purchase_orders "
+                "UNION SELECT default_supplier FROM purchase_price_ranges WHERE default_supplier IS NOT NULL").fetchall()
+        else:   # a depot manager: names from their own warehouse's books, dealerships and price-band suppliers
+            rows = conn.execute(
+                "SELECT counterparty AS name FROM ledger_entries WHERE split_part(upper(site), '·', 1) = %(w)s "
+                "UNION SELECT name FROM dealerships "
+                "UNION SELECT supplier FROM purchase_orders WHERE split_part(upper(site), '·', 1) = %(w)s "
+                "UNION SELECT default_supplier FROM purchase_price_ranges WHERE default_supplier IS NOT NULL",
+                {"w": own.upper()}).fetchall()
     seen: dict[str, str] = {}
     for row in rows:
         name = (row["name"] or "").strip()
@@ -184,8 +204,12 @@ def recent_audit(request: Request, limit: int = Query(default=50, ge=0, le=1000)
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
+        own = authz.own_warehouse(conn, session)
         rows = conn.execute("SELECT id, entry_id, at, actor_badge, actor_name, action, before_json AS before, "
-                            "after_json AS after FROM ledger_audit ORDER BY id DESC LIMIT %s", (limit,)).fetchall()
+                            "after_json AS after FROM ledger_audit ORDER BY id DESC"
+                            + ("" if own is not None else " LIMIT %s"), (() if own is not None else (limit,))).fetchall()
+        if own is not None:
+            rows = [r for r in rows if _audit_site(r) == own.upper()][:limit]
         return [AuditOut(**r) for r in rows]
 
 
@@ -194,7 +218,10 @@ def get_entry(entry_id: int, request: Request, session: Session = Depends(curren
     _readers(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return _out(_entry(conn, entry_id))
+        row = _entry(conn, entry_id)
+        if not authz.same_warehouse(conn, session, row["site"]):
+            raise _fail(404, f"No ledger entry with id {entry_id}.")
+        return _out(row)
 
 
 @router.get("/ledger/{entry_id}/audit", response_model=list[AuditOut])
@@ -206,6 +233,9 @@ def entry_audit(entry_id: int, request: Request, session: Session = Depends(curr
         rows = conn.execute("SELECT id, entry_id, at, actor_badge, actor_name, action, before_json AS before, "
                             "after_json AS after FROM ledger_audit WHERE entry_id = %s ORDER BY id",
                             (entry_id,)).fetchall()
+        own = authz.own_warehouse(conn, session)
+        if own is not None:
+            rows = [r for r in rows if _audit_site(r) == own.upper()]
         return [AuditOut(**r) for r in rows]
 
 
@@ -217,6 +247,7 @@ def create_entry(body: EntryIn, request: Request, session: Session = Depends(cur
     f = _clean(body)
 
     def work(conn):
+        authz.scope_warehouse(conn, session, f["site"])   # a depot manager writes their own warehouse's books only
         label = authz.actor_label(session)
         try:
             row = conn.execute(

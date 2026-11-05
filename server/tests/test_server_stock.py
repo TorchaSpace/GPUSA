@@ -98,6 +98,7 @@ def test_reads_for_the_screens(client):
 
 def test_who_may_do_what(client):
     sql("UPDATE accounts SET role = 'depot_manager'")
+    sql("UPDATE employees SET location_type = 'Warehouse', location_name = 'WH-01'")   # a depot manager has a warehouse
     h = login(client, "depot_console")
     assert tr(client, h, [("warehouse", "WH-02", 1)]).status_code == 403  # transfers: Admin only
     move(client, h, "receive", 3)
@@ -142,7 +143,7 @@ def test_stock_leaving_a_place_rings_the_bell_once_per_crossing(client):
 
 def test_transfers_counts_and_the_till_ring_it_too(client):
     h = login(client)
-    sql("TRUNCATE activity_events")
+    sql("TRUNCATE activity_events, transactions RESTART IDENTITY CASCADE")   # an earlier run's sale key must not answer ours
     client.patch("/products/A1", headers=h, json={"critical_stock_level": 3})
     move(client, h, "receive", 6)
     tr(client, h, [("warehouse", "WH-02", 3)])                            # the source falls 6 -> 3

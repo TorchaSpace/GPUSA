@@ -204,6 +204,7 @@ def test_unknown_place_or_product_and_inactive_product(client):
 
 def test_depot_manager_books_at_warehouses_only(client):
     sql("UPDATE accounts SET role = 'depot_manager'")
+    sql("UPDATE employees SET location_type = 'Warehouse', location_name = 'WH-01'")
     h = login(client, "depot_console")
     assert move(client, h, "receive", 2).status_code == 201
     assert move(client, h, "receive", 2, kind="dealership", code="CST-04").status_code == 403
