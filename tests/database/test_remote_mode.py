@@ -918,13 +918,48 @@ def test_server_required_blocks_local_sign_in(monkeypatch):
     assert paths.server_required() is False
 
 
-def test_server_address_skips_the_first_administrator_screen(monkeypatch):
-    """With a server address the local file is only a cache: an empty one must not offer to create a
-    "first administrator" there, who could never sign in to the server."""
+def test_first_administrator_is_made_on_the_server_not_in_the_local_file(monkeypatch):
+    """With a server address the set-up screen follows the SERVER: offered only while it has no administrator,
+    and the administrator is created there and then signed in there (a copy in this PC's file could never
+    sign in to the server)."""
     from database import account_repository as accounts
     from shared import paths
+    from database.exceptions import AuthError
+    from shared.auth import AREA_ADMIN
 
     monkeypatch.setattr(paths, "get_server_url", lambda: None)
     assert accounts.admin_exists() is False  # fresh local file, no server: the set-up screen
+    calls: list = []
+    state = {"needs": True}
+
+    def fake(self, method, path, body=None):
+        calls.append((method, path, body))
+        if path == "/setup/status":
+            return {"needs_first_admin": state["needs"]}
+        if path == "/setup/first-admin":
+            if not state["needs"]:
+                raise ServerError("An administrator already exists - sign in instead.", 409)
+            state["needs"] = False
+            return {"badge_id": body["badge_id"]}
+        if path == "/auth/login":
+            return {"token": "t", "badge_id": "B-009", "name": "Zed", "role": "admin", "area": "admin"}
+        raise AssertionError(path)
+
+    monkeypatch.setattr("shared.server_client.ServerClient._request", fake)
     monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
-    assert accounts.admin_exists() is True   # server installation: straight to sign-in
+    assert accounts.admin_exists() is False                    # the server has none: offer the set-up screen
+    with pytest.raises(ValueError):
+        accounts.create_first_admin("B-009", "Zed", "123", "Admin")  # weak PIN: stopped before the server
+    assert not [c for c in calls if c[1] == "/setup/first-admin"]
+    session = accounts.create_first_admin("b-009", "Zed", "753159", "Admin")
+    assert (session.badge_id, session.role, session.area) == ("B-009", "admin", AREA_ADMIN)
+    assert ("POST", "/setup/first-admin", {"badge_id": "B-009", "name": "Zed", "pin": "753159",
+                                           "terminal": "Admin"}) in calls
+    remote.use_server(None)
+    assert accounts.admin_exists() is True                     # now the server has one: straight to sign-in
+    with pytest.raises(AuthError):
+        accounts.create_first_admin("B-010", "Late", "753159", "Admin")  # a second person racing is refused
+    # An unreachable server never opens the set-up screen: sign-in explains "server unreachable" instead.
+    monkeypatch.setattr("shared.server_client.ServerClient._request",
+                        lambda self, m, p, b=None: (_ for _ in ()).throw(ServerError("no route", None)))
+    assert accounts.admin_exists() is True

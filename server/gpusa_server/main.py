@@ -23,6 +23,7 @@ from .place_routes import router as place_router
 from .purchase_routes import router as purchase_router
 from .recovery_routes import router as recovery_router
 from .return_routes import router as return_router
+from .setup_routes import router as setup_router
 from .stock_routes import router as stock_router
 
 log = logging.getLogger("gpusa_server")
@@ -46,6 +47,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     app.include_router(ledger_router)
     app.include_router(place_router)
     app.include_router(recovery_router)
+    app.include_router(setup_router)
     app.include_router(activity_router)
     app.include_router(changes_router)
 

@@ -39,6 +39,7 @@ from database.exceptions import (
 )
 from database import (
     activity_repository, audit_repository, authz, employee_repository, remote, remote_people, remote_recovery,
+    remote_setup,
 )
 from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
@@ -228,10 +229,10 @@ def admin_exists() -> bool:
     if remote.active():  # nobody is signed in to the server without one
         return True
     if paths.get_server_url():
-        # A server installation: the administrators live on the server (the first one is made there with
-        # `python -m gpusa_server.create_admin`). This PC's own file is only a cache and may be empty, and
-        # a first administrator written to it could never sign in to the server.
-        return True
+        # A server installation: the administrators live on the server. This PC's own file is only a cache
+        # and may be empty, and a first administrator written to it could never sign in to the server, so the
+        # set-up screen is offered only when the SERVER has none (and it says "yes there is" when unreachable).
+        return not remote_setup.needs_first_admin()
     with connection_scope() as conn:
         return bool(_active_admin_employee_ids(conn))
 
@@ -332,6 +333,9 @@ def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admi
     if len(name) > employee_repository.MAX_NAME_LENGTH:
         raise UserError("err.name_too_long", n=employee_repository.MAX_NAME_LENGTH)
     _check_pin(pin, "admin")
+    if paths.get_server_url():  # the administrator is made on the server, then signs in there
+        remote_setup.create_first_admin(badge_id, name, pin, terminal)
+        return authenticate(badge_id, pin, auth.AREA_ADMIN, terminal)
     pin_hash = auth.hash_pin(pin)
 
     def run(conn):
