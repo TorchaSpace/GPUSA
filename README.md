@@ -80,6 +80,8 @@ Ctrl+C hepsini kapatır. `bash server/scripts/make_launcher.sh` masaüstüne "GP
 ## Sunucu PC'de yedek ve güvenlik
 
 - **Yedek:** sunucu her açılışta günde bir kez `~/gpusa-backups/` altına yedek alır (son 14 tutulur). Elle: `bash server/scripts/backup_db.sh`. Geri yükleme (önce API'yi durdur): `bash server/scripts/restore_db.sh ~/gpusa-backups/<dosya>.dump`. Yedek dosyasını başkasıyla paylaşma, yedekleri ara sıra başka bir diske/USB'ye de kopyala.
+- **İkinci kopya:** yedekler aynı diskte kalırsa disk bozulunca ikisi de gider. `server/.env` dosyasına `GPUSA_BACKUP_COPY_DIR=/run/media/KULLANICI/USB/gpusa` (USB/ikinci disk) ve/ya `GPUSA_BACKUP_RSYNC=kullanici@baska-pc:/yedekler/gpusa/` yaz; her yedek oraya da kopyalanır, takılı değilse uyarı verir.
+- **Açılışta kendiliğinden başlasın:** bir kez `bash server/scripts/start_server.sh` ile kurulumu yap, pencereyi kapat, sonra `sudo bash server/scripts/install_service.sh`. PC her açıldığında Docker, veritabanı ve API kendiliğinden başlar, her gece 03:00'te yedek alınır. Durum: `systemctl status gpusa-server`, kayıt: `journalctl -u gpusa-server -f`, kaldırmak için `sudo bash server/scripts/install_service.sh remove`. Servis kuruluyken `start_all.sh` sunucuyu zaten açık bulur ve dokunmaz.
 - **Kurulum kodu:** ilk açılışta `server/.env` dosyasına `GPUSA_SETUP_CODE` yazılır ve sunucu penceresinde gösterilir. İlk yöneticiyi Admin'den oluştururken bu kod sorulur, ağdaki yabancı ilk yönetici olamaz. Yönetici oluştuktan sonra kod gerekmez.
 - **Şifresiz ağ (HTTP):** PIN'ler ağ üzerinde şifresiz gider. Sadece güvendiğin ofis ağında kullan; başka şehirden erişim için sunucuyu internete açma, Tailscale/VPN kullan.
 
