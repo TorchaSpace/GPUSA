@@ -169,6 +169,19 @@ def _current_client() -> ServerClient:
     return signed_in
 
 
+def ping() -> bool:
+    """Whether the server answers right now (a signed-in check, so it also completes a sign-in that was
+    waiting for the server). Never raises. For the Admin / Depot 'offline' strip, off the GUI thread."""
+    if not active():
+        return True
+    retry_now()
+    try:
+        call("GET", "/auth/me")
+    except Exception:  # unreachable, refused or signed out: either way not "online" for the strip
+        return False
+    return True
+
+
 def path(*parts: str) -> str:
     """'/products/' + a barcode, safely quoted for a URL."""
     return "/" + "/".join(quote(str(p), safe="") for p in parts)

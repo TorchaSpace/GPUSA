@@ -65,6 +65,7 @@ from shared.constants import PURCHASE_REQUEST_POLL_INTERVAL_MS
 from shared.gui_kit.idle_lock import IdleLock
 from shared.gui_kit.live_updates import DataWatcher
 from shared.gui_kit.polling import PollingTimer
+from shared.gui_kit.server_status import ServerStatusStrip
 from shared.i18n import tr
 
 def build_nav_sections() -> list[NavSection]:
@@ -154,7 +155,14 @@ class MainWindow(QMainWindow):
         self._add_legacy_reports_button()
         self._install_shared_header_controls()
 
-        layout.addWidget(self._stack, stretch=1)
+        right = QWidget()
+        right_col = QVBoxLayout(right)
+        right_col.setContentsMargins(0, 0, 0, 0)
+        right_col.setSpacing(0)
+        self._server_strip = ServerStatusStrip({})  # "server unreachable: read-only"; hidden otherwise
+        right_col.addWidget(self._server_strip)
+        right_col.addWidget(self._stack, stretch=1)
+        layout.addWidget(right, stretch=1)
         self.setCentralWidget(central)
 
         self._sidebar.page_selected.connect(self._show_page)

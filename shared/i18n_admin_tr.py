@@ -917,6 +917,7 @@ TR_ADMIN = {
     "err.self_remove": "Kendi hesabınızı silemezsiniz - başka bir yöneticiden isteyin.",
     "err.self_role": "Kendi hesabınızın rolünü değiştiremezsiniz - başka bir yöneticiden isteyin.",
     "err.server_unreachable": "Sunucuya ulaşılamadı. {reason}",
+    "server.read_only_offline": "Sunucuya ulaşılamıyor: sunucudan gelen son veriler gösteriliyor. Sunucu yeniden cevap verene kadar değişiklik yapılamaz.",
     "err.server_refused": "Sunucu kabul etmedi: {message}",
     "err.server_not_yet": "Bu işlem sunucu modunda henüz yok. Bu bilgisayarın verisinde yapmak için sunucu modunu kapatın (Admin > Sunucu (test)).",
     "err.session_invalid": "Bu oturum artık geçerli değil - hesap değiştirildi veya kapatıldı. Yeniden giriş yapın.",
