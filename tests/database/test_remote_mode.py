@@ -954,7 +954,7 @@ def test_first_administrator_is_made_on_the_server_not_in_the_local_file(monkeyp
     session = accounts.create_first_admin("b-009", "Zed", "753159", "Admin")
     assert (session.badge_id, session.role, session.area) == ("B-009", "admin", AREA_ADMIN)
     assert ("POST", "/setup/first-admin", {"badge_id": "B-009", "name": "Zed", "pin": "753159",
-                                           "terminal": "Admin"}) in calls
+                                           "terminal": "Admin", "setup_code": ""}) in calls
     remote.use_server(None)
     assert accounts.admin_exists() is True                     # now the server has one: straight to sign-in
     with pytest.raises(AuthError):
