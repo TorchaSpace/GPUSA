@@ -6,10 +6,11 @@ Run locally:  uvicorn gpusa_server.main:app --reload   (from the server/ dir)
 from __future__ import annotations
 
 import logging
+from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Response, status
 
-from . import __version__, db
+from . import __version__, db, discovery
 from .activity_routes import changes_router, router as activity_router
 from .auth_routes import router as auth_router
 from .config import Settings, load_settings
@@ -33,7 +34,16 @@ def create_app(settings: Settings | None = None) -> FastAPI:
     settings = settings if settings is not None else load_settings()
     log.info("Starting GPUSA server %s with %r", __version__, settings)
 
-    app = FastAPI(title="GPUSA API", version=__version__)
+    @asynccontextmanager
+    async def lifespan(_: FastAPI):
+        responder = discovery.start_from_environment()  # lets new PCs on the network find this server
+        try:
+            yield
+        finally:
+            if responder is not None:
+                responder.stop()
+
+    app = FastAPI(title="GPUSA API", version=__version__, lifespan=lifespan)
     app.state.settings = settings
     app.include_router(auth_router)
     app.include_router(product_router)

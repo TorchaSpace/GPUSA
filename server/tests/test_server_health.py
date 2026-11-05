@@ -43,3 +43,33 @@ def test_health_db_against_real_postgres():
     settings = Settings(database_url=os.environ["GPUSA_TEST_DATABASE_URL"])
     r = TestClient(create_app(settings)).get("/health/db")
     assert r.status_code == 200, r.json()
+
+
+def test_network_discovery_answers_the_question_and_only_that():
+    """New PCs on the network ask 'GPUSA-DISCOVER?' by UDP broadcast; the answer names the API port, nothing else."""
+    import json
+    import socket
+
+    from gpusa_server import discovery
+
+    responder = discovery.Responder(port=0, http_port=8123, host="127.0.0.1").start()
+    try:
+        ask = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        ask.settimeout(2)
+        ask.sendto(discovery.QUESTION, ("127.0.0.1", responder.port))
+        answer = json.loads(ask.recvfrom(512)[0])
+        assert answer["gpusa"] == 1 and answer["port"] == 8123 and set(answer) == {"gpusa", "port", "version"}
+        ask.sendto(b"something else", ("127.0.0.1", responder.port))
+        ask.settimeout(0.5)
+        with pytest.raises(socket.timeout):
+            ask.recvfrom(512)
+        ask.close()
+    finally:
+        responder.stop()
+
+
+def test_discovery_can_be_switched_off(monkeypatch):
+    from gpusa_server import discovery
+
+    monkeypatch.setenv("GPUSA_DISCOVERY", "0")
+    assert discovery.start_from_environment() is None
