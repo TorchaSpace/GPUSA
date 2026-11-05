@@ -50,7 +50,7 @@ def test_wrong_guesses_lock_recovery_for_both_methods(client):
     assert reset(client, "answer", "nope!").status_code == 401  # the fifth wrong guess locks it
     locked = reset(client, "answer", "fistik")
     assert locked.status_code == 423 and "locked" in locked.json()["detail"]
-    sql("UPDATE app_settings SET value = '' WHERE key = 'recovery.locked_until'")
+    sql("UPDATE app_settings SET value = '' WHERE key LIKE 'recovery.locked_until%%'")
     assert reset(client, "answer", " FISTIK ").status_code == 200  # case, accents and spaces don't matter
 
 
@@ -121,3 +121,14 @@ def test_reset_refuses_a_badge_someone_else_has(client):
                                              "new_pin": "753159", "new_badge_id": other})
     assert r.status_code == 409
     assert sign_in(client, PIN) == 200  # nothing changed
+
+
+def test_one_address_locking_itself_out_does_not_lock_the_others(client):
+    h = login(client)
+    code = client.post("/recovery/code", headers=h).json()["code"]
+    for _ in range(5):
+        reset(client, "code", "AAAA-AAAA-AAAA-AAAA")
+    assert reset(client, "code", code).status_code == 423   # this address is locked
+    sql("UPDATE app_settings SET key = 'recovery.locked_until:10.9.9.9' WHERE key = 'recovery.locked_until:testclient'")
+    sql("DELETE FROM app_settings WHERE key LIKE 'recovery.failed%%'")
+    assert reset(client, "code", code).status_code == 200   # another address was never locked

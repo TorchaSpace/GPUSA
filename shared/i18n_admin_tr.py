@@ -7,6 +7,8 @@ TR_ADMIN = {
     "admin.apply_price": "Fiyatı Uygula",
     "admin.auth.badge": "Rozet numarası",
     "admin.auth.create": "Oluştur ve giriş yap",
+    "admin.auth.setup_code": "Kurulum kodu",
+    "admin.auth.setup_code_hint": "sunucu PC açılırken orada yazar",
     "admin.auth.first_intro": "Henüz kimse giriş yapamaz. İlk yöneticiyi oluşturun - bu rozet ve PIN ile Admin'i açacaksınız, diğer herkesi Ayarlar'dan ekleyebilirsiniz. Personel'de zaten kayıtlı bir rozet ya da yeni bir rozet kullanın.",
     "admin.auth.first_title": "İlk yöneticiyi oluşturun",
     "admin.auth.mismatch": "İki PIN eşleşmiyor.",

@@ -8,6 +8,9 @@ with ``python -m gpusa_server.create_admin``. Same PIN rules as that command.
 
 from __future__ import annotations
 
+import hmac
+import os
+
 from fastapi import APIRouter, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
@@ -29,13 +32,22 @@ class FirstAdminIn(BaseModel):
     name: str = Field(default="", max_length=120)
     pin: str = Field(min_length=1, max_length=64)
     terminal: str = Field(default="Admin", max_length=64)
+    setup_code: str = Field(default="", max_length=64)
+
+
+def _setup_code() -> str:
+    """GPUSA_SETUP_CODE in the server's environment (.env). When set, whoever creates the first administrator
+    must type it, so a stranger who merely reaches the server on the network cannot claim it. Read on every
+    call so it can be changed without code changes."""
+    return (os.environ.get("GPUSA_SETUP_CODE") or "").strip()
 
 
 @router.get("/status")
 def status(request: Request) -> dict:
     """Whether Admin should offer 'create the first administrator'. Anyone may ask; it says nothing else."""
     with db.connect(request.app.state.settings) as conn:
-        return {"needs_first_admin": conn.execute(_ACTIVE_ADMINS).fetchone() is None}
+        needs = conn.execute(_ACTIVE_ADMINS).fetchone() is None
+    return {"needs_first_admin": needs, "needs_setup_code": needs and bool(_setup_code())}
 
 
 @router.post("/first-admin", status_code=201)
@@ -46,6 +58,9 @@ def first_admin(body: FirstAdminIn, request: Request) -> dict:
         raise _fail(422, "A badge is required.")
     if problem := pin_problem(body.pin, "admin"):
         raise _fail(422, problem)
+    expected = _setup_code()
+    if expected and not hmac.compare_digest(expected.upper().encode(), (body.setup_code or "").strip().upper().encode()):
+        raise _fail(403, "The setup code is wrong. It is printed where the server was started (GPUSA_SETUP_CODE in .env).")
     pin_hash = security.hash_pin(body.pin)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row

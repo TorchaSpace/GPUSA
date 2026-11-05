@@ -124,6 +124,8 @@ for i in "${!APP_PIDS[@]}"; do
     fi
 done
 
+code="$(grep -s '^GPUSA_SETUP_CODE=' "$REPO_DIR/server/.env" | tail -n 1 | cut -d= -f2-)"
+[ -n "$code" ] && echo "İlk yönetici henüz yoksa Admin'in sorduğu KURULUM KODU: $code (kimseyle paylaşma)"
 echo
 echo "Hepsi $URL sunucusunu kullanıyor. İlk girişte sunucudaki rozet ve PIN'ini (örn. B-001) kullan."
 ips="$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"

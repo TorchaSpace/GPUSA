@@ -3,6 +3,8 @@
 EN_ADMIN = {
     "admin.auth.badge": "Badge ID",
     "admin.auth.create": "Create and sign in",
+    "admin.auth.setup_code": "Setup code",
+    "admin.auth.setup_code_hint": "shown on the server PC when it starts",
     "admin.auth.first_intro": "Nobody can sign in yet. Create the first administrator - you'll use this badge and PIN to open Admin, and can add everyone else in Settings. Use a badge that's already in Workforce, or a new one.",
     "admin.auth.first_title": "Create the first administrator",
     "admin.auth.mismatch": "The two PINs don't match.",

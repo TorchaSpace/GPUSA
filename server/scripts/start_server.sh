@@ -91,6 +91,17 @@ set -a; . ./.env; set +a
 ok ".env okundu (DATABASE_URL tanımlı)"
 if [ -n "${GPUSA_JWT_SECRET:-}" ]; then ok "GPUSA_JWT_SECRET tanımlı"; else bad "GPUSA_JWT_SECRET yok: giriş çalışmaz (.env'ye ekle)"; fi
 
+# --- 2b. Günlük yedek ve kurulum kodu ----------------------------------------
+if [ "${GPUSA_SKIP_DOCKER:-0}" != "1" ] && [ "${GPUSA_SKIP_BACKUP:-0}" != "1" ]; then
+    if bash "$SCRIPT_DIR/backup_db.sh" --daily >/dev/null 2>&1; then ok "Günlük yedek tamam (~/gpusa-backups)"; else warn "Yedek alınamadı (bash server/scripts/backup_db.sh ile elle dene)"; fi
+fi
+if [ -z "${GPUSA_SETUP_CODE:-}" ]; then
+    # Yeni kurulumda ilk yöneticiyi sunucuya ulaşan herkes kuramasın: rastgele bir kurulum kodu .env'ye yazılır.
+    GPUSA_SETUP_CODE="$("$VENV/bin/python" -c "import secrets;print(''.join(secrets.choice('ABCDEFGHJKMNPQRSTUVWXYZ23456789') for _ in range(8)))")"
+    printf '\nGPUSA_SETUP_CODE=%s\n' "$GPUSA_SETUP_CODE" >> .env
+    export GPUSA_SETUP_CODE
+fi
+
 # --- 3. Veritabanı bağlantısı ve tablolar ------------------------------------
 step "3/5  Veritabanı bağlantısı ve tablolar"
 if "$VENV/bin/python" -c "from gpusa_server import db; from gpusa_server.config import load_settings; db.ping(load_settings())" 2>/dev/null; then
@@ -142,6 +153,9 @@ else
     warn "ufw açık: başka bilgisayardan erişim için 'sudo ufw allow $PORT/tcp' ve otomatik bulma için 'sudo ufw allow 47808/udp' gerekebilir"
 fi
 
+echo
+echo "İlk yönetici henüz yoksa Admin'in sorduğu KURULUM KODU: $GPUSA_SETUP_CODE"
+echo "(Yönetici oluştuktan sonra gerekmez; kimseyle paylaşma.)"
 echo
 echo "Başka bilgisayardaki Admin > Sunucu (test) sayfasına şunlardan birini yaz:"
 ips="$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"

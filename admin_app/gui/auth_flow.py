@@ -69,6 +69,14 @@ class FirstAdminDialog(QDialog):
         self.badge_input = QLineEdit()
         self.pin_input = _pin_field()
         self.pin_again_input = _pin_field()
+        self.setup_code_input = QLineEdit()
+        self.setup_code_input.setPlaceholderText(tr("admin.auth.setup_code_hint"))
+        try:
+            self._needs_code = account_repository.needs_setup_code()
+        except DATABASE_ERRORS:
+            self._needs_code = False
+        if self._needs_code:
+            form.addRow(tr("admin.auth.setup_code"), self.setup_code_input)
         form.addRow(tr("admin.auth.your_name"), self.name_input)
         form.addRow(tr("admin.auth.badge"), self.badge_input)
         form.addRow(tr("admin.auth.pin_label").format(n=auth.MIN_ADMIN_PIN_LENGTH), self.pin_input)
@@ -114,7 +122,8 @@ class FirstAdminDialog(QDialog):
             # Checked first, so a bad answer doesn't leave an admin without a way back in.
             account_repository.validate_security_answer(self.question_input.currentText(), self.answer_input.text())
             self.session = account_repository.create_first_admin(
-                self.badge_input.text(), self.name_input.text(), self.pin_input.text(), terminal_name()
+                self.badge_input.text(), self.name_input.text(), self.pin_input.text(), terminal_name(),
+                self.setup_code_input.text() if self._needs_code else "",
             )
             account_repository.set_security_question(
                 self.session, self.pin_input.text(), self.question_input.currentText(), self.answer_input.text()
