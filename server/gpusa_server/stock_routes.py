@@ -23,7 +23,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request, status
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
-from . import authz, db
+from . import activity, authz, db
 from .auth_routes import Session, current_session
 from .product_routes import MAX_UNITS
 
@@ -113,8 +113,10 @@ def _level(conn, kind: str, code: str, barcode: str) -> int:
     return row["quantity"] if row else 0
 
 
-def _change(conn, kind: str, code: str, barcode: str, delta: int, *, change_total: bool) -> int:
-    """Add delta (may be negative) to one level; 409 before writing if it would go below zero."""
+def _change(conn, kind: str, code: str, barcode: str, delta: int, *, change_total: bool,
+            alert: bool = False, actor: str | None = None) -> int:
+    """Add delta (may be negative) to one level; 409 before writing if it would go below zero. With `alert`
+    a drop that crosses the reorder level (or empties the shelf) lands in the bell, under `actor`."""
     current = _level(conn, kind, code, barcode)
     new = current + delta
     if new < 0:
@@ -127,6 +129,8 @@ def _change(conn, kind: str, code: str, barcode: str, delta: int, *, change_tota
     if change_total and delta:
         conn.execute("UPDATE products SET stock_quantity = stock_quantity + %s, updated_at = now() "
                      "WHERE barcode = %s", (delta, barcode))
+    if alert and delta < 0:
+        activity.stock_crossing(conn, kind, code, barcode, current, new, actor=actor)
     return new
 
 
@@ -207,7 +211,8 @@ def book_movement(body: MovementIn, request: Request, session: Session = Depends
             from .people_routes import operator_label  # people_routes imports this module
 
             actor = operator_label(conn, body.operator_badge, code if kind == "warehouse" else None)
-        new = _change(conn, kind, code, product["barcode"], sign * body.quantity, change_total=True)
+        new = _change(conn, kind, code, product["barcode"], sign * body.quantity, change_total=True,
+                      alert=True, actor=actor)
         row = _log(conn, kind, code, product["barcode"], body.direction, body.quantity, reason=body.direction,
                    actor=actor, note=_clean(body.note), reference=_clean(body.reference),
                    bin_code=_clean(body.bin_code))
@@ -250,7 +255,7 @@ def transfer(body: TransferIn, request: Request, session: Session = Depends(curr
         for (kind, code), qty in legs:
             _require_place(conn, kind, code)
             _require_can_hold(conn, kind, code, qty)
-            _change(conn, *src, barcode, -qty, change_total=False)
+            _change(conn, *src, barcode, -qty, change_total=False, alert=True, actor=actor)
             _change(conn, kind, code, barcode, qty, change_total=False)
             _log(conn, *src, barcode, "dispatch", qty, reason="transfer", actor=actor, note=note,
                  reference=Place.label(kind, code))
@@ -290,7 +295,8 @@ def count(body: CountIn, request: Request, session: Session = Depends(current_se
                 _change(conn, "unassigned", "", barcode, -absorbed, change_total=False)
                 _change(conn, kind, code, barcode, absorbed, change_total=False)
             if diff - absorbed:
-                _change(conn, kind, code, barcode, diff - absorbed, change_total=True)
+                _change(conn, kind, code, barcode, diff - absorbed, change_total=True, alert=True,
+                        actor=authz.actor_label(session))
             _log(conn, kind, code, barcode, "receive" if diff > 0 else "dispatch", abs(diff), reason="count",
                  actor=authz.actor_label(session), note=_clean(body.note) or f"Counted {body.counted}")
         return {"difference": diff}

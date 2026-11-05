@@ -27,7 +27,7 @@ from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
-from . import authz, db
+from . import activity, authz, db
 from .auth_routes import Session, current_session
 from .product_routes import MAX_AMOUNT, MAX_UNITS
 
@@ -136,11 +136,13 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
                          if _money(line.unit_price) != products[line.barcode.strip().upper()]["price"]]
                 if moved:
                     raise _fail(409, "Prices changed: " + "; ".join(moved))
+            have_before: dict[str, int] = {}
             for barcode, quantity in wanted.items():
                 stored = products[barcode]["barcode"]
                 have = conn.execute("SELECT quantity FROM stock_levels WHERE location_kind = %s AND location_code = %s "
                                     "AND product_barcode = %s", (kind, code, stored)).fetchone()
                 have = have["quantity"] if have else 0
+                have_before[barcode] = have
                 if quantity > have:
                     raise _fail(409, f"Only {have} units of {stored} at {code or 'Unassigned'}; the sale needs {quantity}.")
 
@@ -158,6 +160,7 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
                     "unit_price_at_sale, quantity, unit_cost_at_sale, cost_known) VALUES (%s, %s, %s, %s, %s, %s, %s)",
                     (head["id"], product["barcode"], (line.name or "").strip() or product["name"],
                      _money(line.unit_price), line.quantity, cost, cost > 0))
+            cashier = authz.actor_label(session)
             for barcode, quantity in wanted.items():
                 stored = products[barcode]["barcode"]
                 conn.execute("UPDATE stock_levels SET quantity = quantity - %s, updated_at = now() "
@@ -165,6 +168,11 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
                              (quantity, kind, code, stored))
                 conn.execute("UPDATE products SET stock_quantity = stock_quantity - %s, updated_at = now() "
                              "WHERE barcode = %s", (quantity, stored))
+                activity.stock_crossing(conn, kind, code, stored, have_before[barcode], have_before[barcode] - quantity,
+                                        source="pos", actor=cashier)
+            if not offline:  # a till catching up after an outage must not flood the feed with old sales
+                activity.record(conn, "sale", source="pos", place=(kind, code), actor=cashier, id=head["id"],
+                                total=float(total), units=sum(wanted.values()), method=body.payment_method)
             return _read_sale(conn, head["id"])
     except psycopg.errors.UniqueViolation:
         # Two uploads of one sale raced: the other one stored it.

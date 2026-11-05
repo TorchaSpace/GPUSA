@@ -247,7 +247,8 @@ def dispatch_shipment(shipment_id: int, request: Request, session: Session = Dep
         _require_place(conn, kind, code)
         for line in sorted(shipment.lines, key=lambda l: l.product_barcode):
             _lock_product(conn, line.product_barcode)
-            _change(conn, kind, code, line.product_barcode, -line.expected_qty, change_total=False)
+            _change(conn, kind, code, line.product_barcode, -line.expected_qty, change_total=False, alert=True,
+                    actor=actor)
             _log(conn, kind, code, line.product_barcode, "dispatch", line.expected_qty, reason="shipment",
                  actor=actor, reference=number, note=f"Loaded for {shipment.dealership_name}")
         conn.execute("UPDATE shipments SET status = 'in_transit', departed_at = now(), stock_moved = TRUE, "
