@@ -47,7 +47,7 @@ def test_refund_restocks_and_pays_back_the_way_it_came(client, shelf):
     assert [(l["barcode"], l["quantity"], l["restock"]) for l in got["lines"]] == [("A1", 2, True)]
     assert (level("dealership", "CST-04", "A1"), total("A1")) == (4, 4)
     assert sql("SELECT action, kind, target FROM admin_audit WHERE action = 'refunded'") == [("refunded", "sale", f"#{sid}")]
-    assert sql("SELECT kind, severity FROM activity_events") == [("refund", "warning")]  # self-approved
+    assert sql("SELECT kind, severity FROM activity_events WHERE kind = 'refund'") == [("refund", "warning")]  # self-approved
 
 
 def test_damaged_goods_move_only_money(client, shelf):
@@ -83,7 +83,7 @@ def test_a_manager_must_approve_with_the_right_pin(client, shelf):
     ok = refund(client, shelf, sid, badge="m-1", pin="2468")
     assert ok.status_code == 200, ok.text
     assert ok.json()["approved_by"] == "Mo · M-1"
-    assert sql("SELECT severity FROM activity_events") == [("notice",)]
+    assert sql("SELECT severity FROM activity_events WHERE kind = 'refund'") == [("notice",)]
     events = [e[0] for e in sql("SELECT event FROM auth_events WHERE badge_id = 'M-1' ORDER BY id")]
     assert "failed" in events and events[-1] == "pin_confirmed"
 

@@ -867,6 +867,7 @@ EN_ADMIN = {
     "err.self_remove": "You can't remove your own account - ask another administrator.",
     "err.self_role": "You can't change the role of your own account - ask another administrator.",
     "err.server_unreachable": "The server could not be reached. {reason}",
+    "server.read_only_offline": "The server cannot be reached: showing the last data it sent. Changes are not possible until it answers again.",
     "err.server_refused": "The server said no: {message}",
     "err.server_not_yet": "This is not available in server mode yet. Switch server mode off (Admin > Server (test)) to do it on this computer's data.",
     "err.session_invalid": "This sign-in is no longer valid - the account was changed or switched off. Sign in again.",

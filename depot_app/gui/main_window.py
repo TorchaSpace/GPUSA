@@ -48,6 +48,7 @@ from depot_app.gui.slide_alerts import SlideAlerts
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared.gui_kit.motion import fade_in, toast
+from shared.gui_kit.server_status import ServerStatusStrip
 from depot_app.gui.auth_flow import console_sign_in_dialog, switch_depot_dialog
 from shared.gui_kit.language_switch import LanguageSwitch
 from shared import current_session
@@ -95,6 +96,8 @@ class MainWindow(QMainWindow):
         outer.setSpacing(16)
 
         outer.addWidget(self._build_header())
+        self._server_strip = ServerStatusStrip(INDUSTRY_PALETTE)  # "server unreachable: read-only"; hidden otherwise
+        outer.addWidget(self._server_strip)
         self._low_stock_banner = LowStockBanner(self.warehouse.location)
         outer.addWidget(self._low_stock_banner)
 

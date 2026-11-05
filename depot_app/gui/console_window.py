@@ -71,6 +71,7 @@ from depot_app.gui.components.warehouse_card import WarehouseCard
 from depot_app.gui.shipments_page import ShipmentsPage
 from depot_app.gui.manager_portal_dialog import ManagerPortalDialog
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
+from shared.gui_kit.server_status import ServerStatusStrip
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
@@ -139,6 +140,8 @@ class ConsoleWindow(QMainWindow):
         main_col.setContentsMargins(24, 16, 24, 20)
         main_col.setSpacing(16)
         main_col.addWidget(self._build_header())
+        self._server_strip = ServerStatusStrip(INDUSTRY_PALETTE)  # "server unreachable: read-only"; hidden otherwise
+        main_col.addWidget(self._server_strip)
 
         self._stack = QStackedWidget()
         self._pages: dict[str, QWidget] = {}

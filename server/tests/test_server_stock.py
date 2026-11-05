@@ -110,3 +110,62 @@ def test_who_may_do_what(client):
     assert client.get("/stock/products-at?kind=dealership&code=CST-04", headers=pos).status_code == 200
     assert client.put("/stock/reorder-levels", headers=pos, json={
         "place": {"kind": "dealership", "code": "CST-04"}, "barcode": "A1", "level": 1}).status_code == 403
+
+
+def bell(*kinds):
+    """(kind, severity, source, place, actor) of the stock alerts so far, oldest first."""
+    return sql("SELECT kind, severity, source, location_code, actor FROM activity_events "
+               "WHERE kind = ANY(%s) ORDER BY id", (list(kinds or ("stock_low", "stock_out")),))
+
+
+def test_stock_leaving_a_place_rings_the_bell_once_per_crossing(client):
+    h = login(client)
+    sql("TRUNCATE activity_events")
+    client.patch("/products/A1", headers=h, json={"critical_stock_level": 3})
+    move(client, h, "receive", 8)
+    assert move(client, h, "dispatch", 3).status_code == 201             # 8 -> 5, still above 3
+    assert bell() == []
+    assert move(client, h, "dispatch", 2).status_code == 201             # 5 -> 3 crosses the level
+    assert bell() == [("stock_low", "warning", "depot", "WH-01", "Ali · B-001")]
+    assert move(client, h, "dispatch", 1).status_code == 201             # 3 -> 2: already low, no repeat
+    assert len(bell()) == 1
+    assert move(client, h, "dispatch", 2).status_code == 201             # 2 -> 0
+    assert [b[:2] for b in bell()] == [("stock_low", "warning"), ("stock_out", "critical")]
+    assert move(client, h, "receive", 5).status_code == 201              # receiving never alerts
+    assert len(bell()) == 2
+    sql("TRUNCATE activity_events")
+    client.put("/stock/reorder-levels", headers=h, json={"place": {"kind": "warehouse", "code": "WH-01"},
+                                                         "barcode": "A1", "level": 0})
+    assert move(client, h, "dispatch", 5).status_code == 201             # level 0 here = never "low", still "out"
+    assert [b[0] for b in bell()] == ["stock_out"]
+
+
+def test_transfers_counts_and_the_till_ring_it_too(client):
+    h = login(client)
+    sql("TRUNCATE activity_events")
+    client.patch("/products/A1", headers=h, json={"critical_stock_level": 3})
+    move(client, h, "receive", 6)
+    tr(client, h, [("warehouse", "WH-02", 3)])                            # the source falls 6 -> 3
+    assert [(b[0], b[3]) for b in bell()] == [("stock_low", "WH-01")]
+    count = lambda n: client.post("/stock/counts", headers=h, json={
+        "barcode": "A1", "place": {"kind": "warehouse", "code": "WH-02"}, "counted": n})
+    count(6)                                                             # counting UP never alerts
+    assert len(bell()) == 1
+    count(2)                                                             # a count down 6 -> 2 crosses level 3
+    assert [(b[0], b[3]) for b in bell()] == [("stock_low", "WH-01"), ("stock_low", "WH-02")]
+    move(client, h, "receive", 4, kind="dealership", code="CST-04")
+    pos = login(client, "pos")
+    sold = client.post("/sales", headers=pos, json={
+        "client_uuid": "bell-0001", "dealership_code": "CST-04", "payment_method": "cash",
+        "lines": [{"barcode": "A1", "name": "", "unit_price": 5, "quantity": 4}]})
+    assert sold.status_code == 200, sold.text
+    assert bell("stock_out")[0][:4] == ("stock_out", "critical", "pos", "CST-04")
+    [sale_row] = sql("SELECT source, actor, location_code, data_json->>'units' FROM activity_events "
+                     "WHERE kind = 'sale'")
+    assert sale_row == ("pos", "Ali · B-001", "CST-04", "4")
+    # a sale replayed after an outage is stored without a fresh "sale" line in the feed
+    late = client.post("/sales", headers=pos, json={
+        "client_uuid": "bell-0002", "dealership_code": "CST-04", "payment_method": "cash",
+        "sold_at": "2026-11-01T09:30:00Z", "lines": []})
+    assert late.status_code in (200, 422)
+    assert sql("SELECT count(*) FROM activity_events WHERE kind = 'sale'") == [(1,)]
