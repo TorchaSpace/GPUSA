@@ -65,6 +65,7 @@ TR = {
     "settings.change_folder": "Klas\u00f6r\u00fc de\u011fi\u015ftir...",
     "signin.forgot": "PIN'ini ya da rozet numaran\u0131 m\u0131 unuttun?",
     "recovery.erase_intro": "Bu hesap i\u00e7in geri d\u00f6n\u00fc\u015f yolu kurulmam\u0131\u015f. S\u0131f\u0131rdan ba\u015flayabilirsin: her \u015fey veritaban\u0131n\u0131n yan\u0131nda bir yedek dosyaya kaydedilir, uygulama bo\u015falt\u0131l\u0131r ve yeni bir y\u00f6netici olu\u015fturursun.",
+    "recovery.server_help": "Verilerin sunucuda duruyor, buradan hi\u00e7bir \u015fey silinemez. G\u00fcvenlik sorusu ve kurtarma kodu yoksa yeni PIN'i sunucu bilgisayarda belirle: GPUSA klas\u00f6r\u00fcnde bir terminal a\u00e7 ve \u015funu \u00e7al\u0131\u015ft\u0131r\n\ncd server && python -m gpusa_server.create_admin ROZET \"Ad Soyad\"\n\nSadece o hesab\u0131n PIN'i de\u011fi\u015fir; t\u00fcm \u00fcr\u00fcnler, sat\u0131\u015flar ve stok kay\u0131tlar\u0131 oldu\u011fu gibi kal\u0131r. (Rozeti unuttuysan sunucu bilgisayarda: docker exec -it gpusa-db psql -U postgres gpusa -c \"select e.badge_id, e.name from accounts a join employees e on e.id = a.employee_id where a.role = 'admin'\")",
     "recovery.erase_confirm": "T\u00fcm verilerin silinece\u011fini anl\u0131yorum (yedek dosya saklan\u0131r)",
     "recovery.erase": "Sil ve s\u0131f\u0131rdan ba\u015fla",
     "recovery.title": "Admin'e yeniden gir",

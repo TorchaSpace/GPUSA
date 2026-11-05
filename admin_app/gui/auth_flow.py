@@ -17,7 +17,7 @@ from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
 from database.connection import ERASE_CONFIRM_WORDS, erase_all_data, erase_confirmed
 from database.exceptions import DATABASE_ERRORS, DataAccessError
-from shared import auth, security_question
+from shared import auth, paths, security_question
 from shared.i18n import tr
 from shared.auth import Session
 from shared.gui_kit.sign_in_dialog import SignInDialog
@@ -248,7 +248,12 @@ class ResetAdminAccessDialog(QDialog):
         except DATABASE_ERRORS:
             self._has_code, self._question = False, None
         # Ways back in, most everyday first; "Try another way" cycles through them.
-        self._modes = [m for m, on in (("question", bool(self._question)), ("code", self._has_code), ("reset", True)) if on]
+        # On a server installation the data is on the server: "start over" would only empty this PC's cache (and
+        # any sales still waiting to be sent), never fix the sign-in, so it is replaced by how to set a new PIN
+        # on the server PC.
+        on_server = bool(paths.get_server_url())
+        self._modes = [m for m, on in (("question", bool(self._question)), ("code", self._has_code),
+                                       ("server_help", on_server), ("reset", not on_server)) if on]
         self._mode = self._modes[0]
         self.setWindowTitle(tr("recovery.title"))
         self.setMinimumWidth(480)
@@ -338,6 +343,10 @@ class ResetAdminAccessDialog(QDialog):
         self._reset_host.setVisible(self._mode == "reset")
         if self._mode == "reset":
             self._intro.setText(tr("recovery.erase_intro"))
+            self._form_host.hide()
+        elif self._mode == "server_help":
+            self._intro.setText(tr("recovery.server_help"))
+            self._intro.setTextInteractionFlags(Qt.TextSelectableByMouse)  # the command can be copied
             self._form_host.hide()
         else:
             self.code_input.clear()

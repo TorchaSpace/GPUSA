@@ -298,3 +298,22 @@ def test_a_locked_database_at_sign_in_shows_the_dialog_too(qapp, monkeypatch):
     monkeypatch.setattr(admin_main, "sign_in", locked)
     assert admin_main.main() == 1
     assert len(shown) == 1 and "database is locked" in shown[0][2]
+
+
+def test_forgot_pin_on_a_server_installation_never_offers_to_erase(qapp, monkeypatch):
+    """The data is on the server: 'start over' would only empty this PC's cache (and unsent sales), so it is
+    replaced by how to set a new PIN on the server PC - which changes the PIN and nothing else."""
+    from shared import paths
+    from admin_app.gui import auth_flow
+    from admin_app.gui.auth_flow import ResetAdminAccessDialog
+
+    monkeypatch.setattr(paths, "get_server_url", lambda: "http://srv")
+    monkeypatch.setattr(auth_flow.account_repository, "has_recovery_code", lambda: False)
+    monkeypatch.setattr(auth_flow.account_repository, "get_security_question", lambda: None)
+    monkeypatch.setattr(auth_flow.account_repository, "list_active_admins", lambda: [])
+    dialog = ResetAdminAccessDialog()
+    assert dialog.mode == "server_help" and "reset" not in dialog._modes
+    assert "create_admin" in dialog._intro.text()
+    assert not dialog._reset_host.isVisibleTo(dialog) and not dialog._form_host.isVisibleTo(dialog)
+    dialog.close()
+    dialog.deleteLater()
