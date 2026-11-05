@@ -18,7 +18,7 @@ person to look at.
 
 from __future__ import annotations
 
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from decimal import ROUND_HALF_UP, Decimal
 from typing import Literal
 
@@ -37,6 +37,7 @@ SELLERS = frozenset({"admin", "cashier"})
 POS_AREA = frozenset({"pos"})
 READERS = frozenset({"admin", "cashier", "depot_manager"})
 _CENT = Decimal("0.01")
+OFFLINE_DAYS = 30  # how long a till may sit offline before its sales are no longer believed
 
 
 def _fail(code: int, message: str) -> HTTPException:
@@ -101,6 +102,11 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
     shop = (body.dealership_code or "").strip().upper() or None
     kind, code = ("dealership", shop) if shop else ("unassigned", "")
     offline = body.sold_at is not None
+    if offline:  # a till that was offline sends the real time, which can't be in the future or months ago
+        now = datetime.now(timezone.utc)
+        sold = body.sold_at if body.sold_at.tzinfo else body.sold_at.replace(tzinfo=timezone.utc)
+        if sold > now + timedelta(minutes=10) or sold < now - timedelta(days=OFFLINE_DAYS):
+            raise _fail(422, f"An offline sale must be from the last {OFFLINE_DAYS} days and not in the future.")
     wanted: dict[str, int] = {}
     for line in body.lines:
         key = line.barcode.strip().upper()
@@ -115,6 +121,8 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
             if already is not None:
                 return _read_sale(conn, already["id"], duplicate=True)
             authz.require_live(conn, session, roles=SELLERS)
+            if authz.scope_shop(conn, session, shop) != shop:   # a cashier sells only for their own dealership
+                raise _fail(403, "This till belongs to another dealership.")
             if shop:
                 place = conn.execute("SELECT name, is_active FROM dealerships WHERE code = %s FOR UPDATE",
                                      (shop,)).fetchone()
@@ -130,7 +138,10 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
                 if not row["is_active"] and not offline:
                     raise _fail(409, f"Product {row['barcode']} is switched off.")
                 products[barcode] = row
-            if not offline:
+            if offline:  # the customer paid the shelf price of that moment, which can be old; a cheaper one is flagged
+                cheaper = [f"{l.barcode.strip().upper()}: {_money(l.unit_price)} < {products[l.barcode.strip().upper()]['price']}"
+                           for l in body.lines if _money(l.unit_price) < products[l.barcode.strip().upper()]["price"]]
+            else:
                 moved = [f"{line.barcode}: {_money(line.unit_price)} -> {products[line.barcode.strip().upper()]['price']}"
                          for line in body.lines
                          if _money(line.unit_price) != products[line.barcode.strip().upper()]["price"]]
@@ -170,6 +181,9 @@ def record_sale(body: SaleIn, request: Request, session: Session = Depends(curre
                              "WHERE barcode = %s", (quantity, stored))
                 activity.stock_crossing(conn, kind, code, stored, have_before[barcode], have_before[barcode] - quantity,
                                         source="pos", actor=cashier)
+            if offline and cheaper:  # sold below today's price: not refused (prices change), but a person looks
+                activity.record(conn, "price_override", severity="warning", source="pos", place=(kind, code),
+                                actor=cashier, id=head["id"], lines="; ".join(cheaper), sold_at=created.isoformat())
             if not offline:  # a till catching up after an outage must not flood the feed with old sales
                 activity.record(conn, "sale", source="pos", place=(kind, code), actor=cashier, id=head["id"],
                                 total=float(total), units=sum(wanted.values()), method=body.payment_method)
@@ -191,11 +205,9 @@ def list_sales(request: Request, since: datetime, until: datetime, dealership_co
     left out); ``net=false`` gives the sales as sold, which the day count needs."""
     if session.role not in READERS:
         raise _fail(403, "Not allowed.")
-    shop = (dealership_code or "").strip().upper() or None
-    if session.role == "cashier" and not shop:
-        raise _fail(403, "Pick your dealership.")
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
+        shop = authz.scope_shop(conn, session, dealership_code)   # a cashier sees their own shop only
         ids = conn.execute(
             "SELECT id FROM transactions WHERE created_at >= %s AND created_at < %s "
             "AND (%s::text IS NULL OR dealership_code = %s) ORDER BY created_at DESC, id DESC LIMIT %s",

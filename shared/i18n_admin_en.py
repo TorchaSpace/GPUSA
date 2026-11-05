@@ -1079,6 +1079,8 @@ EN_ADMIN = {
     "activity.stock_out.detail": "Nothing left on the shelf",
     "activity.refund.title": "Refund {number}: {total} at {location}",
     "activity.refund.detail": "{reason} · approved by {actor}",
+    "activity.price_override.title": "Offline sale #{id} at {location} was below today's price",
+    "activity.price_override.detail": "{lines} · cashier {actor}",
     "activity.day_close.title": "{location} closed the day",
     "activity.day_close.detail": "{date}: counted {counted}, expected {expected}, difference {difference}",
     "activity.request_new.title": "{location} asked for {quantity} × {product}",

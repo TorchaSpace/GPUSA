@@ -65,6 +65,8 @@ def test_who_may_sell(client, shelf):
     assert sale(client, shelf).status_code == 401  # role changed since sign-in: sign in again
     sql("UPDATE accounts SET role = 'cashier'")
     till = login(client, "pos")
+    assert sale(client, till, uuid="sale-0009").status_code == 403  # a cashier whose badge has no dealership sells nowhere
+    sql("UPDATE employees SET location_type = 'Dealership', location_name = 'Coast'")
     assert sale(client, till, uuid="sale-0009").status_code == 200
     sql("UPDATE accounts SET role = 'depot_manager'")
     assert sale(client, login(client, "depot_console"), uuid="sale-0010").status_code == 403

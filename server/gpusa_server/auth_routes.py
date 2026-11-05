@@ -9,6 +9,7 @@ lands in ``auth_events``.
 
 from __future__ import annotations
 
+import hmac
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 
@@ -37,7 +38,7 @@ _bearer = HTTPBearer(auto_error=False)
 class LoginRequest(BaseModel):
     badge_id: str = Field(max_length=64)
     pin: str = Field(max_length=64)
-    area: str
+    area: str = Field(max_length=32)
     terminal: str = Field(default="", max_length=128)
 
 
@@ -125,7 +126,8 @@ def check_credentials(settings, badge_text: str, pin: str, area: str, terminal: 
                 (now, new_hash, now, row["id"]),
             )
             _log(conn, event, row["badge_id"], area, terminal)
-            found = {"id": row["id"], "role": row["role"], "badge_id": row["badge_id"], "name": row["name"]}
+            found = {"id": row["id"], "role": row["role"], "badge_id": row["badge_id"], "name": row["name"],
+                     "pin_hash": new_hash}
     if error is not None:
         raise error
     assert found is not None
@@ -143,22 +145,34 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
     return LoginResponse(
         token=security.make_token(settings.jwt_secret, account_id=who["id"], badge_id=who["badge_id"],
                                   name=who["name"], role=who["role"], area=body.area,
-                                  now=datetime.now(timezone.utc)),
+                                  pin_hash=who["pin_hash"], now=datetime.now(timezone.utc)),
         badge_id=who["badge_id"], name=who["name"], role=who["role"], area=body.area,
     )
 
 
 def current_session(request: Request,
                     credentials: HTTPAuthorizationCredentials | None = Depends(_bearer)) -> Session:
+    """Who is asking. The token proves who signed in and for which area; the account is then looked up again on
+    every request, so a switched-off, deleted or demoted person loses access at once - reads included - and the
+    role used is the one the account has NOW, not the one it had when the token was made."""
     settings = request.app.state.settings
     if credentials is None or not settings.jwt_secret:
         raise _fail(401, "Sign in first.")
     try:
         claims = security.read_token(settings.jwt_secret, credentials.credentials)
-        return Session(account_id=int(claims["sub"]), badge_id=claims["badge"], name=claims["name"],
-                       role=claims["role"], area=claims["area"])
-    except (jwt.InvalidTokenError, KeyError, ValueError):
+        account_id, area = int(claims["sub"]), str(claims["area"])
+    except (jwt.InvalidTokenError, KeyError, ValueError, TypeError):
         raise _fail(401, "Sign in again.") from None
+    with db.connect(settings) as conn:
+        conn.row_factory = dict_row
+        row = conn.execute(
+            "SELECT a.role, a.is_active, a.pin_hash, e.badge_id, e.name, e.is_active AS employee_active FROM accounts a "
+            "JOIN employees e ON e.id = a.employee_id WHERE a.id = %s", (account_id,)).fetchone()
+    if (row is None or not row["is_active"] or not row["employee_active"]
+            or row["role"] not in ALLOWED_ROLES.get(area, ())
+            or not hmac.compare_digest(str(claims.get("pf", "")), security.pin_fingerprint(row["pin_hash"]))):
+        raise _fail(401, "Your account changed. Sign in again.")   # switched off, demoted, or the PIN was changed
+    return Session(account_id=account_id, badge_id=row["badge_id"], name=row["name"], role=row["role"], area=area)
 
 
 @router.get("/me")

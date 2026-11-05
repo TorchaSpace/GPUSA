@@ -6,9 +6,12 @@ Run locally:  uvicorn gpusa_server.main:app --reload   (from the server/ dir)
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import asynccontextmanager
 
-from fastapi import FastAPI, Response, status
+import psycopg
+from fastapi import FastAPI, Request, Response, status
+from fastapi.responses import JSONResponse
 
 from . import __version__, db, discovery
 from .activity_routes import changes_router, router as activity_router
@@ -23,6 +26,7 @@ from .people_routes import router as people_router
 from .place_routes import router as place_router
 from .purchase_routes import router as purchase_router
 from .recovery_routes import router as recovery_router
+from .shield import Shield
 from .return_routes import router as return_router
 from .setup_routes import router as setup_router
 from .stock_routes import router as stock_router
@@ -43,8 +47,20 @@ def create_app(settings: Settings | None = None) -> FastAPI:
             if responder is not None:
                 responder.stop()
 
-    app = FastAPI(title="GPUSA API", version=__version__, lifespan=lifespan)
+    # The interactive docs hand an attacker the whole map of the API; they are for developers only
+    # (GPUSA_DOCS=1 turns them on). The schema itself is still built for tests and tools.
+    docs = os.environ.get("GPUSA_DOCS") == "1"
+    app = FastAPI(title="GPUSA API", version=__version__, lifespan=lifespan,
+                  docs_url="/docs" if docs else None, redoc_url="/redoc" if docs else None,
+                  openapi_url="/openapi.json" if docs else None)
     app.state.settings = settings
+    app.add_middleware(Shield)
+
+    @app.exception_handler(psycopg.errors.DataError)
+    async def _bad_value(_: Request, exc: psycopg.errors.DataError) -> JSONResponse:
+        # A value PostgreSQL cannot store (a NUL character, a number or date out of range): the caller's mistake.
+        log.info("Refused a value the database cannot store: %s", type(exc).__name__)
+        return JSONResponse(status_code=422, content={"detail": "A value in that request cannot be stored."})
     app.include_router(auth_router)
     app.include_router(product_router)
     app.include_router(read_router)

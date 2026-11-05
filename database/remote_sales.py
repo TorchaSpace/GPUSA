@@ -158,7 +158,7 @@ def send_pending(limit: int = 50) -> dict:
         except remote.ServerUnavailableError:
             break
         except remote.ServerRefusedError as exc:
-            if exc.status in (404, 409, 422):
+            if exc.status in (403, 404, 409, 422):   # 403: not this till's shop; it will never be accepted
                 _mark(row["client_uuid"], "rejected", error=str(exc))
                 rejected += 1
                 continue

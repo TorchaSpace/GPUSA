@@ -19,8 +19,9 @@ Everyone signed in may read.
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+from typing import Annotated
 
-from fastapi import APIRouter, Depends, Request, status
+from fastapi import APIRouter, Depends, Query, Request, status
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
@@ -120,27 +121,38 @@ def _read(request: Request, fn):
 @router.get("/shipments", response_model=list[ShipmentOut])
 def list_shipments(request: Request, status_in: str | None = None, dealership_code: str | None = None,
                    origin: str | None = None, origin_code: str | None = None,
-                   _: Session = Depends(current_session)) -> list[ShipmentOut]:
-    """Soonest ETA first. `status_in` is a comma-separated list of statuses."""
+                   session: Session = Depends(current_session)) -> list[ShipmentOut]:
+    """Soonest ETA first. `status_in` is a comma-separated list of statuses. A cashier sees their own shop's."""
     statuses = [s for s in (status_in or "").split(",") if s]
     return _read(request, lambda conn: _shipments(
         conn,
         "WHERE (%(st)s::text[] IS NULL OR status = ANY(%(st)s)) AND (%(d)s::text IS NULL OR dealership_code = %(d)s) "
         "AND (%(o)s::text IS NULL OR origin = %(o)s) AND (%(oc)s::text IS NULL OR origin_code = %(oc)s)",
-        {"st": statuses or None, "d": dealership_code, "o": origin, "oc": origin_code}))
+        {"st": statuses or None, "d": authz.scope_shop(conn, session, dealership_code), "o": origin,
+         "oc": origin_code}))
 
 
 @router.get("/shipments/incoming-count")
-def incoming_count(request: Request, dealership_code: str | None = None, _: Session = Depends(current_session)) -> dict:
-    row = _read(request, lambda conn: conn.execute(
-        "SELECT COUNT(*)::int AS n FROM shipments WHERE status IN ('scheduled', 'in_transit') "
-        "AND (%s::text IS NULL OR dealership_code = %s)", (dealership_code, dealership_code)).fetchone())
-    return {"count": row["n"]}
+def incoming_count(request: Request, dealership_code: str | None = None,
+                   session: Session = Depends(current_session)) -> dict:
+    def count(conn):
+        shop = authz.scope_shop(conn, session, dealership_code)
+        return conn.execute(
+            "SELECT COUNT(*)::int AS n FROM shipments WHERE status IN ('scheduled', 'in_transit') "
+            "AND (%s::text IS NULL OR dealership_code = %s)", (shop, shop)).fetchone()
+
+    return {"count": _read(request, count)["n"]}
 
 
 @router.get("/shipments/{shipment_id}", response_model=ShipmentOut)
-def get_shipment(shipment_id: int, request: Request, _: Session = Depends(current_session)) -> ShipmentOut:
-    return _read(request, lambda conn: _one(conn, shipment_id))
+def get_shipment(shipment_id: int, request: Request, session: Session = Depends(current_session)) -> ShipmentOut:
+    def one(conn):
+        found = _one(conn, shipment_id)
+        if not authz.same_shop(conn, session, found.dealership_code):
+            raise _fail(404, f"No shipment with id {shipment_id}.")
+        return found
+
+    return _read(request, one)
 
 
 # --- plan ----------------------------------------------------------------------------
@@ -159,7 +171,7 @@ class ShipmentIn(BaseModel):
     eta: datetime
     departure: datetime | None = None
     lines: list[LineIn] = Field(min_length=1, max_length=500)
-    request_ids: list[int] = Field(default_factory=list, max_length=500)
+    request_ids: list[Annotated[int, Field(gt=0, le=2_147_483_647)]] = Field(default_factory=list, max_length=500)
 
 
 @router.post("/shipments", response_model=ShipmentOut, status_code=status.HTTP_201_CREATED)
@@ -325,7 +337,8 @@ def _reopen_requests(conn, shipment_id: int) -> None:
 
 
 class ReceiptIn(BaseModel):
-    received: dict[str, int] = Field(default_factory=dict)
+    received: dict[Annotated[str, Field(max_length=64)], Annotated[int, Field(ge=0, le=1_000_000)]] = Field(
+        default_factory=dict, max_length=500)
     note: str | None = Field(default=None, max_length=500)
 
 
@@ -345,6 +358,8 @@ def receive_shipment(shipment_id: int, body: ReceiptIn, request: Request,
 
     def work(conn):
         shipment = _one(conn, shipment_id, lock=True)
+        if not authz.same_shop(conn, session, shipment.dealership_code):
+            raise _fail(404, f"No shipment with id {shipment_id}.")
         number = _number("SH", shipment.id)
         if not _active(shipment):
             raise _fail(409, f"{number} can't be received - it is {shipment.status}")
@@ -428,12 +443,13 @@ def _clean_request_note(note: str | None) -> str | None:
 
 
 @router.get("/stock-requests", response_model=list[RequestOut])
-def list_requests(request: Request, status_in: str | None = None, dealership_code: str | None = None,
-                  limit: int | None = None, _: Session = Depends(current_session)) -> list[RequestOut]:
-    """Newest first."""
+def list_requests(request: Request, status_in: str | None = None, dealership_code_in: str | None = Query(default=None, alias="dealership_code"),
+                  limit: int | None = None, session: Session = Depends(current_session)) -> list[RequestOut]:
+    """Newest first. A cashier sees their own shop's."""
     statuses = [s for s in (status_in or "").split(",") if s]
 
     def read(conn):
+        dealership_code = authz.scope_shop(conn, session, dealership_code_in)
         rows = conn.execute(
             _REQUEST_SELECT + "WHERE (%(st)s::text[] IS NULL OR r.status = ANY(%(st)s)) "
             "AND (%(d)s::text IS NULL OR r.dealership_code = %(d)s) ORDER BY r.created_at DESC, r.id DESC "
@@ -445,16 +461,25 @@ def list_requests(request: Request, status_in: str | None = None, dealership_cod
 
 @router.get("/stock-requests/open-count")
 def open_request_count(request: Request, dealership_code: str | None = None,
-                       _: Session = Depends(current_session)) -> dict:
-    row = _read(request, lambda conn: conn.execute(
-        "SELECT COUNT(*)::int AS n FROM stock_requests WHERE status = 'open' "
-        "AND (%s::text IS NULL OR dealership_code = %s)", (dealership_code, dealership_code)).fetchone())
-    return {"count": row["n"]}
+                       session: Session = Depends(current_session)) -> dict:
+    def count(conn):
+        shop = authz.scope_shop(conn, session, dealership_code)
+        return conn.execute(
+            "SELECT COUNT(*)::int AS n FROM stock_requests WHERE status = 'open' "
+            "AND (%s::text IS NULL OR dealership_code = %s)", (shop, shop)).fetchone()
+
+    return {"count": _read(request, count)["n"]}
 
 
 @router.get("/stock-requests/{request_id}", response_model=RequestOut)
-def get_request(request_id: int, request: Request, _: Session = Depends(current_session)) -> RequestOut:
-    return _read(request, lambda conn: _request(conn, request_id))
+def get_request(request_id: int, request: Request, session: Session = Depends(current_session)) -> RequestOut:
+    def one(conn):
+        found = _request(conn, request_id)
+        if not authz.same_shop(conn, session, found.dealership_code):
+            raise _fail(404, f"No stock request with id {request_id}.")
+        return found
+
+    return _read(request, one)
 
 
 class RequestIn(BaseModel):
@@ -472,6 +497,8 @@ def create_request(body: RequestIn, request: Request, session: Session = Depends
     actor = authz.actor_label(session)
 
     def work(conn):
+        if authz.scope_shop(conn, session, shop_code) != shop_code:
+            raise _fail(403, "This till belongs to another dealership.")
         shop = conn.execute("SELECT name, is_active FROM dealerships WHERE code = %s FOR SHARE", (shop_code,)).fetchone()
         if shop is None:
             raise _fail(404, f"No dealership with code {shop_code}.")
@@ -505,6 +532,8 @@ def _close_request(request: Request, session: Session, roles, request_id: int, n
     def work(conn):
         current = conn.execute("SELECT * FROM stock_requests WHERE id = %s FOR UPDATE", (request_id,)).fetchone()
         if current is None:
+            raise _fail(404, f"No stock request with id {request_id}.")
+        if not authz.same_shop(conn, session, current["dealership_code"]):
             raise _fail(404, f"No stock request with id {request_id}.")
         number = _number("RQ", request_id)
         if current["status"] != "open":

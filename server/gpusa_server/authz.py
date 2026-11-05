@@ -42,3 +42,39 @@ def require_live(conn, session: Session, *, roles: frozenset[str]) -> None:
 def actor_label(session: Session) -> str:
     """Text snapshot stored on the rows a person touched (desktop format: "Name · BADGE")."""
     return f"{session.name} · {session.badge_id}"
+
+
+def own_shop(conn, session: Session) -> str | None:
+    """Which dealership this person is limited to: None for roles that see every shop (administrators, depot
+    managers); for a cashier, the code of the dealership their employee record is assigned to. A cashier whose
+    record is not assigned to a dealership gets 403, so a till login can never reach another shop's sales,
+    refunds, day count, shipments or stock. Needs a dict_row connection."""
+    if session.role != "cashier":
+        return None
+    row = conn.execute(
+        "SELECT d.code FROM employees e JOIN dealerships d ON e.location_type = 'Dealership' AND "
+        "(upper(d.code) = upper(btrim(e.location_name)) OR lower(regexp_replace(btrim(d.name), '\\s+', ' ', 'g')) = "
+        "lower(regexp_replace(btrim(e.location_name), '\\s+', ' ', 'g'))) "
+        "WHERE upper(e.badge_id) = upper(%s) AND e.is_active LIMIT 1", (session.badge_id,)).fetchone()
+    if row is None:
+        raise HTTPException(status_code=403, detail="Your badge is not assigned to a dealership. "
+                                                    "Ask an administrator to set it in Workforce.")
+    return row["code"]
+
+
+def scope_shop(conn, session: Session, requested: str | None) -> str | None:
+    """The shop a request may act on: what was asked for, unless the person is a cashier - then only their own
+    (asking for another one is a 403; asking for none means their own)."""
+    own = own_shop(conn, session)
+    wanted = (requested or "").strip().upper() or None
+    if own is None:
+        return wanted
+    if wanted is not None and wanted != own.upper():
+        raise HTTPException(status_code=403, detail="This till belongs to another dealership.")
+    return own
+
+
+def same_shop(conn, session: Session, shop_code: str | None) -> bool:
+    """Whether the person may see a record belonging to `shop_code` (everyone but a cashier always may)."""
+    own = own_shop(conn, session)
+    return own is None or (shop_code or "").upper() == own.upper()
