@@ -65,6 +65,13 @@ class StatCard(QFrame):
         self.set_trend(trend_text, trend_positive)
         value_row.addStretch(1)
         outer.addLayout(value_row)
+        # A breakdown-only card (Workforce "By role") has no single number;
+        # an empty value hides the row rather than showing a lone "—".
+        self._value_label.setVisible(bool(value))
+        # Label and number stay at the top, the footer sits at the bottom -
+        # so cards in one row line up whether or not they have a footer
+        # (without it the number floated to the middle of a taller card).
+        outer.addStretch(1)
 
         self._footer_frame = QWidget()
         self._footer_layout = QHBoxLayout(self._footer_frame)
@@ -93,6 +100,7 @@ class StatCard(QFrame):
         )
 
     def set_value(self, value: str) -> None:
+        self._value_label.setVisible(bool(value))
         count_up(self._value_label, value)  # the number counts up; the final text is exactly `value`
 
     def set_trend(self, text: str, positive: bool | None = None) -> None:

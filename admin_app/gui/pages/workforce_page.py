@@ -95,7 +95,7 @@ class WorkforcePage(AdminPage):
         self._total_card = StatCard(tr("admin.workforce.kpi_total"), "—")
         self._on_shift_card = StatCard(tr("admin.workforce.kpi_on_shift"), "—")
 
-        self._role_card = StatCard(tr("admin.workforce.kpi_role"), "—")
+        self._role_card = StatCard(tr("admin.workforce.kpi_role"), "")
         self._role_breakdown_items: dict[str, QWidget] = {}
         for role in EMPLOYEE_ROLES:
             item = stat_breakdown_item(enum_label("role", role), "0")
