@@ -3,6 +3,10 @@ mockup's <header>: a brand avatar+name+location on the left, a pill-
 shaped nav row in the middle, and a cashier name/clock/avatar on the
 right.
 
+The round keyboard button left of the language switch opens the manual
+barcode keypad (`manual_barcode`; see pos_app/gui/barcode_keypad.py) for a
+code the scanner can't read.
+
 Dropped from the mockup: the delivery-alert bell button - that whole
 feature (simulated delivery orders, the alert overlay) belongs to a
 Dealership/Orders domain that doesn't exist yet, and task #60 already
@@ -15,9 +19,10 @@ them out and asks the next cashier to sign in (`switch_cashier`).
 
 from __future__ import annotations
 
-from PySide6.QtCore import QTime, Qt, QTimer, Signal
+from PySide6.QtCore import QSize, QTime, Qt, QTimer, Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QPushButton, QVBoxLayout, QWidget
 
+from pos_app.gui import icons
 from pos_app.gui.components.organic import PillNav
 from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.gui_kit.language_switch import LanguageSwitch
@@ -34,6 +39,7 @@ class PosHeader(QWidget):
     page_selected = Signal(str)
     switch_cashier = Signal()
     dealership_picked = Signal(str)
+    manual_barcode = Signal()
 
     def __init__(
         self,
@@ -56,6 +62,7 @@ class PosHeader(QWidget):
         layout.addWidget(self._build_brand(dealership_name, location_line))
         layout.addWidget(self._build_nav(), stretch=1)
         layout.addStretch(0)
+        layout.addWidget(self._build_keypad_button())
         layout.addWidget(LanguageSwitch(p, rounded=True))
         layout.addWidget(self._build_cashier(cashier_name))
 
@@ -109,6 +116,24 @@ class PosHeader(QWidget):
         row.addWidget(self._nav)
         row.addStretch(1)
         return holder
+
+    def _build_keypad_button(self) -> QPushButton:
+        """The design's 48px round "Type a barcode by hand" button (Lucide keyboard icon)."""
+        p = ORGANIC_PALETTE
+        button = QPushButton()
+        button.setObjectName("keypadButton")
+        button.setFixedSize(48, 48)
+        button.setCursor(Qt.PointingHandCursor)
+        button.setFocusPolicy(Qt.NoFocus)
+        button.setToolTip(tr("pos.keypad.button_tip"))
+        button.setIcon(icons.icon(icons.KEYBOARD, p["text_primary"], 22))
+        button.setIconSize(QSize(22, 22))
+        button.setStyleSheet(
+            f"#keypadButton {{ border: none; border-radius: 24px; background: {p['surface']}; }}"
+            f"#keypadButton:hover {{ background: {p['border']}; }}")
+        button.clicked.connect(self.manual_barcode.emit)
+        self.keypad_button = button
+        return button
 
     def _build_cashier(self, cashier_name: str) -> QWidget:
         p = ORGANIC_PALETTE

@@ -15,7 +15,7 @@ some background counts.
 
 | App | Who | Shape | Theme |
 |---|---|---|---|
-| `pos_app` | cashier | header + 4 pages (Home, New Sale, Receive Inventory, My Local Stock); cashier sign-in, "Switch" at shift change | "Organic" (cream / terracotta, pill radii) |
+| `pos_app` | cashier | header + 4 pages (Home, New Sale, Receive Inventory, My Local Stock); cashier sign-in, "Switch" at shift change; header keyboard button opens the manual barcode keypad overlay (`pos_app/gui/barcode_keypad.py`) | "Organic" (cream / terracotta, pill radii) |
 | `depot_app` | warehouse staff | **Floor kiosk** is the main window (open, no sign-in). "İdari Giriş" → depot-manager sign-in → **Console** (separate window: Dashboard / Warehouses / Inventory / Shipments / Reports, 15-min idle lock) → **Manager Portal** dialog (PIN re-ask; Purchasing + Local Treasury, 10-min auto-lock) | "Industry" (radius 0, blueprint corner ticks, Barlow) |
 | `admin_app` | manager | sidebar + `QStackedWidget`: Overview, Inventory, Dealerships, Workforce, Warehouses, Distribution, Purchase requests, Treasury & Ledger, Reports, Settings | "Classical" (dark, gold, serif) |
 

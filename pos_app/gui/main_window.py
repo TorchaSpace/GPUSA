@@ -26,6 +26,7 @@ from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget
 
 from database import account_repository, dealership_repository
 from database.exceptions import DATABASE_ERRORS
+from pos_app.gui.barcode_keypad import BarcodeKeypad
 from pos_app.gui.auth_flow import switch_dealership_dialog, till_sign_in_dialog
 
 from pos_app.gui.components.organic import toast_style
@@ -74,6 +75,10 @@ class MainWindow(QMainWindow):
                 pass
         self._build_shell(self._home_identity)
 
+        # Manual barcode entry: one overlay over the whole window, kept across shop switches.
+        self._keypad = BarcodeKeypad(self)
+        self._keypad.submitted.connect(self._on_manual_barcode)
+
         # Live: stock sent by the depot, a request answered, a sale rung up at
         # another till... shows here within about a second.
         self._watcher = DataWatcher(parent=self)
@@ -95,6 +100,7 @@ class MainWindow(QMainWindow):
         self._dealership_name = dealership_name
         self._header = PosHeader(dealership_name, location_line, session.name if session else tr("pos.main.cashier"))
         self._header.switch_cashier.connect(self.switch_cashier)
+        self._header.manual_barcode.connect(self.open_barcode_keypad)
         self._header.dealership_picked.connect(self._on_dealership_picked)
         layout.addWidget(self._header)
         self._sync_banner = SyncBanner(ORGANIC_PALETTE)  # queued sales (server mode); hidden otherwise
@@ -192,6 +198,7 @@ class MainWindow(QMainWindow):
         if not shop.is_active:
             return False
         self._sale_page.clear_cart()
+        self.close_barcode_keypad()
         self._build_shell({"code": shop.code, "name": shop.name,
                            "location_line": " · ".join(part for part in (shop.city, shop.region) if part)
                            or tr("pos.main.location_line")})
@@ -212,6 +219,33 @@ class MainWindow(QMainWindow):
             self._sales_page.reload()
         elif page is self._sale_page and not self._sale_page.has_items():
             self._sale_page.reload()
+
+    # --- manual barcode entry ------------------------------------------------
+
+    def open_barcode_keypad(self) -> None:
+        self._keypad.open_keypad()
+
+    def close_barcode_keypad(self) -> None:
+        keypad = getattr(self, "_keypad", None)
+        if keypad is not None:
+            keypad.close_keypad()
+
+    def _on_manual_barcode(self, code: str) -> None:
+        """Typed code -> one of that product in the open sale, and the New Sale page in front.
+        A refused code keeps the keypad open with the reason under the field."""
+        added, message = self._sale_page.add_by_barcode(code)
+        if not added:
+            self._keypad.show_error(message)
+            return
+        self._keypad.close_keypad()
+        self._navigate("sale")
+        self.notify(message)
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        keypad = getattr(self, "_keypad", None)
+        if keypad is not None:
+            keypad.follow_parent()
 
     def _lock_when_idle(self) -> None:
         if self.session is None:  # the sign-in dialog is already up: closing it would quit the app
@@ -236,6 +270,7 @@ class MainWindow(QMainWindow):
                 pass
         self.session = None
         current_session.clear()
+        self.close_barcode_keypad()
         self._sale_page.clear_cart()
         self.hide()
         # The next cashier signs in at this till's OWN shop, even if an administrator was browsing another one.

@@ -792,6 +792,32 @@ class NewSalePage(QWidget):
     def has_items(self) -> bool:
         return bool(self._cart)
 
+    def add_by_barcode(self, code: str) -> tuple[bool, str]:
+        """A barcode typed by hand (the header's keypad): put one of that product in the sale.
+
+        Reads this shelf afresh first (the keypad can be used from any page, before this one was ever
+        loaded). Returns (True, "<name> added to sale") or (False, why not): unknown or deactivated
+        code, nothing on the shelf, or the sale already holds all there is."""
+        wanted = fold(code.strip())
+        if not wanted:
+            return False, tr("pos.keypad.unknown")
+        try:
+            self._all_products = stock_repository.products_at(self._location)
+        except DATABASE_ERRORS:
+            pass  # keep what we had: the lookup still works on the last list
+        product = next((p for p in self._all_products if p.is_active and fold(p.barcode) == wanted), None)
+        if product is None:
+            return False, tr("pos.keypad.unknown")
+        if product.stock_quantity <= 0:
+            return False, tr("pos.keypad.out").format(name=product.name)
+        line = self._cart.get(product.barcode)
+        if line is not None and line.quantity >= product.stock_quantity:
+            return False, tr("pos.keypad.no_more").format(name=product.name)
+        if line is not None:
+            line.max_quantity = product.stock_quantity  # the shelf as it is now
+        self._add_to_cart(product)
+        return True, tr("pos.keypad.added").format(name=product.name)
+
     def reload(self) -> None:
         try:
             self._all_products = stock_repository.products_at(self._location)
