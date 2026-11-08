@@ -11,6 +11,7 @@ import database.connection as connection
 from database import product_repository, purchase_order_repository as po_repo
 from shared import current_session
 from shared.auth import Actor
+from shared.formatting import parse_amount
 from shared.models import PriceRange, Product
 from tests.ledger_support import ensure_admin_account
 from tests.po_support import seed_admin
@@ -105,20 +106,87 @@ def test_stale_decision_is_reported_not_raised(held_orders, page):
     assert po_repo.get(held_orders[0].id).status == "rejected"
 
 
-def test_setting_a_band_from_the_popup(page, qapp):
+def _type(box, text):
+    box.setText(text)
+    box.textEdited.emit(text)
+
+
+def test_every_product_has_a_row_and_typing_then_saving_sets_its_band(page, qapp):
     product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    product_repository.create(Product("TAP-1", "Tape", 20, 3, 10))
     page.reload()
-    page._open_add_range()
-    popup = page._range_popup
-    popup._product_input.setCurrentIndex(popup._product_input.findData("LBL-0091"))
-    popup._min_input.setValue(390)
-    popup._max_input.setValue(520)
-    popup._validate_and_accept()
+    editor = page.ranges_editor()
+    assert editor.row_count() == 2  # no "Set range" popup: every product is right there
+    row = editor.row_for("LBL-0091")
+    _type(row.min_box, "390")
+    _type(row.max_box, "520,50")
+    assert "1" in editor.status_text() and po_repo.get_price_range("LBL-0091") is None  # nothing written yet
+    editor.save()
     pump(qapp)
 
     band = po_repo.get_price_range("LBL-0091")
-    assert (band.min_unit_price, band.max_unit_price) == (390, 520)
-    assert page._ranges_table.rowCount() == 1
+    assert (band.min_unit_price, band.max_unit_price) == (390, 520.5)
+    assert po_repo.get_price_range("TAP-1") is None
+    assert not page.ranges_editor().dirty_rows()
+
+
+def test_bad_typing_blocks_save_and_names_the_problem(page, qapp):
+    product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    page.reload()
+    editor = page.ranges_editor()
+    row = editor.row_for("LBL-0091")
+    _type(row.min_box, "600")
+    _type(row.max_box, "500")
+    assert row.error and not editor._save_button.isEnabled()
+    _type(row.max_box, "abc")
+    assert row.error and not editor._save_button.isEnabled()
+    _type(row.max_box, "")
+    assert row.error  # a minimum without a maximum
+    editor.save()
+    assert po_repo.get_price_range("LBL-0091") is None
+
+
+def test_clearing_both_boxes_removes_the_band_and_discard_restores(page, qapp):
+    product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    po_repo.set_price_range(PriceRange("LBL-0091", 390, 520, "Kuzey"))
+    page.reload()
+    editor = page.ranges_editor()
+    row = editor.row_for("LBL-0091")
+    assert row.supplier_box.text() == "Kuzey"
+    _type(row.max_box, "999")
+    editor.discard()
+    assert parse_amount(row.max_box.text()) == 520 and not editor.dirty_rows()
+    for box in (row.min_box, row.max_box, row.supplier_box):
+        _type(box, "")
+    editor.save()
+    pump(qapp)
+    assert po_repo.get_price_range("LBL-0091") is None
+
+
+def test_unsaved_typing_survives_a_live_reload(page, qapp):
+    product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    page.reload()
+    _type(page.ranges_editor().row_for("LBL-0091").max_box, "77")
+    page.reload()
+    row = page.ranges_editor().row_for("LBL-0091")
+    assert row.max_box.text() == "77" and page.ranges_editor().dirty_rows()
+
+
+def test_dragging_the_bar_fills_the_boxes(page, qapp):
+    product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    page.reload()
+    row = page.ranges_editor().row_for("LBL-0091")
+    row.bar.dragged.emit(100.0, 300.0)
+    assert parse_amount(row.min_box.text()) == 100 and parse_amount(row.max_box.text()) == 300
+    assert page.ranges_editor().dirty_rows()
+
+
+def test_search_hides_other_products(page, qapp):
+    product_repository.create(Product("LBL-0091", "Labels", 450, 3, 10))
+    product_repository.create(Product("TAP-1", "Tape", 20, 3, 10))
+    page.reload()
+    page.ranges_editor().search_box().setText("tap")
+    assert page.ranges_editor().visible_barcodes() == ["TAP-1"]
 
 
 def test_sidebar_badge_is_the_real_pending_count(held_orders, qapp):

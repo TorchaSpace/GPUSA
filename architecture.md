@@ -419,7 +419,7 @@ GPUSA/
 │   │   ├── icons.py                # mockup SVG path data for the sidebar - NEW
 │   │   ├── components/ (sidebar_nav, admin_page, stat_card, section, inventory_table, compact_button, data_table, product_form_popup)
 │   │   ├── pages/ (overview_page, inventory_page, dealerships_page, workforce_page, purchase_requests_page, treasury_page, distribution_page, warehouses_page - NEW, placeholder_page)
-│   │   ├── components/approval_queue.py, price_range_form_popup.py, styled_table.py, milestone_strip.py, ledger_entry_form_popup.py, route_tracker.py, warehouse_capacity_card.py, warehouse_form_popup.py, stock_move_popup.py - NEW
+│   │   ├── components/approval_queue.py, price_range_editor.py, styled_table.py, milestone_strip.py, ledger_entry_form_popup.py, route_tracker.py, warehouse_capacity_card.py, warehouse_form_popup.py, stock_move_popup.py - NEW
 │   │   └── (legacy tabs still present, only sales_reports_tab.py still reachable - see UI redesign section)
 │   ├── export/ (pdf_report_exporter.py, excel_report_exporter.py)
 │   ├── admin_app.spec

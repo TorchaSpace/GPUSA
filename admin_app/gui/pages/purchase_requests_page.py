@@ -7,10 +7,11 @@ href="#"); the pieces come from where the mockup does show them:
   Approve / Reject (Inventory Dashboard.dc.html's approvals dropdown) ->
   the approval queue here (components/approval_queue.py).
 - Settings > Pricing Thresholds > "Safe Purchase Price Range" -> the
-  "Safe price ranges" section here. Kept on this page rather than a
-  Settings page because Settings doesn't exist yet and a band is only
-  meaningful next to the orders it governs. Per product, not per
-  category: products have no category field.
+  "Safe price ranges" section here, as the mockup draws it: every
+  product in one table with Min / range bar / Max typed (or dragged) in
+  place and one Save (components/price_range_editor.py). Kept on this
+  page because a band is only meaningful next to the orders it governs.
+  Per product, not per category: products have no category field.
 - "View all requests →" -> the "All purchase orders" table with a status
   filter.
 
@@ -25,13 +26,13 @@ waits for an admin here; out-of-band prices in both directions are held
 
 from __future__ import annotations
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QComboBox, QHBoxLayout, QHeaderView, QInputDialog, QLabel, QMessageBox, QWidget
 
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.approval_queue import ApprovalQueue
 from admin_app.gui.components.compact_button import CompactButton
-from admin_app.gui.components.price_range_form_popup import PriceRangeFormPopup
+from admin_app.gui.components.price_range_editor import PriceRangeEditor
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
 from admin_app.gui.components.styled_table import cell, styled_table
@@ -100,11 +101,6 @@ class PurchaseRequestsPage(AdminPage):
 
         self.body_layout().addWidget(self._build_kpi_row())
 
-        middle = QWidget()
-        middle_layout = QHBoxLayout(middle)
-        middle_layout.setContentsMargins(0, 0, 0, 0)
-        middle_layout.setSpacing(16)
-
         self._queue_section = Section(tr("admin.purchase.queue_kicker"), tr("admin.purchase.queue_heading"))
         self._held_total_label = QLabel()
         self._held_total_label.setStyleSheet(f"font-size: 11px; color: {CLASSICAL_PALETTE['text_secondary']};")
@@ -113,15 +109,11 @@ class PurchaseRequestsPage(AdminPage):
         self._queue.approve_requested.connect(self._approve)
         self._queue.reject_requested.connect(self._reject)
         self._queue_section.body_layout().addWidget(self._queue)
-        middle_layout.addWidget(self._queue_section, stretch=3, alignment=Qt.AlignTop)
+        self.body_layout().addWidget(self._queue_section)
 
-        middle_layout.addWidget(self._build_ranges_section(), stretch=2, alignment=Qt.AlignTop)
-        self.body_layout().addWidget(middle)
+        self.body_layout().addWidget(self._build_ranges_section())
 
         self.body_layout().addWidget(self._build_orders_section(), stretch=1)
-
-        self._range_popup = PriceRangeFormPopup(self)
-        self._range_popup.accepted.connect(self._save_range)
 
         self.reload()
 
@@ -154,33 +146,12 @@ class PurchaseRequestsPage(AdminPage):
 
     def _build_ranges_section(self) -> Section:
         section = Section(tr("admin.purchase.ranges_kicker"), tr("admin.purchase.ranges_heading"))
-        add = CompactButton(tr("admin.purchase.set_range"))
-        add.clicked.connect(self._open_add_range)
-        section.add_header_control(add)
-        self._ranges_table = styled_table([tr(f"admin.purchase.rcol_{key}") for key in ("product", "min", "max", "supplier")])
-        header = self._ranges_table.horizontalHeader()
-        header.setStretchLastSection(False)
-        header.setSectionResizeMode(0, QHeaderView.Stretch)
-        for column in (1, 2, 3):
-            header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
-        self._ranges_table.setMinimumHeight(220)
-        self._ranges_table.doubleClicked.connect(lambda _i: self._open_edit_range())
-        section.body_layout().addWidget(self._ranges_table)
-
-        buttons = QWidget()
-        row = QHBoxLayout(buttons)
-        row.setContentsMargins(12, 8, 12, 10)
-        edit = CompactButton(tr("admin.purchase.edit"))
-        edit.clicked.connect(self._open_edit_range)
-        remove = CompactButton(tr("admin.purchase.remove"))
-        remove.clicked.connect(self._remove_range)
-        row.addWidget(edit)
-        row.addWidget(remove)
-        row.addStretch(1)
-        self._ranges_hint = QLabel(tr("admin.purchase.ranges_hint"))
-        self._ranges_hint.setStyleSheet(f"font-size: 11px; color: {CLASSICAL_PALETTE['text_secondary']};")
-        row.addWidget(self._ranges_hint)
-        section.body_layout().addWidget(buttons)
+        self._ranges_count_label = QLabel()
+        self._ranges_count_label.setStyleSheet(f"font-size: 11px; color: {CLASSICAL_PALETTE['text_secondary']};")
+        section.add_header_control(self._ranges_count_label)
+        self._ranges_editor = PriceRangeEditor()
+        self._ranges_editor.saved.connect(lambda _message: self.reload())
+        section.body_layout().addWidget(self._ranges_editor)
         return section
 
     def _build_orders_section(self) -> Section:
@@ -201,8 +172,13 @@ class PurchaseRequestsPage(AdminPage):
         )
         header = self._orders_table.horizontalHeader()
         header.setStretchLastSection(False)
-        for column in (0, 1, 5, 6, 7, 8, 9, _ACTIONS_COLUMN):
+        for column in (0, 1, 5, 6, 7, 8, 9):
             header.setSectionResizeMode(column, QHeaderView.ResizeToContents)
+        # The Cancel buttons are cell widgets, which ResizeToContents ignores
+        # (it cut them to "parişi iptal"): size the column to the button.
+        header.setSectionResizeMode(_ACTIONS_COLUMN, QHeaderView.Fixed)
+        self._orders_table.setColumnWidth(
+            _ACTIONS_COLUMN, max(CompactButton(tr("admin.purchase.cancel_order")).sizeHint().width() + 20, 90))
         for column in (2, 4):  # site, supplier: long free text - fixed width, elided
             header.setSectionResizeMode(column, QHeaderView.Interactive)
             self._orders_table.setColumnWidth(column, 130)
@@ -299,14 +275,14 @@ class PurchaseRequestsPage(AdminPage):
         return [o for o in self._orders if o.status == "pending"]
 
     def _render_ranges(self) -> None:
-        names = {p.barcode: p.name for p in self._products}
-        self._ranges_table.setRowCount(len(self._ranges))
-        for row, band in enumerate(self._ranges):
-            name = names.get(band.product_barcode, "")
-            self._ranges_table.setItem(row, 0, cell(f"{band.product_barcode} · {name}"))
-            self._ranges_table.setItem(row, 1, cell(format_money(band.min_unit_price), right=True))
-            self._ranges_table.setItem(row, 2, cell(format_money(band.max_unit_price), right=True))
-            self._ranges_table.setItem(row, 3, cell(band.default_supplier or "—"))
+        self._ranges_editor.set_data(self._products, self._ranges, self._orders)
+        self._ranges_count_label.setText(
+            tr("admin.purchase.ranges_of").format(n=len(self._ranges), total=len(self._products))
+            if self._load_error is None else ""
+        )
+
+    def ranges_editor(self) -> PriceRangeEditor:
+        return self._ranges_editor
 
     def _render_orders(self) -> None:
         status = _STATUS_FILTERS[max(self._filter_input.currentIndex(), 0)][1]
@@ -452,47 +428,3 @@ class PurchaseRequestsPage(AdminPage):
             message = tr("admin.purchase.msg_cancel_failed").format(error=exc)
         self.reload()
         self._queue.set_last_action(message)
-
-    # --- price ranges ------------------------------------------------------
-
-    def _selected_range(self) -> PriceRange | None:
-        rows = self._ranges_table.selectionModel().selectedRows()
-        if not rows:
-            return None
-        return self._ranges[rows[0].row()]
-
-    def _open_add_range(self) -> None:
-        with_band = {r.product_barcode for r in self._ranges}
-        candidates = [p for p in self._products if p.barcode not in with_band] or self._products
-        self._range_popup.open_or_refresh(products=candidates, price_range=None)
-
-    def _open_edit_range(self) -> None:
-        band = self._selected_range()
-        if band is None:
-            self._ranges_hint.setText(tr("admin.purchase.select_range"))
-            return
-        self._range_popup.open_or_refresh(products=self._products, price_range=band)
-
-    def _save_range(self) -> None:
-        try:
-            purchase_order_repository.set_price_range(
-                self._range_popup.result_range(), by=current_session.actor()
-            )
-        except (ValueError, *DATABASE_ERRORS) as exc:
-            self._ranges_hint.setText(tr("admin.purchase.msg_save_failed").format(error=exc))
-            return
-        self._ranges_hint.setText(tr("admin.purchase.range_saved"))
-        self.reload()
-
-    def _remove_range(self) -> None:
-        band = self._selected_range()
-        if band is None:
-            self._ranges_hint.setText(tr("admin.purchase.select_range"))
-            return
-        try:
-            purchase_order_repository.delete_price_range(band.product_barcode, by=current_session.actor())
-        except DATABASE_ERRORS as exc:
-            self._ranges_hint.setText(tr("admin.purchase.remove_failed").format(error=exc))
-            return
-        self._ranges_hint.setText(tr("admin.purchase.range_removed").format(barcode=band.product_barcode))
-        self.reload()

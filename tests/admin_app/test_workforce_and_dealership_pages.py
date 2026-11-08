@@ -250,7 +250,7 @@ def test_dealership_save_normalises_the_code_and_selects_it(dealerships, qapp):
     dealerships._popup.accept()
     pump(qapp)
     assert dealership_repository.get_by_code("NEW-1").name == "New Dealer"
-    assert dealerships._detail_name.text() == "New Dealer" and dealerships._detail_code.text() == "NEW-1"
+    assert dealerships._detail_name.text() == "New Dealer" and "NEW-1" in dealerships._detail_code.text()
 
 
 def test_duplicate_dealership_code_keeps_the_popup_open(dealerships, qapp):
@@ -263,7 +263,7 @@ def test_duplicate_dealership_code_keeps_the_popup_open(dealerships, qapp):
 
 
 def test_editing_a_dealership_refreshes_the_detail_panel(dealerships, qapp):
-    assert dealerships._table.select_code("CST-04")
+    assert dealerships.select_code("CST-04")
     assert dealerships._detail_name.text() == "Coastal Parts"
     dealerships._open_edit_popup()
     dealerships._popup._name_input.setText("Coastal Parts II")
@@ -278,7 +278,7 @@ def test_deleting_a_dealership_clears_the_detail_panel(dealerships, qapp, monkey
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
-    dealerships._table.select_code("CST-04")
+    dealerships.select_code("CST-04")
     dealerships._delete_selected()
     pump(qapp)
     assert dealerships._detail_name.text() == "No dealership selected"
@@ -294,6 +294,46 @@ def test_main_window_reloads_dealerships_and_workforce_on_show(qapp, world):
     employee_repository.create(Employee("LATE-2", "Joined Later", "Logistics", "Dealership", "Added Elsewhere"))
     window._show_page("dealerships")
     window._show_page("workforce")
-    assert window._dealerships_page._table.model().rowCount() == 2
+    assert window._dealerships_page.card_count() == 2
     assert window._workforce_page._table.model().rowCount() == 2
     window.close()
+
+
+# --- dealership cards ---------------------------------------------------------------------
+
+def test_cards_show_real_revenue_staff_and_filter(dealerships, qapp):
+    from database import product_repository, stock_repository, transaction_repository
+    from shared.models import LineItem, Product, StockLocation, Transaction
+
+    dealership_repository.create(Dealership(code="MET-1", name="Metro Shop", region="Metro", city="Bursa"))
+    product_repository.create(Product("W", "Widget", 50, 0, 2))
+    shop = StockLocation.dealership("CST-04")
+    stock_repository.receive(shop, "W", 10)
+    transaction_repository.finalize_transaction(Transaction(items=[LineItem("W", "Widget", 50, 3)]), shop)
+    employee_repository.create(Employee("S-1", "Sara Shop", "Sales & service", "Dealership", "CST-04"))
+    dealerships.reload()
+    pump(qapp)
+
+    cards = {c.dealership.code: c for c in dealerships._grid.cards()}
+    assert "150" in cards["CST-04"].revenue_label.text()
+    assert dealerships._visible()[0].code == "CST-04"  # sorted by revenue
+    assert dealerships.select_code("CST-04") and dealerships._detail.isVisible()
+    staff = [label.text() for label in dealerships._detail._staff_box.findChildren(type(dealerships._detail_name))]
+    assert "Sara Shop" in staff
+    stock = [label.text() for label in dealerships._detail._stock_box.findChildren(type(dealerships._detail_name))]
+    assert "Widget" in stock and "7 / 2" in stock
+
+    dealerships._region_input.setCurrentIndex(dealerships._region_input.findData("Metro"))
+    assert [d.code for d in dealerships._visible()] == ["MET-1"]
+    assert dealerships.selected_dealership() is None and not dealerships._detail.isVisible()
+    dealerships._region_input.setCurrentIndex(0)
+    dealerships._search_input.setText("bursa")
+    assert dealerships.card_count() == 1
+
+
+def test_clicking_an_open_card_closes_it(dealerships, qapp):
+    card = dealerships._grid.cards()[0]
+    card.clicked.emit(card.dealership.code)
+    assert dealerships.selected_dealership().code == "CST-04"
+    card.clicked.emit(card.dealership.code)
+    assert dealerships.selected_dealership() is None
