@@ -17,7 +17,6 @@ from database import (
     warehouse_repository,
 )
 from shared import current_session
-from shared.formatting import local_clock_text
 from shared.i18n import tr
 from shared.models import Dealership, Employee, Warehouse
 
@@ -41,12 +40,13 @@ def world():
 def workforce(qapp, world):
     from admin_app.gui.pages.workforce_page import WorkforcePage
 
-    employee_repository.create(Employee("B-1", "Elena Varga", "Operations", "Warehouse", "Merkez Depo", title="Driver"))
+    employee_repository.create(Employee("B-1", "Elena Varga", "Operations", "Warehouse", "Merkez Depo", title="Driver",
+                                        national_id="10000000146"))
+    employee_repository.create(Employee("S-1", "Su Kaya", "Sales & service", "Dealership", "CST-04"))
     page = WorkforcePage()
     page.show()
     pump(qapp)
     yield page
-    page._popup.close()
     page.close()
 
 
@@ -78,151 +78,42 @@ def _fill_employee(popup, badge="B-2", name="Zeynep Acar", location="Merkez Depo
     popup._location_name_input.setEditText(location)
 
 
-# --- employee popup --------------------------------------------------------------------
+# --- workforce: Admin only watches ------------------------------------------------------
 
-def test_employee_popup_rejects_empty_name_and_keeps_the_typed_data(workforce, qapp):
-    workforce._open_add_popup()
-    popup = workforce._popup
-    _fill_employee(popup, name="  ")
-    popup.accept()
-    pump(qapp)
-    assert popup.isVisible() and popup._error.isVisible() and popup._error.text()
-    assert popup._badge_input.text() == "B-2" and popup._location_name_input.currentText() == "Merkez Depo"
-    assert sorted(e.badge_id for e in employee_repository.list_all()) == ["A-1", "B-1"]  # the signed-in admin is an employee too
+def test_admin_workforce_has_no_add_or_edit(workforce):
+    view = workforce.view
+    assert view.add_button is None and view.edit_button is None
+    assert not hasattr(view, "badge_input")  # no check-in box either
+    texts = [b.text() for b in workforce.findChildren(type(view.tab_buttons["today"]))]
+    assert tr("staff.people.add") not in texts
 
 
-def test_employee_popup_rejects_empty_badge_and_huge_names(workforce, qapp):
-    workforce._open_add_popup()
-    popup = workforce._popup
-    _fill_employee(popup, badge="   ")
-    popup.accept()
-    assert popup.isVisible() and popup._error.text()
-    _fill_employee(popup, name="x" * 10_000)
-    popup.accept()
-    assert popup.isVisible() and popup._error.text()
-    assert len(employee_repository.list_all()) == 2  # B-1 and the signed-in admin A-1
+def test_admin_sees_every_place_and_masks_the_national_id(workforce):
+    view = workforce.view
+    view.show_tab(2)
+    names = [view.people_table.item(r, 0).text() for r in range(view.people_table.rowCount())]
+    assert {"Elena Varga", "Su Kaya", "Erol"} <= set(names)
+    row = names.index("Elena Varga")
+    assert view.people_table.item(row, 2).text() == "100******46"
+    index = next(i for i in range(view.place_filter.count())
+                 if view.place_filter.itemData(i) is not None and view.place_filter.itemData(i).code == "CST-04")
+    view.place_filter.setCurrentIndex(index)
+    assert [view.people_table.item(r, 0).text() for r in range(view.people_table.rowCount())] == ["Su Kaya"]
 
 
-def test_employee_location_is_a_pick_list_of_existing_places(workforce, qapp):
-    workforce._open_add_popup()
-    box = workforce._popup._location_name_input
-    assert box.isEditable()
-    assert [box.itemText(i) for i in range(box.count())] == ["Merkez Depo"]  # warehouses for the Warehouse type
-    workforce._popup._location_type_input.setCurrentText("Dealership")
-    assert [box.itemText(i) for i in range(box.count())] == ["Coastal Parts"]
-    assert box.currentText() == ""  # a Warehouse name doesn't linger on a Dealership employee
-
-
-def test_employee_popup_refuses_a_place_that_does_not_exist(workforce, qapp):
-    workforce._open_add_popup()
-    popup = workforce._popup
-    _fill_employee(popup, location="Atlantis")
-    popup.accept()
-    assert popup.isVisible() and popup._error.text()
-    assert popup._location_name_input.currentText() == "Atlantis"  # typed text kept
-    assert len(employee_repository.list_all()) == 2  # B-1 and the signed-in admin A-1
-
-
-def test_employee_popup_saves_a_valid_entry_and_normalises_the_badge(workforce, qapp):
-    workforce._open_add_popup()
-    popup = workforce._popup
-    _fill_employee(popup, badge=" z-2 ", location="merkez depo")
-    popup.accept()
-    pump(qapp)
-    assert not popup.isVisible()
-    assert employee_repository.get_by_badge_id("Z-2").name == "Zeynep Acar"
-    assert workforce._detail_name.text() == "Zeynep Acar"  # the saved person is selected, detail fresh
-
-
-def test_a_duplicate_badge_brings_the_popup_back_with_everything_typed(workforce, qapp):
-    workforce._open_add_popup()
-    popup = workforce._popup
-    _fill_employee(popup, badge="b-1", name="Someone Else")
-    popup.accept()  # passes the form's own checks; the repository then says duplicate
-    pump(qapp)
-    assert popup.isVisible() and "already exists" in popup._error.text()
-    assert popup._name_input.text() == "Someone Else" and popup._badge_input.text() == "b-1"
-    assert employee_repository.get_by_badge_id("B-1").name == "Elena Varga"
-
-
-def test_editing_an_employee_with_a_legacy_free_text_place_is_allowed(workforce, qapp):
-    with connection.connection_scope() as conn:
-        conn.execute("INSERT INTO employees (badge_id, name, role, location_type, location_name) "
-                     "VALUES ('OLD-1', 'Old Timer', 'Operations', 'Warehouse', 'Closed Depot')")
+def test_admin_sees_who_came_and_left(workforce):
+    attendance_repository.check_in("B-1")
+    attendance_repository.check_out("B-1")
+    attendance_repository.check_in("S-1")
     workforce.reload()
-    assert workforce._table.select_badge("OLD-1")
-    workforce._open_edit_popup()
-    popup = workforce._popup
-    box = popup._location_name_input
-    assert "Closed Depot" in [box.itemText(i) for i in range(box.count())]
-    popup._name_input.setText("Old Timer Jr")
-    popup.accept()
-    pump(qapp)
-    assert not popup.isVisible() and employee_repository.get_by_badge_id("OLD-1").name == "Old Timer Jr"
-
-
-def test_saving_an_edit_refreshes_the_detail_panel(workforce, qapp):
-    assert workforce._table.select_badge("B-1")
-    assert workforce._detail_name.text() == "Elena Varga"
-    workforce._open_edit_popup()
-    workforce._popup._name_input.setText("Elena V. Varga")
-    workforce._popup.accept()
-    pump(qapp)
-    assert workforce._detail_name.text() == "Elena V. Varga"
-    assert workforce._table.selected_row()["name"] == "Elena V. Varga"
-
-
-# --- delete ----------------------------------------------------------------------------
-
-def test_delete_confirmation_warns_the_account_goes_too(workforce, monkeypatch, qapp):
-    from PySide6.QtWidgets import QMessageBox
-
-    asked = []
-
-    def question(parent, title, text, *a, **k):
-        asked.append(text)
-        return QMessageBox.No
-
-    monkeypatch.setattr(QMessageBox, "question", question)
-    workforce._table.select_badge("B-1")
-    workforce._delete_selected()
-    assert asked == [tr("admin.workforce.delete_confirm").format(name="Elena Varga")]
-    assert employee_repository.get_by_badge_id("B-1")  # declined: nothing deleted
-
-    monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
-    workforce._delete_selected()
-    pump(qapp)
-    assert [e.badge_id for e in employee_repository.list_all()] == ["A-1"]  # only the signed-in admin is left
-    assert workforce._detail_name.text() == "No employee selected"
-
-
-# --- times and flags --------------------------------------------------------------------
-
-def test_detail_shows_check_times_in_local_time(workforce, qapp):
-    attendance_repository.check_in("b-1")
-    workforce.reload()
-    workforce._table.select_badge("B-1")
-    entry = workforce._table.selected_row()
-    assert entry["status"] == "Present"
-    texts = _detail_texts(workforce)
-    assert local_clock_text(entry["check_in_at"]) in texts  # "HH:MM" local - not the UTC "...T07:01:46" text
-    assert not any(t.endswith("Z") for t in texts)
-
-
-def test_a_forgotten_open_shift_is_flagged_in_the_table(workforce, qapp):
-    from datetime import datetime, timedelta, timezone
-
-    from shared.formatting import to_db_timestamp
-
-    old = to_db_timestamp(datetime.now(timezone.utc) - timedelta(hours=20))
-    with connection.connection_scope() as conn:
-        employee_id = conn.execute("SELECT id FROM employees WHERE badge_id = 'B-1'").fetchone()[0]
-        conn.execute("INSERT INTO attendance_records (employee_id, check_in_at) VALUES (?, ?)", (employee_id, old))
-    workforce.reload()
-    model = workforce._table.model()
-    row = next(r for r in range(model.rowCount()) if model.data(model.index(r, 0)) == "B-1")
-    cell = model.data(model.index(row, 4))
-    assert cell.startswith("Present") and tr("admin.workforce.long_open") in cell
+    view = workforce.view
+    view.show_tab(0)
+    statuses = {view.today_table.item(r, 0).text(): view.today_table.item(r, 4).text()
+                for r in range(view.today_table.rowCount())}
+    assert statuses["Su Kaya"] == tr("staff.state.in") and statuses["Elena Varga"] == tr("staff.state.out")
+    view.show_tab(1)
+    assert view.history_table.rowCount() == 2
+    assert tr("staff.history.still_in") in [view.history_table.item(r, 6).text() for r in range(2)]
 
 
 # --- dealerships ------------------------------------------------------------------------
@@ -250,7 +141,7 @@ def test_dealership_save_normalises_the_code_and_selects_it(dealerships, qapp):
     dealerships._popup.accept()
     pump(qapp)
     assert dealership_repository.get_by_code("NEW-1").name == "New Dealer"
-    assert dealerships._detail_name.text() == "New Dealer" and dealerships._detail_code.text() == "NEW-1"
+    assert dealerships._detail_name.text() == "New Dealer" and "NEW-1" in dealerships._detail_code.text()
 
 
 def test_duplicate_dealership_code_keeps_the_popup_open(dealerships, qapp):
@@ -263,7 +154,7 @@ def test_duplicate_dealership_code_keeps_the_popup_open(dealerships, qapp):
 
 
 def test_editing_a_dealership_refreshes_the_detail_panel(dealerships, qapp):
-    assert dealerships._table.select_code("CST-04")
+    assert dealerships.select_code("CST-04")
     assert dealerships._detail_name.text() == "Coastal Parts"
     dealerships._open_edit_popup()
     dealerships._popup._name_input.setText("Coastal Parts II")
@@ -278,7 +169,7 @@ def test_deleting_a_dealership_clears_the_detail_panel(dealerships, qapp, monkey
     from PySide6.QtWidgets import QMessageBox
 
     monkeypatch.setattr(QMessageBox, "question", lambda *a, **k: QMessageBox.Yes)
-    dealerships._table.select_code("CST-04")
+    dealerships.select_code("CST-04")
     dealerships._delete_selected()
     pump(qapp)
     assert dealerships._detail_name.text() == "No dealership selected"
@@ -294,6 +185,48 @@ def test_main_window_reloads_dealerships_and_workforce_on_show(qapp, world):
     employee_repository.create(Employee("LATE-2", "Joined Later", "Logistics", "Dealership", "Added Elsewhere"))
     window._show_page("dealerships")
     window._show_page("workforce")
-    assert window._dealerships_page._table.model().rowCount() == 2
-    assert window._workforce_page._table.model().rowCount() == 2
+    assert window._dealerships_page.card_count() == 2
+    view = window._workforce_page.view
+    view.show_tab(2)
+    assert "Joined Later" in [view.people_table.item(r, 0).text() for r in range(view.people_table.rowCount())]
     window.close()
+
+
+# --- dealership cards ---------------------------------------------------------------------
+
+def test_cards_show_real_revenue_staff_and_filter(dealerships, qapp):
+    from database import product_repository, stock_repository, transaction_repository
+    from shared.models import LineItem, Product, StockLocation, Transaction
+
+    dealership_repository.create(Dealership(code="MET-1", name="Metro Shop", region="Metro", city="Bursa"))
+    product_repository.create(Product("W", "Widget", 50, 0, 2))
+    shop = StockLocation.dealership("CST-04")
+    stock_repository.receive(shop, "W", 10)
+    transaction_repository.finalize_transaction(Transaction(items=[LineItem("W", "Widget", 50, 3)]), shop)
+    employee_repository.create(Employee("S-1", "Sara Shop", "Sales & service", "Dealership", "CST-04"))
+    dealerships.reload()
+    pump(qapp)
+
+    cards = {c.dealership.code: c for c in dealerships._grid.cards()}
+    assert "150" in cards["CST-04"].revenue_label.text()
+    assert dealerships._visible()[0].code == "CST-04"  # sorted by revenue
+    assert dealerships.select_code("CST-04") and dealerships._detail.isVisible()
+    staff = [label.text() for label in dealerships._detail._staff_box.findChildren(type(dealerships._detail_name))]
+    assert "Sara Shop" in staff
+    stock = [label.text() for label in dealerships._detail._stock_box.findChildren(type(dealerships._detail_name))]
+    assert "Widget" in stock and "7 / 2" in stock
+
+    dealerships._region_input.setCurrentIndex(dealerships._region_input.findData("Metro"))
+    assert [d.code for d in dealerships._visible()] == ["MET-1"]
+    assert dealerships.selected_dealership() is None and not dealerships._detail.isVisible()
+    dealerships._region_input.setCurrentIndex(0)
+    dealerships._search_input.setText("bursa")
+    assert dealerships.card_count() == 1
+
+
+def test_clicking_an_open_card_closes_it(dealerships, qapp):
+    card = dealerships._grid.cards()[0]
+    card.clicked.emit(card.dealership.code)
+    assert dealerships.selected_dealership().code == "CST-04"
+    card.clicked.emit(card.dealership.code)
+    assert dealerships.selected_dealership() is None

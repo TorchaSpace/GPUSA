@@ -50,7 +50,7 @@ Tables: `products`, `transactions`, `transaction_items`, `stock_movements`,
 `ledger_entries`, `ledger_audit` (append-only via triggers), `shipments`,
 `shipment_lines`, `app_settings` (key/value).
 
-Migrations: `PRAGMA user_version`, `LATEST_VERSION = 10`, one `BEGIN IMMEDIATE` per
+Migrations: `PRAGMA user_version`, `LATEST_VERSION = 12`, one `BEGIN IMMEDIATE` per
 startup, safe when all three apps start at once. Schema.sql stays the source of
 truth for new DBs; a new column needs **both** a schema.sql change and a `_to_vN`
 step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
@@ -67,6 +67,8 @@ step (+ bump `LATEST_VERSION`, + `tests/database/test_migration_vN.py`).
 | 8 | `stock_requests` table (dealership → depot; one open request per shop+product, unique partial index) |
 | 9 | `transactions.client_uuid` (unique when set: a re-sent sale stores once), `sale_returns` + `sale_return_items` (refunds), `day_closes` (till count), `admin_audit` (append-only: deletes, refunds) |
 | 10 | `sale_returns` rebuilt with `CHECK (total >= 0)` (a free item can be refunded). `run_migrations` runs with `PRAGMA foreign_keys=OFF` around the transaction so the rebuild can't cascade-delete `sale_return_items` |
+| 11 | server mode's local-only tables (`sale_outbox`, `server_cache`, `server_sign_ins`) |
+| 12 | `employees.national_id` (T.C. Kimlik No, unique when set; server: alembic `0002`, API sends it masked only) |
 
 ### The stock invariant (most important rule)
 
@@ -93,7 +95,7 @@ products.stock_quantity = SUM(stock_levels) + units on dispatched, not-yet-recei
 | Shipments | `shipment_repository`, `shared/distribution.py` (progress/delay derived from schedule) | Depot Console › Shipments; POS Receive; Admin Distribution |
 | Stock requests | `stock_request_repository`: `create` (POS), `cancel`/`decline`, `mark_planned` (called by `shipment_repository.create(request_ids=…)` in the same txn), cancelling the shipment reopens them; `dealership_shortages()` = shelf ≤ reorder level with incoming + requested; statuses open/planned/declined/cancelled, "delivered" derived from the shipment | POS My Stock › Request stock / My requests; Depot Console › Shipments "Dealership needs" panel; Admin Distribution "Dealership needs" |
 | Refunds & day close | `sale_return_repository.create(sale_id, [(barcode, qty, restock)], reason, approved_by, requested_by)` — manager approval re-checked in the txn (`ReturnApprovalError`), quantities vs sold − returned, restocked units go back on the shelf, `admin_audit` row; `transaction_repository.list_between(..., net_of_returns=True)` reads sales NET of refunds (reports), `False` for the day close; `day_close_repository.summarize/close` (cash sales − cash refunds vs counted) | POS Sales page (Return items needs a manager badge+PIN, Close the day); Admin Reports › Till control |
-| People & sign-in | `employee_repository`, `attendance_repository`, `account_repository`, `shared/auth.py` (roles, PIN rules, PBKDF2 200k, lockout 5→5 min), `shared/current_session.py` | Admin Settings › Accounts; Depot Console › attendance + Floor Check-in Log |
+| People & sign-in | `employee_repository` (`create/update(place=, by=, area=)`: a depot / till manages only its own `StaffPlace`), `attendance_repository` (`list_history` = who came / left over days), `account_repository`, `shared/staff.py`, `shared/national_id.py`, `shared/auth.py` (roles, PIN rules, lockout 5→5 min), `shared/current_session.py` | Staff screen `shared/gui_kit/staff_view.py` (Today / In-out history / Staff): Depot Console › Staff and POS › Staff add, assign and punch their own people; Admin Workforce only watches (no add/edit). Admin Settings › Accounts; Floor Check-in Log |
 | PIN recovery | `account_repository`: recovery code, security question, "start over" (backup beside DB → erase → new admin); `shared/recovery_code.py`, `shared/security_question.py` | Admin sign-in "Forgot your PIN or badge ID?" |
 | Settings | `settings_repository` (`safe_language()`, `safe_currency()`, store profile, notification flags); `shared/store_settings.py` | Admin Settings; TR/EN switch in Depot headers |
 | Setup / deploy | `shared/dealership_bootstrap.py`, `warehouse_bootstrap.py` (sidecar JSON + `applied_at` stamp), `shared/paths.py` (exe-adjacent `config.json` first, then ProgramData) | `deploy_system.py`, `build_setup.py` + `installer.py` (dependency-free), `packaging/build_release.py` (CI releases) |

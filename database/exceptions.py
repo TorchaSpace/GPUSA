@@ -110,6 +110,26 @@ class DuplicateBadgeIdError(DataAccessError):
         self.badge_id = badge_id
 
 
+class DuplicateNationalIdError(DataAccessError):
+    """Raised when an employee is saved with a national ID another employee already has."""
+
+    def __init__(self, other_badge_id: str):
+        super().__init__(f"This national ID is already recorded for {other_badge_id}")
+        self._localize("err.duplicate_national_id", badge_id=other_badge_id)
+        self.badge_id = other_badge_id
+
+
+class EmployeeOtherPlaceError(DataAccessError):
+    """Raised when a depot or dealership screen tries to add or change a person who is not (or would no
+    longer be) assigned to that screen's own place."""
+
+    def __init__(self, badge_id: str, place: str):
+        super().__init__(f"{badge_id} is not one of {place}'s staff.")
+        self._localize("err.employee_other_place", badge_id=badge_id, place=place)
+        self.badge_id = badge_id
+        self.place = place
+
+
 class AlreadyCheckedInError(DataAccessError):
     """Raised by attendance_repository.check_in() when the employee
     already has an open (not checked-out) attendance record."""

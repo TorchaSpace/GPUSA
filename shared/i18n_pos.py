@@ -22,6 +22,7 @@ EN_POS: dict[str, str] = {
     "pos.nav.receive": "Receive",
     "pos.nav.stock": "My Stock",
     "pos.nav.sales": "Sales",
+    "pos.nav.staff": "Staff",
     "pos.header.switch": "Switch",
     "pos.header.switch_tip": "Sign out and let the next cashier sign in",
     # Home
@@ -217,6 +218,7 @@ TR_POS: dict[str, str] = {
     "pos.nav.receive": "Mal kabul",
     "pos.nav.stock": "Stoğum",
     "pos.nav.sales": "Satışlar",
+    "pos.nav.staff": "Personel",
     "pos.header.switch": "Değiştir",
     "pos.header.switch_tip": "Çıkış yap, sıradaki kasiyer giriş yapsın",
     # Home
