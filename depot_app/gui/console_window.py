@@ -27,10 +27,10 @@ tab is READ-ONLY here: logging happens on the Floor kiosk; Console is the
 oversight view of the same feed. The mockup's pallet counts and dock
 occupancy aren't tracked, so they're not shown.
 
-The "Workforce Attendance" tab is ALSO real now (see attendance_panel.py) -
-unlike admin_app's Workforce page, this mockup tab (badge check-in/out,
-on-floor count, today's roster) has no fabricated numbers at all, so it
-was built field-for-field rather than left as a placeholder.
+Staff: its own page (shared/gui_kit/staff_view.py) - this depot's people
+only. The depot manager adds people (with their national ID) and assigns
+them here, checks them in and out, and sees who came and who left on any
+day. Admin only watches the same data.
 """
 
 from __future__ import annotations
@@ -58,7 +58,6 @@ from PySide6.QtWidgets import (
 import depot_app.gui.icons as icons
 from database import account_repository, stock_repository, warehouse_repository
 from database.exceptions import DataAccessError
-from depot_app.gui.attendance_panel import AttendancePanel
 from depot_app.gui.components.console_nav_button import ConsoleNavButton
 from shared.gui_kit.language_switch import LanguageSwitch
 from shared.gui_kit.motion import fade_in
@@ -72,6 +71,9 @@ from depot_app.gui.shipments_page import ShipmentsPage
 from depot_app.gui.manager_portal_dialog import ManagerPortalDialog
 from depot_app.theme import FONT_HEADING_CSS, INDUSTRY_PALETTE
 from shared.gui_kit.server_status import ServerStatusStrip
+from shared.gui_kit.staff_view import StaffView
+from shared.staff import WAREHOUSE, StaffPlace
+from shared.auth import AREA_DEPOT_CONSOLE
 from shared.formatting import local_time_text
 from shared.gui_kit.icon_kit import svg_to_icon
 from shared import current_session
@@ -85,7 +87,7 @@ from shared.warehousing import direction_label, reason_label, reference_text, st
 
 SIDEBAR_WIDTH_PX = 216
 
-_NAV_ITEMS = ["Dashboard", "Warehouses", "Inventory", "Shipments", "Reports"]
+_NAV_ITEMS = ["Dashboard", "Warehouses", "Inventory", "Shipments", "Staff", "Reports"]
 
 
 
@@ -150,6 +152,10 @@ class ConsoleWindow(QMainWindow):
                 page = self._build_warehouses_page()
             elif key == "Shipments":
                 page = ShipmentsPage(warehouse.site_label, warehouse.code)
+            elif key == "Staff":
+                page = StaffView(INDUSTRY_PALETTE, place=StaffPlace(WAREHOUSE, warehouse.code, warehouse.name),
+                                 can_manage=True, area=AREA_DEPOT_CONSOLE)
+                self._staff_page = page
             else:
                 page = {"Dashboard": DashboardPage, "Inventory": InventoryPage, "Reports": ReportsPage}[key](warehouse)
             self._pages[key] = page
@@ -274,6 +280,8 @@ class ConsoleWindow(QMainWindow):
             self._title_label.setText(upper(self._nav_label(key)))
         if key == "Warehouses":
             self._refresh_warehouses_page()
+        elif key == "Staff":
+            self._staff_page.reload()
 
     def _build_header(self) -> QWidget:
         p = INDUSTRY_PALETTE
@@ -448,13 +456,6 @@ class ConsoleWindow(QMainWindow):
         moves_layout.addWidget(self._movements_table, stretch=1)
         tabs.addTab(moves_tab, tr("depot.console.tab.movements"))
 
-        attendance_tab = QWidget()
-        attendance_layout = QVBoxLayout(attendance_tab)
-        attendance_layout.setContentsMargins(12, 12, 12, 12)
-        self._attendance_panel = AttendancePanel()
-        attendance_layout.addWidget(self._attendance_panel)
-        tabs.addTab(attendance_tab, tr("depot.console.tab.attendance"))
-
         tabs.currentChanged.connect(lambda _i: fade_in(tabs.currentWidget()))
         layout.addWidget(tabs, stretch=1)
         return page
@@ -490,7 +491,6 @@ class ConsoleWindow(QMainWindow):
         self._refresh_movements()
 
     def _refresh_warehouses_page(self) -> None:
-        self._attendance_panel.reload()
         try:
             warehouses = warehouse_repository.list_all(active_only=True)
             used = stock_repository.units_by_location()

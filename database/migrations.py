@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-LATEST_VERSION = 11
+LATEST_VERSION = 12
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -84,6 +84,9 @@ _INDEXES = (
     "CREATE INDEX IF NOT EXISTS idx_stock_movements_location ON stock_movements(location_kind, location_code)",
     "CREATE INDEX IF NOT EXISTS idx_shipments_origin_code ON shipments(origin_code)",
     "CREATE INDEX IF NOT EXISTS idx_transactions_dealership_code ON transactions(dealership_code)",
+    # v12: one person, one record - a national ID belongs to at most one employee.
+    "CREATE UNIQUE INDEX IF NOT EXISTS idx_employees_national_id ON employees(national_id) "
+    "WHERE national_id IS NOT NULL",
 )
 
 
@@ -423,8 +426,16 @@ def _to_v11(conn: sqlite3.Connection) -> None:
         conn.execute(statement)
 
 
+def _to_v12(conn: sqlite3.Connection) -> None:
+    """Version 12 - employees.national_id (T.C. Kimlik No), entered when the
+    depot or the dealership adds a person. Old records keep NULL. The unique
+    index on it is in _INDEXES (it must run after the column exists)."""
+    if "national_id" not in _columns(conn, "employees"):
+        conn.execute("ALTER TABLE employees ADD COLUMN national_id TEXT")
+
+
 _STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9,
-          10: _to_v10, 11: _to_v11}
+          10: _to_v10, 11: _to_v11, 12: _to_v12}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

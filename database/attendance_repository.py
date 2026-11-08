@@ -31,6 +31,7 @@ from database.exceptions import (
 from shared.auth import Actor
 from shared.formatting import parse_db_timestamp, to_db_timestamp
 from shared.models import Warehouse
+from shared.staff import DEALERSHIP, StaffPlace, history_rows
 from shared.warehousing import works_at
 
 # An open shift older than this is almost certainly a forgotten check-out:
@@ -50,9 +51,16 @@ def _employee(conn, badge_id: str):
     return row
 
 
-def _require_site(conn, employee_row, warehouse_code: str | None) -> None:
+def _require_site(conn, employee_row, warehouse_code: str | None, dealership_code: str | None = None) -> None:
     """Depot punches are scoped: with `warehouse_code`, the employee must work at that warehouse
-    (the same works_at rule the roster uses) or EmployeeOtherSiteError. None = no scoping (Admin)."""
+    (the same works_at rule the roster uses) or EmployeeOtherSiteError; with `dealership_code` (the
+    till) at that dealership. None = no scoping (Admin)."""
+    if dealership_code is not None:
+        shop = conn.execute("SELECT code, name FROM dealerships WHERE code = ? COLLATE NOCASE",
+                            (dealership_code,)).fetchone()
+        place = StaffPlace(DEALERSHIP, shop["code"], shop["name"]) if shop else StaffPlace(DEALERSHIP, dealership_code, "")
+        if not place.has(employee_row["location_type"], employee_row["location_name"]):
+            raise EmployeeOtherSiteError(employee_row["badge_id"], place.label)
     if warehouse_code is None:
         return
     site = conn.execute("SELECT code, name FROM warehouses WHERE code = ? COLLATE NOCASE", (warehouse_code,)).fetchone()
@@ -61,7 +69,8 @@ def _require_site(conn, employee_row, warehouse_code: str | None) -> None:
         raise EmployeeOtherSiteError(employee_row["badge_id"], warehouse.site_label if site else warehouse_code)
 
 
-def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None) -> int:
+def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None,
+             dealership_code: str | None = None) -> int:
     """Open a new attendance record for `badge_id` (any letter case).
     Returns the new record's id. Raises EmployeeNotFoundError for an
     unknown badge, EmployeeInactiveError for an employee switched off in
@@ -71,14 +80,14 @@ def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | No
     warehouse, else EmployeeOtherSiteError.
     """
     if remote.active():
-        return remote_people.check_in(badge_id, note, warehouse_code)
+        return remote_people.check_in(badge_id, note, warehouse_code, dealership_code)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
             employee_row = _employee(conn, badge_id)
             if not employee_row["is_active"]:
                 raise EmployeeInactiveError(employee_row["badge_id"])
-            _require_site(conn, employee_row, warehouse_code)
+            _require_site(conn, employee_row, warehouse_code, dealership_code)
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -101,7 +110,8 @@ def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | No
     return new_id
 
 
-def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None) -> int:
+def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | None = None,
+             dealership_code: str | None = None) -> int:
     """Close `badge_id`'s open attendance record. Returns the record's id.
     Raises EmployeeNotFoundError for an unknown badge, NoOpenAttendanceRecordError
     if that employee has no open record to close. `note`, when given,
@@ -110,12 +120,12 @@ def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | N
     open at deactivation, in older data, gets closed.)
     """
     if remote.active():
-        return remote_people.check_out(badge_id, note, warehouse_code)
+        return remote_people.check_out(badge_id, note, warehouse_code, dealership_code)
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
             employee_row = _employee(conn, badge_id)
-            _require_site(conn, employee_row, warehouse_code)
+            _require_site(conn, employee_row, warehouse_code, dealership_code)
             employee_id = employee_row["id"]
 
             open_row = conn.execute(
@@ -226,6 +236,49 @@ def _day_window(day: _date) -> tuple[datetime, datetime]:
     return start.astimezone(timezone.utc), end.astimezone(timezone.utc)
 
 
+def _national_id(row) -> str | None:
+    keys = row.keys() if hasattr(row, "keys") else ()
+    if "national_id" in keys:
+        return row["national_id"]
+    if "national_id_masked" in keys:
+        return row["national_id_masked"]
+    return None
+
+
+def list_history(first_day: str | _date, last_day: str | _date, *, place: StaffPlace | None = None,
+                 badge_id: str | None = None, now: datetime | None = None) -> list[dict]:
+    """Who came and who left, LOCAL days `first_day`..`last_day` (inclusive), newest first: one line
+    per check-in with day, name, badge, title, role, check-in and check-out stamps, hours (counted to
+    now while still in) and `open`. A shift is listed under the day it began. With `place` only that
+    warehouse's / dealership's people; with `badge_id` only that person. Read-only - Admin uses it too."""
+    first = _date.fromisoformat(first_day) if isinstance(first_day, str) else first_day
+    last = _date.fromisoformat(last_day) if isinstance(last_day, str) else last_day
+    if last < first:
+        first, last = last, first
+    start, _ = _day_window(first)
+    _, end = _day_window(last)
+    if remote.active():
+        employees = remote_people.employees_for_roster()
+        records = [r for r in remote_people.attendance_records(start, end)
+                   if to_db_timestamp(start) <= r["check_in_at"] < to_db_timestamp(end)]
+    else:
+        with connection_scope() as conn:
+            employees = [dict(r) for r in conn.execute(
+                "SELECT badge_id, name, title, role, location_type, location_name FROM employees").fetchall()]
+            records = [dict(r) for r in conn.execute(
+                "SELECT a.id, e.badge_id, e.name, a.check_in_at, a.check_out_at "
+                "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
+                "WHERE a.check_in_at >= ? AND a.check_in_at < ? ORDER BY a.check_in_at",
+                (to_db_timestamp(start), to_db_timestamp(end))).fetchall()]
+    wanted = employee_repository.normalize_badge_id(badge_id) if badge_id else None
+    people = {
+        e["badge_id"]: dict(e) for e in employees
+        if (place is None or place.has(e["location_type"], e["location_name"]))
+        and (wanted is None or e["badge_id"].upper() == wanted)
+    }
+    return history_rows(records, people, now)
+
+
 def list_roster(for_date: str | None = None, now: datetime | None = None) -> list[dict]:
     """Every active-or-not employee with their attendance on the LOCAL day
     `for_date` (default: today), for depot Console's roster table, the
@@ -256,7 +309,7 @@ def list_roster(for_date: str | None = None, now: datetime | None = None) -> lis
     else:
         with connection_scope() as conn:
             employees = conn.execute(
-                "SELECT id, badge_id, name, title, role, location_type, location_name, is_active "
+                "SELECT id, badge_id, name, title, role, location_type, location_name, is_active, national_id "
                 "FROM employees ORDER BY name"
             ).fetchall()
             records = conn.execute(
@@ -301,6 +354,7 @@ def list_roster(for_date: str | None = None, now: datetime | None = None) -> lis
                 "location_type": emp["location_type"],
                 "location_name": emp["location_name"],
                 "is_active": bool(emp["is_active"]),
+                "national_id": _national_id(emp),
                 "status": status,
                 "check_in_at": check_in_at,
                 "check_out_at": check_out_at,

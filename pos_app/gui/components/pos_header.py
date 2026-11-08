@@ -30,7 +30,7 @@ from shared.i18n import tr
 from shared.textcase import upper
 
 # (page key, string key): labels are looked up when the header is built, not at import.
-NAV_ITEMS = [("home", "pos.nav.home"), ("sale", "pos.nav.sale"), ("receive", "pos.nav.receive"), ("stock", "pos.nav.stock"), ("sales", "pos.nav.sales")]
+NAV_ITEMS = [("home", "pos.nav.home"), ("sale", "pos.nav.sale"), ("receive", "pos.nav.receive"), ("stock", "pos.nav.stock"), ("sales", "pos.nav.sales"), ("staff", "pos.nav.staff")]
 
 HEADER_HEIGHT_PX = 76
 

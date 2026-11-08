@@ -160,7 +160,10 @@ CREATE TABLE IF NOT EXISTS employees (
     location_name TEXT NOT NULL,
     is_active     INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
     created_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
-    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+    updated_at    TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now')),
+    -- v12: T.C. Kimlik No (11 digits, checked by shared/national_id.py). NULL on
+    -- records made before v12; the depot / dealership staff form requires it.
+    national_id   TEXT
 );
 
 -- One row per check-in; `check_out_at` stays NULL while the employee is

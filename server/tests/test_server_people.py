@@ -47,13 +47,72 @@ def test_create_validates(client, bad):
     assert r.status_code == 422, r.text
 
 
-def test_only_an_admin_manages_employees(client):
+def test_a_till_manages_only_its_own_shop_staff(client):
     h = login(client)
-    make(client, h)
+    make(client, h)  # E-100 works at the warehouse "main"
     sql("UPDATE accounts SET role = 'cashier'")
+    sql("UPDATE employees SET location_type = 'Dealership', location_name = 'CST-04' WHERE badge_id = 'B-001'")
     pos = login(client, "pos")
-    assert client.post("/employees", headers=pos, json=person("E-9")).status_code == 403
-    assert client.get("/employees", headers=pos).status_code == 403  # the list is for admins and depot managers
+    shop = person("S-1", location_type="Dealership", location_name="Coast", national_id="100 000 001 46")
+    assert client.post("/employees", headers=pos, json={**shop, "national_id": None}).status_code == 422  # ID needed
+    assert client.post("/employees", headers=pos, json={**shop, "national_id": "10000000147"}).status_code == 422
+    got = client.post("/employees", headers=pos, json=shop)
+    assert got.status_code == 201, got.text
+    assert got.json()["national_id_masked"] == "100******46"
+    assert sql("SELECT national_id FROM employees WHERE badge_id = 'S-1'") == [("10000000146",)]
+    twin = client.post("/employees", headers=pos, json={**shop, "badge_id": "S-2"})
+    assert twin.status_code == 409 and "S-1" in twin.text
+    # Not its place: adding to the warehouse, moving its own person away, or touching the warehouse's person.
+    assert client.post("/employees", headers=pos, json=person("S-3", national_id="12345678950")).status_code == 403
+    assert client.patch("/employees/S-1", headers=pos, json={**shop, "location_type": "Warehouse",
+                                                               "location_name": "main"}).status_code == 403
+    assert client.patch("/employees/E-100", headers=pos, json=person()).status_code == 403
+    renamed = client.patch("/employees/S-1", headers=pos, json={**shop, "name": "Su", "title": "Kasa", "national_id": None})
+    assert renamed.status_code == 200 and renamed.json()["national_id_masked"] == "100******46"
+    # The list is the shop's own people only, IDs masked; another place's person is not found.
+    listed = client.get("/employees", headers=pos).json()
+    assert [e["badge_id"] for e in listed] == ["B-001", "S-1"]
+    assert all("national_id" not in e for e in listed)
+    assert client.get("/employees/E-100", headers=pos).status_code == 404
+    # The Admin app itself only watches.
+    sql("UPDATE accounts SET role = 'admin'")
+    assert client.post("/employees", headers=login(client), json=person("A-1")).status_code == 201  # API/CLI still can
+
+
+def test_a_depot_manager_manages_only_its_warehouse_staff(client):
+    h = login(client)
+    make(client, h, "E-1", location_name="Main")
+    make(client, h, "E-2", location_name="Spare")
+    sql("UPDATE accounts SET role = 'depot_manager'")
+    sql("UPDATE employees SET location_type = 'Warehouse', location_name = 'WH-01' WHERE badge_id = 'B-001'")
+    depot = login(client, "depot_console")
+    new = person("E-3", location_name="WH-01", national_id="12345678950")
+    assert client.post("/employees", headers=depot, json=new).status_code == 201
+    assert client.post("/employees", headers=depot, json={**new, "badge_id": "E-4", "location_name": "Spare",
+                                                          "national_id": "23456789138"}).status_code == 403
+    assert sorted(e["badge_id"] for e in client.get("/employees", headers=depot).json()) == ["B-001", "E-1", "E-3"]
+    assert client.post("/attendance/check-in", headers=depot, json={"badge_id": "E-3"}).status_code == 200
+    assert client.post("/attendance/check-in", headers=depot, json={"badge_id": "E-2"}).status_code == 409  # not ours
+    assert [o["badge_id"] for o in client.get("/attendance/open", headers=depot).json()] == ["E-3"]
+    now = datetime.now(timezone.utc)
+    day = {"start": (now - timedelta(hours=1)).isoformat(), "end": (now + timedelta(hours=1)).isoformat()}
+    assert [r["badge_id"] for r in client.get("/attendance/records", headers=depot, params=day).json()] == ["E-3"]
+    sql("UPDATE accounts SET role = 'admin'")
+    assert client.post("/attendance/check-in", headers=login(client), json={"badge_id": "E-2"}).status_code == 200
+    assert len(client.get("/attendance/records", headers=login(client), params=day).json()) == 2  # admin sees all
+
+
+def test_cashier_cannot_change_an_administrator(client):
+    h = login(client)
+    make(client, h, "S-9", location_type="Dealership", location_name="Coast")
+    client.post("/accounts", headers=h, json={"badge_id": "S-9", "role": "cashier", "pin": "583920"})
+    sql("UPDATE employees SET location_type = 'Dealership', location_name = 'Coast' WHERE badge_id = 'B-001'")
+    pos = till_login(client, "S-9", "583920")
+    assert pos.status_code == 200, pos.text
+    tok = {"Authorization": f"Bearer {pos.json()['token']}"}
+    admin_row = {"name": "Ali", "role": "Management", "location_type": "Dealership", "location_name": "Coast",
+                 "is_active": False}
+    assert client.patch("/employees/B-001", headers=tok, json=admin_row).status_code == 403
 
 
 def test_update_and_switching_off_closes_the_shift(client):
@@ -123,11 +182,17 @@ def test_depot_punches_are_scoped_to_the_warehouse(client):
     assert client.get("/attendance/operator", headers=h, params={"badge_id": "E-2", "warehouse_code": "WH-02"}).status_code == 409  # not in
 
 
-def test_a_till_cannot_punch(client):
+def test_a_till_punches_its_own_shop_staff(client):
     h = login(client)
     make(client, h)
+    make(client, h, "S-1", location_type="Dealership", location_name="Coast")
     sql("UPDATE accounts SET role = 'cashier'")
-    assert client.post("/attendance/check-in", headers=login(client, "pos"), json={"badge_id": "E-100"}).status_code == 403
+    sql("UPDATE employees SET location_type = 'Dealership', location_name = 'Coast' WHERE badge_id = 'B-001'")
+    pos = login(client, "pos")
+    assert client.post("/attendance/check-in", headers=pos, json={"badge_id": "E-100"}).status_code == 409
+    assert client.post("/attendance/check-in", headers=pos,
+                       json={"badge_id": "s-1", "dealership_code": "cst-04"}).status_code == 200
+    assert client.post("/attendance/check-out", headers=pos, json={"badge_id": "S-1"}).status_code == 200
 
 
 def test_records_in_a_window(client):
