@@ -305,6 +305,8 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) 
     def run(conn):
         nonlocal badge_id
         _check_actor(conn, by, badge_id)
+        if by is not None and auth.is_root(role):
+            raise UserError("err.root_is_unique")
         employee = employee_repository.find_row(conn, badge_id)
         if employee is None:
             raise EmployeeNotFoundError(badge_id)
@@ -475,7 +477,8 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
     def ok(conn):
         conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL, last_sign_in_at = ? WHERE id = ?",
                      (signed_in_at, account.id))
-        _log(conn, event, badge_id, area, terminal)
+        _log(conn, auth.success_event(account.role, event), badge_id, area, terminal,
+             "root" if auth.is_root(account.role) else None)
 
     _write(ok)
     return Session(account_id=account.id, badge_id=account.badge_id, name=account.name, role=account.role,
@@ -810,6 +813,8 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
         raise ValueError(f"Unknown role {role!r}")
     current = get(badge_id)
     promoting = role == "admin" and current.role != "admin"
+    if promoting and by is not None:
+        raise UserError("err.root_is_unique")
     pin_hash = None
     if promoting:
         if not new_pin:
@@ -828,6 +833,8 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
             return
         if same:
             raise SelfActionError("change the role of")
+        if by is not None and auth.is_root(role):
+            raise UserError("err.root_is_unique")
         if role == "admin" and pin_hash is None:  # became non-admin while we were checking
             raise UserError("err.promote_try_again")
         if row["role"] == "admin":

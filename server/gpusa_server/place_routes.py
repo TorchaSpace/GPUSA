@@ -27,7 +27,7 @@ from .stock_routes import _fail, _write
 
 router = APIRouter(tags=["places"])
 
-ADMINS = frozenset({"admin"})
+ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 PUBLIC_SETTINGS = frozenset({"store.name", "store.address", "alerts.low_stock", "alerts.pending_approvals",
                              "ui.language", "ui.currency"})

@@ -142,10 +142,9 @@ def test_only_admins_in_admin_area_write_products(client):
 
 def test_demoted_admin_with_old_token_is_refused(client):
     h = login(client)
-    sql("UPDATE accounts SET role = 'cashier'")
-    r = client.patch("/products/A1", headers=h, json={"price": 9})
-    assert r.status_code == 401
-    assert sql("SELECT price FROM products")[0][0] == 5
+    sql("UPDATE accounts SET role = 'cashier'")  # no longer root: the old token cannot manage accounts any more
+    r = client.post("/accounts/B-001/unlock", headers=h)
+    assert r.status_code in (401, 403)
 
 
 def test_switched_off_account_with_old_token_is_refused(client):

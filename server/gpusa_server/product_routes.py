@@ -63,7 +63,7 @@ def get_product(request: Request, barcode: str = Path(max_length=64),
 
 # --- writes (administrators only, signed in to Admin) -----------------------
 
-ADMINS = frozenset({"admin"})
+ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 MAX_AMOUNT = Decimal("1000000000")
 MAX_UNITS = 1_000_000

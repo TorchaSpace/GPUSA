@@ -43,7 +43,7 @@ from shared.models import Account
 _WHERE = LazyLabels("admin.settings.where", ("admin", "depot_manager", "cashier"))
 _EVENT_TEXT = LazyLabels(
     "admin.settings.event",
-    ("sign_in", "sign_out", "failed", "locked", "refused", "pin_confirmed", "pin_changed", "account_created",
+    ("sign_in", "root_sign_in", "sign_out", "failed", "locked", "refused", "pin_confirmed", "pin_changed", "account_created",
      "account_changed", "unlocked", "pin_reset", "recovery_code_created", "recovery_failed", "security_question_set"),
 )
 
@@ -163,6 +163,12 @@ class SettingsPage(AdminPage):
                 when=local_datetime_text(session.signed_in_at), terminal=session.terminal,
             ) if session else tr("admin.settings.not_signed_in")
         )
+        # Root only: accounts, the sign-in log and where the data / server lives. IAM users see none of it.
+        root = session is not None and auth.is_root(session.role)
+        for section in (self._access, self._activity, self._data_location):
+            section.setVisible(root)
+        if not root:
+            return
         selected = self.selected()
         try:
             self._accounts = account_repository.list_accounts()
@@ -273,26 +279,18 @@ class SettingsPage(AdminPage):
         account = self.selected()
         if account is None or self._refuse_self(account):
             return
-        labels = [auth.role_label(role) for role in auth.ROLES]
+        # Root is the one "admin" account and cannot be given to anyone else: the IAM roles are the choices.
+        labels = [auth.role_label(role) for role in auth.IAM_ROLES]
+        current = auth.IAM_ROLES.index(account.role) if account.role in auth.IAM_ROLES else 0
         label, ok = QInputDialog.getItem(self, tr("admin.settings.change_role_title"),
                                          tr("admin.settings.role_for").format(name=account.name), labels,
-                                         auth.ROLES.index(account.role), False)
+                                         current, False)
         if not ok:
             return
-        role = auth.ROLES[labels.index(label)]
+        role = auth.IAM_ROLES[labels.index(label)]
         if role == account.role:
             return
         new_pin = None
-        if role == "admin":
-            # Promoting to administrator comes with a new, longer PIN in the
-            # same step - the old till PIN must not become an admin key.
-            QMessageBox.information(
-                self, tr("admin.settings.promote_title"),
-                tr("admin.settings.promote_info").format(name=account.name, n=auth.MIN_ADMIN_PIN_LENGTH))
-            popup = PinPopup(account.name, "admin", ask_current=False, parent=self)
-            if not popup.exec():
-                return
-            new_pin = popup.pin.text()
         self._run(lambda: account_repository.set_role(account.badge_id, role, by=current_session.actor(),
                                                       new_pin=new_pin))
 

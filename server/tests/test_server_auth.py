@@ -64,7 +64,7 @@ def test_login_works_in_any_letter_case_and_logs_it(client):
     assert r.status_code == 200, r.text
     body = r.json()
     assert (body["badge_id"], body["name"], body["role"]) == ("B-001", "Ali Emre", "admin")
-    assert events() == ["sign_in"]
+    assert events() == ["root_sign_in"]  # the root user's sign-ins are logged under their own event
     me = client.get("/auth/me", headers={"Authorization": f"Bearer {body['token']}"})
     assert me.json()["badge_id"] == "B-001"
 
@@ -98,7 +98,8 @@ def test_role_must_fit_the_area_and_disabled_accounts_are_refused(client, settin
     assert login(client, area="pos").status_code == 200
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute("UPDATE accounts SET role = 'cashier'")
-    assert login(client, area="admin").status_code == 403
+    assert login(client, area="admin").status_code == 200  # IAM users open Admin too
+    assert login(client, area="depot_console").status_code == 403
     assert login(client, area="pos").status_code == 200
     with psycopg.connect(URL, autocommit=True) as conn:
         conn.execute("UPDATE accounts SET is_active = FALSE")

@@ -29,6 +29,15 @@ from dataclasses import dataclass
 from shared.i18n import LazyLabels, tr
 
 ROLES = ("admin", "depot_manager", "cashier")
+
+# AWS-style accounts: the "admin" role IS the root user. There is exactly one,
+# its badge + PIN are chosen when the system is first set up, and it alone
+# opens Admin. Root creates the IAM users - depot managers and cashiers - who
+# sign in to the depot and the dealership till; nobody can be made a second
+# root. Root sign-ins have their own audit event (ROOT_SIGN_IN_EVENT).
+ROOT_ROLE = "admin"
+IAM_ROLES = ("depot_manager", "cashier")
+ROOT_SIGN_IN_EVENT = "root_sign_in"
 ROLE_LABELS = LazyLabels("auth.role", ROLES)
 
 # Which roles may open which part of the system.
@@ -38,7 +47,7 @@ AREA_POS = "pos"
 AREA_LABELS = LazyLabels("auth.area", (AREA_ADMIN, AREA_DEPOT_CONSOLE, AREA_POS))  # as in "can't open ..."
 AREA_NAMES = LazyLabels("auth.area_name", (AREA_ADMIN, AREA_DEPOT_CONSOLE, AREA_POS))  # as a column value
 ALLOWED_ROLES = {
-    AREA_ADMIN: frozenset({"admin"}),
+    AREA_ADMIN: frozenset({"admin", "depot_manager", "cashier"}),  # IAM users open Admin too, minus root-only parts
     AREA_DEPOT_CONSOLE: frozenset({"admin", "depot_manager"}),
     AREA_POS: frozenset({"admin", "cashier"}),
 }
@@ -62,6 +71,16 @@ def normalize_badge_id(text: str | None) -> str:
     Lookups of rows saved before this rule also match them
     case-insensitively - see employee_repository.find_row()."""
     return (text or "").strip().upper()
+
+
+def is_root(role: str) -> bool:
+    return role == ROOT_ROLE
+
+
+def success_event(role: str, event: str) -> str:
+    """The audit event for a successful sign-in: root's main sign-in is
+    recorded as 'root_sign_in' so it stands out in Sign-in activity."""
+    return ROOT_SIGN_IN_EVENT if event == "sign_in" and is_root(role) else event
 
 
 def role_label(role: str) -> str:

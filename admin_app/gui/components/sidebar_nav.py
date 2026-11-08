@@ -158,6 +158,11 @@ class SidebarNav(QWidget):
             first_key = next(iter(self._buttons_by_key))
             self._buttons_by_key[first_key].setChecked(True)
 
+    def set_item_visible(self, key: str, visible: bool) -> None:
+        button = self._buttons_by_key.get(key)
+        if button is not None:
+            button.setVisible(visible)
+
     def set_active(self, key: str) -> None:
         """Sync the highlighted item without emitting page_selected again."""
         button = self._buttons_by_key.get(key)

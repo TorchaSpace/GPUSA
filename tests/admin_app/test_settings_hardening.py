@@ -84,24 +84,19 @@ def _patch_pin_popup(monkeypatch, pin, accept=True):
     monkeypatch.setattr(PinPopup, "exec", fake_exec)
 
 
-def test_promoting_to_admin_asks_for_a_new_pin_and_sets_it(settings, silent_boxes, monkeypatch):
-    settings.select("B-2")
-    _patch_role_choice(monkeypatch, auth.role_label("admin"))
-    _patch_pin_popup(monkeypatch, "739184")
-    settings.change_role()
-    assert account_repository.get("B-2").role == "admin"
-    assert account_repository.authenticate("B-2", "739184", auth.AREA_ADMIN, "Admin").role == "admin"
-    with pytest.raises(Exception):  # the old cashier PIN is no key to Admin
-        account_repository.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
+def test_role_dialog_offers_only_iam_roles_so_nobody_becomes_a_second_root(settings, silent_boxes, monkeypatch):
+    seen = {}
 
+    def fake_get_item(parent, title, label, items, current, editable):
+        seen["items"] = list(items)
+        return items[0], True
 
-def test_cancelling_the_promotion_pin_changes_nothing(settings, silent_boxes, monkeypatch):
+    from PySide6.QtWidgets import QInputDialog
+    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(fake_get_item))
     settings.select("B-2")
-    _patch_role_choice(monkeypatch, auth.role_label("admin"))
-    _patch_pin_popup(monkeypatch, "739184", accept=False)
     settings.change_role()
-    assert account_repository.get("B-2").role == "cashier"
-    assert account_repository.authenticate("B-2", "135702", auth.AREA_POS, "POS").role == "cashier"
+    assert seen["items"] == [auth.role_label(r) for r in auth.IAM_ROLES]
+    assert auth.role_label("admin") not in seen["items"]
 
 
 def test_a_weak_promotion_pin_is_refused_by_the_popup_itself(qapp):
