@@ -152,6 +152,9 @@ class Employee:
     title: str | None = None
     is_active: bool = True
     id: int | None = None
+    # T.C. Kimlik No (11 digits). None = not recorded (records made before v12) or, on an
+    # edit, "keep what is saved". From the server it comes masked ("123******90").
+    national_id: str | None = None
 
 
 @dataclass

@@ -12,9 +12,14 @@ account_repository.py:
   Promoting someone to administrator must come with a new, different PIN.
 - Every account change lands in ``auth_events``; deletes also in ``admin_audit``.
 
-Who: administrators (admin area) manage employees and accounts. Administrators and depot
-managers (admin or depot console) punch badges. Everyone signed in may read the lists, and
-anyone may change their own PIN with the current one.
+Who: the depot (depot manager, depot console) and the dealership till (cashier, POS) add
+and change their OWN place's staff and punch their badges in and out; administrators may do
+it anywhere (they can sign in at a depot or a till) and alone manage accounts and deletes.
+In the Admin app they only watch. Lists are scoped the same way: a depot manager sees their
+warehouse's people, a cashier their shop's. Anyone may change their own PIN with the current one.
+
+National IDs (T.C. Kimlik No, 11 digits with check digits) are stored whole but only ever sent
+back masked ("123******90").
 """
 
 from __future__ import annotations
@@ -35,8 +40,10 @@ router = APIRouter(tags=["people"])
 
 ADMINS = frozenset({"admin"})
 ADMIN_AREA = frozenset({"admin"})
-PUNCH_ROLES = frozenset({"admin", "depot_manager"})
-PUNCH_AREAS = frozenset({"admin", "depot_console"})
+PUNCH_ROLES = frozenset({"admin", "depot_manager", "cashier"})
+PUNCH_AREAS = frozenset({"admin", "depot_console", "pos"})
+STAFF_ROLES = frozenset({"admin", "depot_manager", "cashier"})
+STAFF_AREAS = frozenset({"depot_console", "pos"})
 EVERY_ROLE = frozenset({"admin", "depot_manager", "cashier"})
 EVERY_AREA = frozenset({"admin", "depot_console", "pos"})
 
@@ -75,6 +82,61 @@ def pin_problem(pin: str, role: str) -> str | None:
     return None
 
 
+def national_id_problem(value: str) -> str | None:
+    """Why `value` (digits only) isn't a valid T.C. Kimlik No, or None. Same rule as shared/national_id.py."""
+    if not value.isascii() or not value.isdigit() or len(value) != 11:
+        return "A national ID has 11 digits."
+    if value[0] == "0":
+        return "That national ID is not valid; check the digits."
+    d = [int(ch) for ch in value]
+    if d[9] != (sum(d[0:9:2]) * 7 - sum(d[1:8:2])) % 10 or d[10] != sum(d[:10]) % 10:
+        return "That national ID is not valid; check the digits."
+    return None
+
+
+def _national_id(text: str | None) -> str | None:
+    value = "".join(ch for ch in (text or "") if not ch.isspace() and ch not in "-.")
+    if not value:
+        return None
+    if problem := national_id_problem(value):
+        raise _fail(422, problem)
+    return value
+
+
+MASKED_NATIONAL_ID = ("CASE WHEN national_id IS NULL THEN NULL ELSE left(national_id, 3) || "
+                      "repeat('*', greatest(length(national_id) - 5, 0)) || right(national_id, 2) END "
+                      "AS national_id_masked")
+
+
+# --- whose staff ------------------------------------------------------------------------
+
+def own_place(conn, session: Session) -> tuple[str, str, str] | None:
+    """(location_type, code, name) of the one place this person manages staff for: a depot manager's
+    warehouse, a cashier's dealership. None for an administrator (every place)."""
+    if (code := authz.own_warehouse(conn, session)) is not None:
+        row = conn.execute("SELECT code, name FROM warehouses WHERE upper(code) = upper(%s)", (code,)).fetchone()
+        return ("Warehouse", row["code"], row["name"]) if row else ("Warehouse", code, "")
+    if (code := authz.own_shop(conn, session)) is not None:
+        row = conn.execute("SELECT code, name FROM dealerships WHERE upper(code) = upper(%s)", (code,)).fetchone()
+        return ("Dealership", row["code"], row["name"]) if row else ("Dealership", code, "")
+    return None
+
+
+def at_place(location_type: str | None, location_name: str | None, place: tuple[str, str, str] | None) -> bool:
+    if place is None:
+        return True
+    kind, code, name = place
+    wanted = _loose(location_name)
+    return location_type == kind and bool(wanted) and wanted in {_loose(code), _loose(name), _loose(f"{code} · {name}")}
+
+
+def _require_own_place(conn, session: Session, location_type: str, location_name: str, badge: str) -> None:
+    place = own_place(conn, session)
+    if not at_place(location_type, location_name, place):
+        raise _fail(403, f"{badge or location_name} is not one of {place[1]}'s staff; "
+                         "a depot or a shop manages only its own people.")
+
+
 # --- employees -------------------------------------------------------------------------
 
 class EmployeeIn(BaseModel):
@@ -85,6 +147,7 @@ class EmployeeIn(BaseModel):
     location_type: str = Field(max_length=20)
     location_name: str = Field(max_length=300)
     is_active: bool = True
+    national_id: str | None = Field(default=None, max_length=40)
 
 
 class EmployeeUpdate(BaseModel):
@@ -94,6 +157,8 @@ class EmployeeUpdate(BaseModel):
     location_type: str = Field(max_length=20)
     location_name: str = Field(max_length=300)
     is_active: bool = True
+    # None / left out = keep the saved one.
+    national_id: str | None = Field(default=None, max_length=40)
 
 
 class EmployeeOut(BaseModel):
@@ -105,9 +170,23 @@ class EmployeeOut(BaseModel):
     location_type: str = Field(max_length=20)
     location_name: str
     is_active: bool
+    national_id_masked: str | None = None
 
 
-_EMPLOYEE_COLUMNS = "id, badge_id, name, title, role, location_type, location_name, is_active"
+_EMPLOYEE_COLUMNS = "id, badge_id, name, title, role, location_type, location_name, is_active, " + MASKED_NATIONAL_ID
+
+
+def _guard_national_id(conn, national_id: str | None, own_id: int | None = None) -> None:
+    if not national_id:
+        return
+    other = conn.execute("SELECT id, badge_id FROM employees WHERE national_id = %s", (national_id,)).fetchone()
+    if other is not None and other["id"] != own_id:
+        raise _fail(409, f"This national ID is already recorded for {other['badge_id']}.")
+
+
+def _has_admin_account(conn, employee_id: int) -> bool:
+    return conn.execute("SELECT 1 FROM accounts WHERE employee_id = %s AND role = 'admin'",
+                        (employee_id,)).fetchone() is not None
 
 
 def _validate_employee(body: EmployeeIn | EmployeeUpdate, *, badge: str | None = None) -> dict:
@@ -181,43 +260,68 @@ def employee_locations(request: Request, _session: Session = Depends(current_ses
 
 
 @router.get("/employees/{badge}", response_model=EmployeeOut)
-def get_employee(badge: str, request: Request, _session: Session = Depends(current_session)) -> dict:
+def get_employee(badge: str, request: Request, session: Session = Depends(current_session)) -> dict:
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return _need_employee(conn, badge)
+        row = _need_employee(conn, badge)
+        if session.role != "admin" and _badge(row["badge_id"]) != _badge(session.badge_id) and not at_place(
+                row["location_type"], row["location_name"], own_place(conn, session)):
+            raise _fail(404, f"No employee with badge {_badge(badge)}.")
+        return conn.execute(f"SELECT {_EMPLOYEE_COLUMNS} FROM employees WHERE id = %s", (row["id"],)).fetchone()
 
 
 @router.post("/employees", response_model=EmployeeOut, status_code=201)
 def create_employee(body: EmployeeIn, request: Request, session: Session = Depends(current_session)) -> dict:
-    authz.require(session, roles=ADMINS, areas=ADMIN_AREA)
+    """The depot or the till adds one of its own people (an administrator signed in there may add anyone)."""
+    authz.require(session, roles=STAFF_ROLES, areas=STAFF_AREAS | ADMIN_AREA)
+    if session.role != "admin" and session.area == "admin":
+        raise _fail(403, "Sign in to depot_console or pos to do this.")
     badge = _badge(body.badge_id)
     fields = _validate_employee(body, badge=badge)
+    national_id = _national_id(body.national_id)
 
     def work(conn):
+        _require_own_place(conn, session, body.location_type, fields["location_name"], badge)
+        if session.role != "admin" and national_id is None:
+            raise _fail(422, "Enter the person's national ID (11 digits).")
         if _find_employee(conn, badge) is not None:
             raise _fail(409, f"An employee with badge {badge} exists already.")
+        _guard_national_id(conn, national_id)
         if problem := _location_problem(conn, body.location_type, fields["location_name"]):
             raise _fail(422, problem)
         try:
             return conn.execute(
-                "INSERT INTO employees (badge_id, name, title, role, location_type, location_name, is_active) "
-                f"VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING {_EMPLOYEE_COLUMNS}",
+                "INSERT INTO employees (badge_id, name, title, role, location_type, location_name, is_active, "
+                f"national_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING {_EMPLOYEE_COLUMNS}",
                 (badge, fields["name"], fields["title"], body.role, body.location_type, fields["location_name"],
-                 body.is_active)).fetchone()
-        except psycopg.errors.UniqueViolation:
+                 body.is_active, national_id)).fetchone()
+        except psycopg.errors.UniqueViolation as exc:
+            if "national_id" in str(exc):
+                raise _fail(409, "This national ID is already recorded for another employee.") from None
             raise _fail(409, f"An employee with badge {badge} exists already.") from None
 
-    return _write(request, session, ADMINS, work)
+    return _write(request, session, STAFF_ROLES, work)
 
 
 @router.patch("/employees/{badge}", response_model=EmployeeOut)
 def update_employee(badge: str, body: EmployeeUpdate, request: Request,
                     session: Session = Depends(current_session)) -> dict:
-    authz.require(session, roles=ADMINS, areas=ADMIN_AREA)
+    """The depot or the till changes one of its own people (they stay its own: a depot manager or a cashier
+    cannot move someone to another place, nor touch an administrator's record)."""
+    authz.require(session, roles=STAFF_ROLES, areas=STAFF_AREAS | ADMIN_AREA)
+    if session.role != "admin" and session.area == "admin":
+        raise _fail(403, "Sign in to depot_console or pos to do this.")
     fields = _validate_employee(body)
+    national_id = _national_id(body.national_id)
 
     def work(conn):
         row = _need_employee(conn, badge, lock=True)
+        if session.role != "admin":
+            _require_own_place(conn, session, row["location_type"], row["location_name"], row["badge_id"])
+            _require_own_place(conn, session, body.location_type, fields["location_name"], row["badge_id"])
+            if _has_admin_account(conn, row["id"]):
+                raise _fail(403, f"{row['badge_id']} is an administrator; only an administrator can change them.")
+        _guard_national_id(conn, national_id, row["id"])
         moved = (row["location_type"], _squash(row["location_name"]).casefold()) != (
             body.location_type, fields["location_name"].casefold())
         if moved and (problem := _location_problem(conn, body.location_type, fields["location_name"])):
@@ -232,14 +336,15 @@ def update_employee(badge: str, body: EmployeeUpdate, request: Request,
             _guard_last_admin(conn, row["id"])
         updated = conn.execute(
             "UPDATE employees SET name = %s, title = %s, role = %s, location_type = %s, location_name = %s, "
-            f"is_active = %s, updated_at = now() WHERE id = %s RETURNING {_EMPLOYEE_COLUMNS}",
+            "is_active = %s, national_id = COALESCE(%s, national_id), updated_at = now() WHERE id = %s "
+            f"RETURNING {_EMPLOYEE_COLUMNS}",
             (fields["name"], fields["title"], body.role, body.location_type, fields["location_name"],
-             body.is_active, row["id"])).fetchone()
+             body.is_active, national_id, row["id"])).fetchone()
         if row["is_active"] and not body.is_active:
             _close_shifts(conn, row["id"], "Auto check-out: employee switched off")
         return updated
 
-    return _write(request, session, ADMINS, work)
+    return _write(request, session, STAFF_ROLES, work)
 
 
 @router.delete("/employees/{badge}", status_code=204)
@@ -267,6 +372,7 @@ class PunchIn(BaseModel):
     badge_id: str = Field(max_length=64)
     note: str | None = Field(default=None, max_length=300)
     warehouse_code: str | None = Field(default=None, max_length=32)
+    dealership_code: str | None = Field(default=None, max_length=32)
 
 
 def _close_shifts(conn, employee_id: int, note: str) -> int:
@@ -294,9 +400,25 @@ def _require_site(conn, employee, warehouse_code: str | None) -> None:
         raise _fail(409, f"{employee['badge_id']} works at {employee['location_name']}, not at this depot.")
 
 
-def _punch_employee(conn, body: PunchIn):
+def _require_shop(conn, employee, dealership_code: str | None) -> None:
+    """With a dealership code (the till) the employee must work at that dealership."""
+    if not dealership_code:
+        return
+    shop = conn.execute("SELECT code, name FROM dealerships WHERE upper(code) = %s",
+                        (dealership_code.strip().upper(),)).fetchone()
+    place = ("Dealership", shop["code"], shop["name"]) if shop else ("Dealership", dealership_code, "")
+    if not at_place(employee["location_type"], employee["location_name"], place):
+        raise _fail(409, f"{employee['badge_id']} works at {employee['location_name']}, not at this shop.")
+
+
+def _punch_employee(conn, body: PunchIn, session: Session):
     employee = _need_employee(conn, body.badge_id, lock=True)
+    # A depot manager punches only their own warehouse's people, a cashier only their own shop's.
+    if session.role != "admin" and not at_place(employee["location_type"], employee["location_name"],
+                                                own_place(conn, session)):
+        raise _fail(409, f"{employee['badge_id']} works at {employee['location_name']}, not here.")
     _require_site(conn, employee, body.warehouse_code)
+    _require_shop(conn, employee, body.dealership_code)
     return employee
 
 
@@ -305,7 +427,7 @@ def check_in(body: PunchIn, request: Request, session: Session = Depends(current
     authz.require(session, roles=PUNCH_ROLES, areas=PUNCH_AREAS)
 
     def work(conn):
-        employee = _punch_employee(conn, body)
+        employee = _punch_employee(conn, body, session)
         if not employee["is_active"]:
             raise _fail(409, f"{employee['badge_id']} is switched off.")
         if conn.execute("SELECT 1 FROM attendance_records WHERE employee_id = %s AND check_out_at IS NULL",
@@ -323,7 +445,7 @@ def check_out(body: PunchIn, request: Request, session: Session = Depends(curren
     authz.require(session, roles=PUNCH_ROLES, areas=PUNCH_AREAS)
 
     def work(conn):
-        employee = _punch_employee(conn, body)
+        employee = _punch_employee(conn, body, session)
         open_row = conn.execute(
             "SELECT id FROM attendance_records WHERE employee_id = %s AND check_out_at IS NULL "
             "ORDER BY check_in_at DESC LIMIT 1", (employee["id"],)).fetchone()
@@ -369,27 +491,39 @@ def operator(badge_id: str, request: Request, warehouse_code: str | None = None,
         return {"badge_id": employee["badge_id"], "name": employee["name"]}
 
 
+def _visible(conn, session: Session, rows: list[dict]) -> list[dict]:
+    """Rows (with location_type / location_name) a depot manager or a cashier may see: their own place's.
+    The location columns are dropped from what is returned."""
+    place = None if session.role == "admin" else own_place(conn, session)
+    return [{k: v for k, v in r.items() if k not in ("location_type", "location_name")}
+            for r in rows if at_place(r["location_type"], r["location_name"], place)]
+
+
 @router.get("/attendance/open")
-def open_shifts(request: Request, _session: Session = Depends(current_session)) -> list[dict]:
+def open_shifts(request: Request, session: Session = Depends(current_session)) -> list[dict]:
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return conn.execute(
-            "SELECT e.badge_id, e.name, e.role, a.check_in_at FROM attendance_records a "
-            "JOIN employees e ON e.id = a.employee_id WHERE a.check_out_at IS NULL "
-            "ORDER BY a.check_in_at").fetchall()
+        return _visible(conn, session, conn.execute(
+            "SELECT e.badge_id, e.name, e.role, a.check_in_at, e.location_type, e.location_name "
+            "FROM attendance_records a JOIN employees e ON e.id = a.employee_id WHERE a.check_out_at IS NULL "
+            "ORDER BY a.check_in_at").fetchall())
 
 
 @router.get("/attendance/records")
 def records(start: datetime, end: datetime, request: Request,
-            _session: Session = Depends(current_session)) -> list[dict]:
-    """Records touching [start, end): started before `end` and not finished before `start`."""
+            session: Session = Depends(current_session)) -> list[dict]:
+    """Records touching [start, end): started before `end` and not finished before `start`.
+    A depot manager gets their warehouse's people only, a cashier their shop's."""
+    if end - start > timedelta(days=400):
+        raise _fail(422, "Ask for at most about a year at a time.")
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
-        return conn.execute(
-            "SELECT a.id, e.badge_id, e.name, a.employee_id, a.check_in_at, a.check_out_at "
+        return _visible(conn, session, conn.execute(
+            "SELECT a.id, e.badge_id, e.name, a.employee_id, a.check_in_at, a.check_out_at, "
+            "e.location_type, e.location_name "
             "FROM attendance_records a JOIN employees e ON e.id = a.employee_id "
             "WHERE a.check_in_at < %s AND (a.check_out_at IS NULL OR a.check_out_at > %s) "
-            "ORDER BY a.check_in_at, a.id", (end, start)).fetchall()
+            "ORDER BY a.check_in_at, a.id", (end, start)).fetchall())
 
 
 # --- accounts --------------------------------------------------------------------------

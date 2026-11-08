@@ -22,9 +22,17 @@ import sqlite3
 from shared.i18n import UserError, enum_label, tr
 from database import audit_repository, authz, remote, remote_people
 from database.connection import connection_scope
-from database.exceptions import DuplicateBadgeIdError, EmployeeNotFoundError, SelfActionError
+from database.exceptions import (
+    DuplicateBadgeIdError,
+    DuplicateNationalIdError,
+    EmployeeNotFoundError,
+    EmployeeOtherPlaceError,
+    SelfActionError,
+)
+from shared import national_id as national_ids
 from shared.auth import Actor, normalize_badge_id
 from shared.models import EMPLOYEE_LOCATION_TYPES, EMPLOYEE_ROLES, Employee
+from shared.staff import StaffPlace
 
 MAX_BADGE_LENGTH = 32
 MAX_NAME_LENGTH = 120
@@ -45,9 +53,13 @@ def find_row(conn, badge_id: str) -> sqlite3.Row | None:
     ).fetchone()
 
 
-def validate_fields(employee: Employee, *, require_badge: bool = True) -> None:
+def validate_fields(employee: Employee, *, require_badge: bool = True, require_national_id: bool = False) -> None:
     """Raise ValueError (message fit to show) for an empty or over-long
-    badge / name / title / location. Pure - no database."""
+    badge / name / title / location, or a national ID that isn't a valid
+    T.C. Kimlik No (checked whenever one is given; required with
+    `require_national_id`). Pure - no database."""
+    if require_national_id or (employee.national_id and "*" not in employee.national_id):
+        national_ids.validate(employee.national_id)
     badge = normalize_badge_id(employee.badge_id)
     if require_badge:
         if not badge:
@@ -125,6 +137,7 @@ def _row_to_employee(row: sqlite3.Row) -> Employee:
         location_type=row["location_type"],
         location_name=row["location_name"],
         is_active=bool(row["is_active"]),
+        national_id=row["national_id"] if "national_id" in row.keys() else None,
     )
 
 
@@ -155,6 +168,8 @@ def _clean(employee: Employee) -> None:
     employee.name = " ".join((employee.name or "").split())
     employee.title = " ".join((employee.title or "").split()) or None
     employee.location_name = " ".join((employee.location_name or "").split())
+    if employee.national_id is not None:
+        employee.national_id = national_ids.normalize(employee.national_id) or None
 
 
 def _same_place(a: tuple[str, str], b: tuple[str, str]) -> bool:
@@ -167,17 +182,52 @@ def _check_location(employee: Employee) -> None:
         raise ValueError(problem)
 
 
-def create(employee: Employee, *, check_location: bool = False) -> None:
+def _require_place(employee: Employee, place: StaffPlace | None) -> None:
+    """With a `place` (the depot's warehouse / the till's dealership) the person must be assigned to it."""
+    if place is not None and not place.has(employee.location_type, employee.location_name):
+        raise EmployeeOtherPlaceError(employee.badge_id or employee.name, place.label)
+
+
+def _guard_national_id(conn, national_id: str | None, own_id: int | None = None) -> None:
+    if not national_id or "*" in national_id:
+        return
+    other = conn.execute(
+        "SELECT id, badge_id FROM employees WHERE national_id = ?", (national_id,)
+    ).fetchone()
+    if other is not None and other["id"] != own_id:
+        raise DuplicateNationalIdError(other["badge_id"])
+
+
+def next_badge_id(prefix: str = "P") -> str:
+    """A badge ID nobody has yet ("P-0007"), offered by the staff form so the person at the
+    counter does not have to invent one. Local mode only; in server mode the form leaves it
+    to be typed (or reads it from the server's list)."""
+    taken = {e.badge_id.upper() for e in list_all()}
+    number = len(taken) + 1
+    while f"{prefix}-{number:04d}" in taken:
+        number += 1
+    return f"{prefix}-{number:04d}"
+
+
+def create(employee: Employee, *, check_location: bool = False, place: StaffPlace | None = None,
+           by: Actor | None = None, area: str | None = None, require_national_id: bool = False) -> None:
     """Insert a new employee. The badge is stored trimmed and upper-case.
     Raises DuplicateBadgeIdError if the badge exists (in any letter case),
+    DuplicateNationalIdError if another person has that national ID,
     ValueError if role/location_type aren't recognized or the badge, name or
     location is empty / too long. With `check_location=True` (the Workforce
     form) the location must also be an existing warehouse or dealership of
-    that type; plain callers (setup scripts, tests) may use free text."""
+    that type; plain callers (setup scripts, tests) may use free text.
+
+    The depot and the dealership till add their own staff: they pass their
+    `place` (the person must be assigned to it, else EmployeeOtherPlaceError),
+    the signed-in `by` and the app's `area` (re-checked live inside the
+    transaction) and `require_national_id=True`."""
     _validate_role(employee.role)
     _validate_location_type(employee.location_type)
     _clean(employee)
-    validate_fields(employee)
+    validate_fields(employee, require_national_id=require_national_id)
+    _require_place(employee, place)
     if remote.active():
         return remote_people.create_employee(employee)
     if check_location:
@@ -185,12 +235,15 @@ def create(employee: Employee, *, check_location: bool = False) -> None:
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
+            if area is not None:
+                authz.require_live_role(conn, by, area)
             if find_row(conn, employee.badge_id) is not None:
                 raise DuplicateBadgeIdError(employee.badge_id)
+            _guard_national_id(conn, employee.national_id)
             try:
                 conn.execute(
                     "INSERT INTO employees (badge_id, name, title, role, location_type, "
-                    "location_name, is_active) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                    "location_name, is_active, national_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?)",
                     (
                         employee.badge_id,
                         employee.name,
@@ -199,6 +252,7 @@ def create(employee: Employee, *, check_location: bool = False) -> None:
                         employee.location_type,
                         employee.location_name,
                         int(employee.is_active),
+                        employee.national_id,
                     ),
                 )
             except sqlite3.IntegrityError as exc:
@@ -210,7 +264,8 @@ def create(employee: Employee, *, check_location: bool = False) -> None:
             conn.execute("COMMIT")
 
 
-def update(employee: Employee, *, by: Actor | None = None, check_location: bool = False) -> None:
+def update(employee: Employee, *, by: Actor | None = None, check_location: bool = False,
+           place: StaffPlace | None = None, area: str | None = None) -> None:
     """Update an existing employee's fields, keyed by its (fixed) badge id.
     Raises ValueError if role/location_type aren't recognized or a field is
     empty / too long, EmployeeNotFoundError, LastAdminError, and
@@ -218,23 +273,36 @@ def update(employee: Employee, *, by: Actor | None = None, check_location: bool 
     Switching an employee off also closes their open attendance shift
     (auto check-out at that moment). `check_location` as in create(); it is
     only enforced when the location actually changes, so an employee whose
-    saved location is free text from before can still be edited."""
+    saved location is free text from before can still be edited.
+
+    `employee.national_id` None keeps the saved one; a new value is checked
+    and must not belong to anyone else (DuplicateNationalIdError). With a
+    `place` (depot / dealership screen) the person must be assigned there
+    both before and after the change (EmployeeOtherPlaceError), and `by` is
+    re-checked against `area` instead of the Admin app."""
     from database import attendance_repository  # lazy: it imports this module
 
     _validate_role(employee.role)
     _validate_location_type(employee.location_type)
     _clean(employee)
     validate_fields(employee)
+    _require_place(employee, place)
     if remote.active():
         return remote_people.update_employee(employee)
     known = location_choices(include_codes=True) if check_location else None
     with connection_scope() as conn:
         conn.execute("BEGIN IMMEDIATE")
         try:
-            authz.require_live_admin(conn, by)
+            if area is not None:
+                authz.require_live_role(conn, by, area)
+            else:
+                authz.require_live_admin(conn, by)
             row = find_row(conn, employee.badge_id)
             if row is None:
                 raise EmployeeNotFoundError(employee.badge_id)
+            if place is not None and not place.has(row["location_type"], row["location_name"]):
+                raise EmployeeOtherPlaceError(row["badge_id"], place.label)
+            _guard_national_id(conn, employee.national_id, row["id"])
             if known is not None and not _same_place(
                 (row["location_type"], row["location_name"]), (employee.location_type, employee.location_name)
             ):
@@ -247,8 +315,8 @@ def update(employee: Employee, *, by: Actor | None = None, check_location: bool 
                 _guard_row_last_admin(conn, row["id"])
             conn.execute(
                 "UPDATE employees SET name = ?, title = ?, role = ?, location_type = ?, "
-                "location_name = ?, is_active = ?, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') "
-                "WHERE id = ?",
+                "location_name = ?, is_active = ?, national_id = COALESCE(?, national_id), "
+                "updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now') WHERE id = ?",
                 (
                     employee.name,
                     employee.title,
@@ -256,6 +324,7 @@ def update(employee: Employee, *, by: Actor | None = None, check_location: bool 
                     employee.location_type,
                     employee.location_name,
                     int(employee.is_active),
+                    employee.national_id if employee.national_id and "*" not in employee.national_id else None,
                     row["id"],
                 ),
             )

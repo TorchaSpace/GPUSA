@@ -36,6 +36,7 @@ from pos_app.gui.pages.my_stock_page import MyStockPage
 from pos_app.gui.pages.new_sale_page import NewSalePage
 from pos_app.gui.pages.receive_page import ReceivePage
 from pos_app.gui.sales_page import SalesPage
+from pos_app.gui.staff_page import StaffPage
 from pos_app.gui.sync_banner import SyncBanner
 from pos_app.theme import ORGANIC_PALETTE
 from shared import current_session
@@ -137,6 +138,9 @@ class MainWindow(QMainWindow):
         self._sales_page.stock_changed.connect(lambda: self._stock_page.reload(play=False))
         self._register_page("sales", self._sales_page)
 
+        self._staff_page = StaffPage(dealership_code, identity["name"] if identity else None)
+        self._register_page("staff", self._staff_page)
+
         layout.addWidget(self._stack, stretch=1)
         self.setCentralWidget(central)
 
@@ -217,6 +221,8 @@ class MainWindow(QMainWindow):
             self._receive_page.reload()
         elif page is self._sales_page:
             self._sales_page.reload()
+        elif page is self._staff_page:
+            self._staff_page.reload()
         elif page is self._sale_page and not self._sale_page.has_items():
             self._sale_page.reload()
 
@@ -317,6 +323,8 @@ class MainWindow(QMainWindow):
             self._stock_page.reload()
         elif key == "receive":
             self._receive_page.reload()
+        elif key == "staff":
+            self._staff_page.reload()
 
     def _animate_in(self, widget: QWidget, rise: int = 14, duration: int = 240) -> None:
         if not animations_enabled():

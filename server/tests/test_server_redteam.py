@@ -293,8 +293,9 @@ ADMIN_ONLY = [
     ("post", "/accounts/B-001/active", {"active": False}),
     ("post", "/accounts/B-001/unlock", None),
     ("delete", "/accounts/B-001", None),
+    # Another place's staff (a depot / a till may add only its own people).
     ("post", "/employees", {"badge_id": "X-9", "name": "Eve", "role": "Management", "location_type": "Warehouse",
-                            "location_name": "Main"}),
+                            "location_name": "Spare", "national_id": "10000000146"}),
     ("patch", "/employees/B-001", {"name": "Hacked", "role": "Management", "location_type": "Warehouse",
                                    "location_name": "Main", "title": "x", "is_active": True}),
     ("delete", "/employees/B-001", None),
@@ -327,13 +328,15 @@ def test_nobody_below_admin_reaches_administrator_actions(world, client, who):
     wrong = []
     for method, path, body in ADMIN_ONLY:
         r = client.request(method.upper(), path, headers=world[who], json=body)
-        allowed_to_depot = who == "mo" and (path.startswith(("/ledger", "/price-ranges", "/purchase-orders"))
-                                            or path == "/employees")
-        if allowed_to_depot:
+        allowed_to_depot = who == "mo" and path.startswith(("/ledger", "/price-ranges", "/purchase-orders"))
+        own_staff_list = method == "get" and path == "/employees"  # each sees only their own place's people
+        if allowed_to_depot or own_staff_list:
             continue
         if r.status_code not in (401, 403):
             wrong.append(f"{who}: {method.upper()} {path} answered {r.status_code}: {r.text[:100]}")
     assert not wrong, "\n".join(wrong)
+    if who == "cass":  # another shop's cashier (C-2) and the depot manager are not on Cass's list
+        assert [e["badge_id"] for e in client.get("/employees", headers=world[who]).json()] == ["C-1"]
     # nothing moved
     assert sql("SELECT a.role FROM accounts a JOIN employees e ON e.id = a.employee_id WHERE e.badge_id = 'C-1'") == [
         ("cashier",)]

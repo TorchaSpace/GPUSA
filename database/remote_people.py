@@ -53,7 +53,7 @@ def _call(method: str, url: str, body: dict | None = None, *, errors: dict | Non
 def _employee(data: dict) -> Employee:
     return Employee(id=int(data["id"]), badge_id=data["badge_id"], name=data["name"], title=data.get("title"),
                     role=data["role"], location_type=data["location_type"], location_name=data["location_name"],
-                    is_active=bool(data["is_active"]))
+                    is_active=bool(data["is_active"]), national_id=data.get("national_id_masked"))
 
 
 def get_employee(badge_id: str) -> Employee:
@@ -100,21 +100,29 @@ def _employee_body(employee: Employee, *, with_badge: bool) -> dict:
             "is_active": bool(employee.is_active)}
     if with_badge:
         body["badge_id"] = employee.badge_id
+    if employee.national_id and "*" not in employee.national_id:  # a masked one is what we were sent: unchanged
+        body["national_id"] = employee.national_id
     return body
 
 
 # --- attendance --------------------------------------------------------------------------
 
-def check_in(badge_id: str, note: str | None, warehouse_code: str | None) -> int:
+def check_in(badge_id: str, note: str | None, warehouse_code: str | None, dealership_code: str | None = None) -> int:
     badge = _badge(badge_id)
-    result = _call("POST", "/attendance/check-in", {"badge_id": badge, "note": note, "warehouse_code": warehouse_code},
+    body = {"badge_id": badge, "note": note, "warehouse_code": warehouse_code}
+    if dealership_code:
+        body["dealership_code"] = dealership_code
+    result = _call("POST", "/attendance/check-in", body,
                    errors={404: lambda: EmployeeNotFoundError(badge)})
     return int(result["id"])
 
 
-def check_out(badge_id: str, note: str | None, warehouse_code: str | None) -> int:
+def check_out(badge_id: str, note: str | None, warehouse_code: str | None, dealership_code: str | None = None) -> int:
     badge = _badge(badge_id)
-    result = _call("POST", "/attendance/check-out", {"badge_id": badge, "note": note, "warehouse_code": warehouse_code},
+    body = {"badge_id": badge, "note": note, "warehouse_code": warehouse_code}
+    if dealership_code:
+        body["dealership_code"] = dealership_code
+    result = _call("POST", "/attendance/check-out", body,
                    errors={404: lambda: EmployeeNotFoundError(badge)})
     return int(result["id"])
 
