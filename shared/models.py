@@ -628,6 +628,7 @@ class Account:
     locked_until: str | None = None  # db timestamp; in the past = not locked
     last_sign_in_at: str | None = None
     id: int | None = None
+    is_root: bool = False
 
 
 @dataclass

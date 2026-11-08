@@ -77,10 +77,11 @@ def first_admin(body: FirstAdminIn, request: Request) -> dict:
                 (badge, name)).fetchone()
         else:
             conn.execute("UPDATE employees SET is_active = TRUE WHERE id = %s", (employee["id"],))
+        conn.execute("UPDATE accounts SET is_root = FALSE WHERE is_root")  # a switched-off old root gives way
         conn.execute(
-            "INSERT INTO accounts (employee_id, role, pin_hash) VALUES (%s, 'admin', %s) "
-            "ON CONFLICT (employee_id) DO UPDATE SET role = 'admin', pin_hash = EXCLUDED.pin_hash, "
+            "INSERT INTO accounts (employee_id, role, is_root, pin_hash) VALUES (%s, 'admin', TRUE, %s) "
+            "ON CONFLICT (employee_id) DO UPDATE SET role = 'admin', is_root = TRUE, pin_hash = EXCLUDED.pin_hash, "
             "is_active = TRUE, failed_attempts = 0, locked_until = NULL, updated_at = now()",
             (employee["id"], pin_hash))
-        _auth_log(conn, "account_created", badge, "admin", body.terminal, "First administrator")
+        _auth_log(conn, "account_created", badge, "admin", body.terminal, "Root account")
     return {"badge_id": badge}

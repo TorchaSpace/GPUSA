@@ -71,7 +71,7 @@ class ServerClient:
         who = self._request("POST", "/auth/login",
                             {"badge_id": badge_id, "pin": pin, "area": area, "terminal": terminal})
         self.token = who["token"]
-        return {k: who[k] for k in ("badge_id", "name", "role", "area")}
+        return {**{k: who[k] for k in ("badge_id", "name", "role", "area")}, "is_root": bool(who.get("is_root"))}
 
     def get(self, path: str):
         return self._request("GET", path)

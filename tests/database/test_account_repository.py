@@ -11,6 +11,7 @@ from database import account_repository as accounts, employee_repository, purcha
 from database import product_repository, stock_repository, transaction_repository
 from database.exceptions import (
     AccountDisabledError,
+    SessionInvalidError,
     AccountLockedError,
     AuthError,
     LastAdminError,
@@ -156,9 +157,11 @@ def test_the_last_administrator_cannot_be_removed(people):
     with pytest.raises(LastAdminError):
         employee_repository.delete("B-1")
     accounts.create_account("B-3", "admin", "739184")
-    # Fine now that B-3 is an admin - but B-3 does it, an admin can't demote themselves.
-    accounts.set_role("B-1", "depot_manager", by=Actor("B-3", "Murat Yılmaz"))
-    assert accounts.get("B-1").role == "depot_manager"
+    # B-3 is an Admin but not root: it can neither manage accounts nor touch the root account.
+    assert accounts.get("B-3").role == "admin" and not accounts.get("B-3").is_root and accounts.get("B-1").is_root
+    with pytest.raises(SessionInvalidError):
+        accounts.set_role("B-1", "depot_manager", by=Actor("B-3", "Murat Yılmaz"))
+    assert accounts.get("B-1").role == "admin"
 
 
 def test_sign_out_is_logged(people):

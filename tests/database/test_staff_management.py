@@ -135,7 +135,7 @@ def test_migration_v12_adds_the_column_and_unique_index(tmp_path):
                 "VALUES ('OLD', 'Old', 'Operations', 'Warehouse', 'X')")
     raw.commit()
     migrations.run_migrations(raw)
-    assert raw.execute("PRAGMA user_version").fetchone()[0] == 12
+    assert raw.execute("PRAGMA user_version").fetchone()[0] == migrations.LATEST_VERSION
     assert raw.execute("SELECT national_id FROM employees").fetchone() == (None,)
     raw.execute("UPDATE employees SET national_id = '10000000146'")
     raw.execute("INSERT INTO employees (badge_id, name, role, location_type, location_name) "
@@ -143,3 +143,17 @@ def test_migration_v12_adds_the_column_and_unique_index(tmp_path):
     with pytest.raises(sqlite3.IntegrityError):
         raw.execute("UPDATE employees SET national_id = '10000000146' WHERE badge_id = 'NEW'")
     raw.close()
+
+
+def test_migration_v13_makes_the_oldest_active_admin_root(tmp_path):
+    raw = sqlite3.connect(tmp_path / "old.db")
+    raw.executescript(connection._SCHEMA_PATH.read_text(encoding="utf-8").replace(
+        "    is_root          INTEGER NOT NULL DEFAULT 0 CHECK (is_root IN (0, 1)),\n", ""))
+    raw.execute("PRAGMA user_version = 12")
+    for n, (badge, role) in enumerate([("A", "cashier"), ("B", "admin"), ("C", "admin")], start=1):
+        raw.execute("INSERT INTO employees (badge_id, name, role, location_type, location_name) "
+                    "VALUES (?, ?, 'Operations', 'Warehouse', 'X')", (badge, badge))
+        raw.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (?, ?, 'x')", (n, role))
+    raw.commit()
+    migrations.run_migrations(raw)
+    assert raw.execute("SELECT employee_id FROM accounts WHERE is_root = 1").fetchall() == [(2,)]

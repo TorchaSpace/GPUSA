@@ -1,4 +1,4 @@
-"""First administrator from the Admin screen: open only while the server has no administrator."""
+"""Root account from the Admin screen: open only while the server has no administrator."""
 
 import pytest
 
@@ -25,7 +25,7 @@ def test_set_up_is_open_only_while_there_is_no_administrator(client):
     assert sql("SELECT e.name, a.role, a.is_active FROM employees e JOIN accounts a ON a.employee_id = e.id "
                "WHERE e.badge_id = 'B-100'") == [("Zed Stone", "admin", True)]
     assert sql("SELECT event, area, terminal, detail FROM auth_events WHERE badge_id = 'B-100'") == [
-        ("account_created", "admin", "Counter", "First administrator")]
+        ("account_created", "admin", "Counter", "Root account")]
     assert client.get("/setup/status").json() == {"needs_first_admin": False, "needs_setup_code": False}
     r = client.post("/auth/login", json={"badge_id": "B-100", "pin": "753159", "area": "admin"})
     assert r.status_code == 200 and r.json()["role"] == "admin"

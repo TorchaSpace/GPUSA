@@ -38,7 +38,7 @@ from .stock_routes import _clean, _fail, _write
 
 router = APIRouter(tags=["people"])
 
-ROOT = frozenset({"admin"})  # the root user: the only one who manages accounts
+ROOT = frozenset({"admin"})  # the root user (accounts.is_root) is the only one who manages accounts
 ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 PUNCH_ROLES = frozenset({"admin", "depot_manager", "cashier"})
@@ -53,7 +53,7 @@ LOCATION_TYPES = ("Warehouse", "Dealership")
 ACCOUNT_ROLES = ("admin", "depot_manager", "cashier")
 # AWS-style: the "admin" role is the root user - one account, made at first set-up (/setup/first-admin).
 # Everyone created afterwards is an IAM user: a depot manager or a cashier.
-ROOT_ONLY = "There is only one root account. Create a depot manager or cashier instead."
+ROOT_FIXED = "The root account cannot be changed here."
 MAX_BADGE, MAX_NAME, MAX_TITLE, MAX_LOCATION = 32, 120, 120, 120
 MIN_PIN, MIN_ADMIN_PIN, MAX_PIN = 6, 6, 12
 
@@ -249,6 +249,8 @@ def _guard_last_admin(conn, employee_id: int) -> None:
                         "WHERE a.role = 'admin' AND a.is_active AND e.is_active").fetchall()
     if {r["employee_id"] for r in rows} == {employee_id}:
         raise _fail(409, "That is the only active administrator; someone else must be one first.")
+    if conn.execute("SELECT 1 FROM accounts WHERE employee_id = %s AND is_root", (employee_id,)).fetchone():
+        raise _fail(409, "That is the root account; it cannot be removed, demoted or switched off.")
 
 
 def _audit(conn, session: Session, action: str, kind: str, target: str, detail: str | None) -> None:
@@ -537,6 +539,7 @@ class AccountOut(BaseModel):
     badge_id: str
     name: str
     role: str
+    is_root: bool = False
     is_active: bool
     employee_active: bool
     location_type: str
@@ -547,9 +550,16 @@ class AccountOut(BaseModel):
 
 
 _ACCOUNT_SELECT = (
-    "SELECT a.id, a.role, a.is_active, a.failed_attempts, a.locked_until, a.last_sign_in_at, a.employee_id, "
+    "SELECT a.id, a.role, a.is_root, a.is_active, a.failed_attempts, a.locked_until, a.last_sign_in_at, a.employee_id, "
     "e.badge_id, e.name, e.is_active AS employee_active, e.location_type, e.location_name "
     "FROM accounts a JOIN employees e ON e.id = a.employee_id")
+
+
+def _write_root(request: Request, session: Session, work):
+    with db.connect(request.app.state.settings) as conn:
+        conn.row_factory = dict_row
+        authz.require_live(conn, session, roles=ROOT, root=True)
+        return work(conn)
 
 
 def _need_account(conn, badge: str, *, lock: bool = False):
@@ -594,7 +604,7 @@ class OwnPinIn(BaseModel):
 
 @router.get("/accounts", response_model=list[AccountOut])
 def list_accounts(request: Request, session: Session = Depends(current_session)) -> list[dict]:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         return conn.execute(_ACCOUNT_SELECT + " ORDER BY e.name").fetchall()
@@ -602,7 +612,7 @@ def list_accounts(request: Request, session: Session = Depends(current_session))
 
 @router.get("/accounts/without")
 def employees_without_account(request: Request, session: Session = Depends(current_session)) -> list[dict]:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         return conn.execute(
@@ -612,7 +622,7 @@ def employees_without_account(request: Request, session: Session = Depends(curre
 
 @router.get("/accounts/events")
 def account_events(request: Request, limit: int = 100, session: Session = Depends(current_session)) -> list[dict]:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
     with db.connect(request.app.state.settings) as conn:
         conn.row_factory = dict_row
         return conn.execute(
@@ -623,11 +633,9 @@ def account_events(request: Request, limit: int = 100, session: Session = Depend
 
 @router.post("/accounts", response_model=AccountOut, status_code=201)
 def create_account(body: AccountIn, request: Request, session: Session = Depends(current_session)) -> dict:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
     if body.role not in ACCOUNT_ROLES:
         raise _fail(422, f"role must be one of {ACCOUNT_ROLES}.")
-    if body.role == "admin":
-        raise _fail(409, ROOT_ONLY)
     if problem := pin_problem(body.pin, body.role):
         raise _fail(422, problem)
     pin_hash = security.hash_pin(body.pin)
@@ -645,7 +653,7 @@ def create_account(body: AccountIn, request: Request, session: Session = Depends
         _event(conn, session, "account_created", employee["badge_id"], body.role)
         return _need_account(conn, employee["badge_id"])
 
-    return _write(request, session, ROOT, work)
+    return _write_root(request, session, work)
 
 
 def _set_pin(conn, row, pin_hash: str, session: Session, detail: str | None = None) -> None:
@@ -701,7 +709,7 @@ def change_own_pin(body: OwnPinIn, request: Request, session: Session = Depends(
 @router.post("/accounts/{badge}/pin", status_code=204)
 def set_pin(badge: str, body: PinIn, request: Request, session: Session = Depends(current_session)) -> None:
     """An administrator sets someone ELSE's PIN (also clears a lockout)."""
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
 
     def work(conn):
         row = _need_account(conn, badge, lock=True)
@@ -711,12 +719,12 @@ def set_pin(badge: str, body: PinIn, request: Request, session: Session = Depend
             raise _fail(422, problem)
         _set_pin(conn, row, security.hash_pin(body.pin), session)
 
-    _write(request, session, ROOT, work)
+    _write_root(request, session, work)
 
 
 @router.post("/accounts/{badge}/role", status_code=204)
 def set_role(badge: str, body: RoleIn, request: Request, session: Session = Depends(current_session)) -> None:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
     if body.role not in ACCOUNT_ROLES:
         raise _fail(422, f"role must be one of {ACCOUNT_ROLES}.")
 
@@ -724,8 +732,8 @@ def set_role(badge: str, body: RoleIn, request: Request, session: Session = Depe
         row = _need_account(conn, badge, lock=True)
         if row["role"] == body.role:
             return
-        if body.role == "admin":
-            raise _fail(409, ROOT_ONLY)
+        if row["is_root"]:
+            raise _fail(409, ROOT_FIXED)
         if _same_person(session, row):
             raise _fail(409, "You cannot change your own role.")
         if body.role == "depot_manager":
@@ -752,12 +760,12 @@ def set_role(badge: str, body: RoleIn, request: Request, session: Session = Depe
         _event(conn, session, "account_changed", row["badge_id"],
                f"role {row['role']} -> {body.role}" + (" · new PIN set" if new_hash else ""))
 
-    _write(request, session, ROOT, work)
+    _write_root(request, session, work)
 
 
 @router.post("/accounts/{badge}/active", status_code=204)
 def set_active(badge: str, body: ActiveIn, request: Request, session: Session = Depends(current_session)) -> None:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
 
     def work(conn):
         row = _need_account(conn, badge, lock=True)
@@ -769,25 +777,25 @@ def set_active(badge: str, body: ActiveIn, request: Request, session: Session = 
         conn.execute("UPDATE accounts SET is_active = %s, updated_at = now() WHERE id = %s", (body.active, row["id"]))
         _event(conn, session, "account_changed", row["badge_id"], "switched on" if body.active else "switched off")
 
-    _write(request, session, ROOT, work)
+    _write_root(request, session, work)
 
 
 @router.post("/accounts/{badge}/unlock", status_code=204)
 def unlock(badge: str, request: Request, session: Session = Depends(current_session)) -> None:
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
 
     def work(conn):
         row = _need_account(conn, badge, lock=True)
         conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL WHERE id = %s", (row["id"],))
         _event(conn, session, "unlocked", row["badge_id"])
 
-    _write(request, session, ROOT, work)
+    _write_root(request, session, work)
 
 
 @router.delete("/accounts/{badge}", status_code=204)
 def delete_account(badge: str, request: Request, session: Session = Depends(current_session)) -> None:
     """Remove the account (the employee stays in Workforce)."""
-    authz.require(session, roles=ROOT, areas=ADMIN_AREA)
+    authz.require_root(session)
 
     def work(conn):
         row = _need_account(conn, badge, lock=True)
@@ -799,4 +807,4 @@ def delete_account(badge: str, request: Request, session: Session = Depends(curr
         _audit(conn, session, "deleted", "account", row["badge_id"], row["name"])
         _event(conn, session, "account_changed", row["badge_id"], "account removed")
 
-    _write(request, session, ROOT, work)
+    _write_root(request, session, work)

@@ -30,15 +30,13 @@ from shared.i18n import LazyLabels, tr
 
 ROLES = ("admin", "depot_manager", "cashier")
 
-# AWS-style accounts: the "admin" role IS the root user. There is exactly one,
-# its badge + PIN are chosen when the system is first set up, and it alone
-# opens Admin. Root creates the IAM users - depot managers and cashiers - who
-# sign in to the depot and the dealership till; nobody can be made a second
-# root. Root sign-ins have their own audit event (ROOT_SIGN_IN_EVENT).
-ROOT_ROLE = "admin"
-IAM_ROLES = ("depot_manager", "cashier")
+# AWS-style accounts: ROOT is a single account (accounts.is_root), chosen at first set-up. Root alone
+# manages accounts and sees the server address. Everyone else is an IAM user that root created: an Admin
+# (opens Admin like root, minus the root-only parts), a depot manager or a cashier. Root sign-ins have their
+# own audit event (ROOT_SIGN_IN_EVENT).
+IAM_ROLES = ("admin", "depot_manager", "cashier")
 ROOT_SIGN_IN_EVENT = "root_sign_in"
-ROLE_LABELS = LazyLabels("auth.role", ROLES)
+ROLE_LABELS = LazyLabels("auth.role", ROLES + ("root",))  # "root" labels the root account (accounts.is_root)
 
 # Which roles may open which part of the system.
 AREA_ADMIN = "admin"
@@ -73,14 +71,10 @@ def normalize_badge_id(text: str | None) -> str:
     return (text or "").strip().upper()
 
 
-def is_root(role: str) -> bool:
-    return role == ROOT_ROLE
-
-
-def success_event(role: str, event: str) -> str:
+def success_event(is_root: bool, event: str) -> str:
     """The audit event for a successful sign-in: root's main sign-in is
     recorded as 'root_sign_in' so it stands out in Sign-in activity."""
-    return ROOT_SIGN_IN_EVENT if event == "sign_in" and is_root(role) else event
+    return ROOT_SIGN_IN_EVENT if event == "sign_in" and is_root else event
 
 
 def role_label(role: str) -> str:
@@ -165,6 +159,7 @@ class Session:
     signed_in_at: str  # db timestamp
     area: str
     terminal: str
+    is_root: bool = False
 
     @property
     def actor(self) -> Actor:
@@ -176,7 +171,7 @@ class Session:
 
     @property
     def role_label(self) -> str:
-        return role_label(self.role)
+        return role_label("root" if self.is_root else self.role)
 
     @property
     def initials(self) -> str:

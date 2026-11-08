@@ -244,7 +244,7 @@ class MainWindow(QMainWindow):
 
     def _apply_role_visibility(self) -> None:
         """Root-only parts of Admin: the server address page is hidden from IAM users."""
-        root = self.session is None or auth.is_root(self.session.role)
+        root = self.session is None or self.session.is_root
         self._sidebar.set_item_visible("server_test", root)
 
     def _register_page(self, key: str, widget: QWidget) -> None:

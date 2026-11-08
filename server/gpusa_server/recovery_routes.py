@@ -76,13 +76,13 @@ def status(request: Request) -> StatusOut:
 
 
 def _live_admin(conn, session: Session) -> None:
-    authz.require_live(conn, session, roles=ADMINS)
+    authz.require_live(conn, session, roles=ADMINS, root=True)
 
 
 @router.post("/code")
 def make_code(request: Request, session: Session = Depends(current_session)) -> dict:
     """A fresh recovery code - the only time it can be read. The old one stops working."""
-    authz.require(session, roles=ADMINS, areas=ADMIN_AREA)
+    authz.require_root(session)
     raw = "".join(secrets.choice(ALPHABET) for _ in range(CODE_LENGTH))
     code = "-".join(raw[i:i + 4] for i in range(0, CODE_LENGTH, 4))
     code_hash = security.hash_pin(normalize_code(code))
@@ -104,7 +104,7 @@ class QuestionIn(BaseModel):
 
 @router.put("/question", status_code=204)
 def set_question(body: QuestionIn, request: Request, session: Session = Depends(current_session)) -> None:
-    authz.require(session, roles=ADMINS, areas=ADMIN_AREA)
+    authz.require_root(session)
     question = " ".join(body.question.split())
     if not MIN_QUESTION <= len(question) <= MAX_QUESTION:
         raise _fail(422, f"The question needs {MIN_QUESTION} to {MAX_QUESTION} characters.")

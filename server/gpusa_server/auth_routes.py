@@ -48,6 +48,7 @@ class LoginResponse(BaseModel):
     name: str
     role: str
     area: str
+    is_root: bool = False
 
 
 @dataclass(frozen=True)
@@ -57,6 +58,7 @@ class Session:
     name: str
     role: str
     area: str
+    is_root: bool = False
 
 
 def _log(conn, event: str, badge_id: str | None, area: str, terminal: str, detail: str | None = None) -> None:
@@ -87,7 +89,7 @@ def check_credentials(settings, badge_text: str, pin: str, area: str, terminal: 
     with db.connect(settings) as conn:
         conn.row_factory = dict_row
         row = conn.execute(
-            "SELECT a.id, a.role, a.pin_hash, a.is_active, a.locked_until, a.failed_attempts, "
+            "SELECT a.id, a.role, a.is_root, a.pin_hash, a.is_active, a.locked_until, a.failed_attempts, "
             "e.badge_id, e.name, e.is_active AS employee_active "
             "FROM accounts a JOIN employees e ON e.id = a.employee_id "
             "WHERE upper(e.badge_id) = %s FOR UPDATE OF a",
@@ -125,10 +127,10 @@ def check_credentials(settings, badge_text: str, pin: str, area: str, terminal: 
                 "pin_hash = %s, updated_at = %s WHERE id = %s",
                 (now, new_hash, now, row["id"]),
             )
-            is_root = row["role"] == "admin"  # the root user: its sign-ins are logged under their own event
+            is_root = bool(row["is_root"])  # the root user: its sign-ins are logged under their own event
             _log(conn, "root_sign_in" if is_root and event == "sign_in" else event, row["badge_id"], area, terminal,
                  "root" if is_root else None)
-            found = {"id": row["id"], "role": row["role"], "badge_id": row["badge_id"], "name": row["name"],
+            found = {"id": row["id"], "role": row["role"], "is_root": is_root, "badge_id": row["badge_id"], "name": row["name"],
                      "pin_hash": new_hash}
     if error is not None:
         raise error
@@ -148,7 +150,7 @@ def login(body: LoginRequest, request: Request) -> LoginResponse:
         token=security.make_token(settings.jwt_secret, account_id=who["id"], badge_id=who["badge_id"],
                                   name=who["name"], role=who["role"], area=body.area,
                                   pin_hash=who["pin_hash"], now=datetime.now(timezone.utc)),
-        badge_id=who["badge_id"], name=who["name"], role=who["role"], area=body.area,
+        badge_id=who["badge_id"], name=who["name"], role=who["role"], area=body.area, is_root=who["is_root"],
     )
 
 
@@ -168,15 +170,17 @@ def current_session(request: Request,
     with db.connect(settings) as conn:
         conn.row_factory = dict_row
         row = conn.execute(
-            "SELECT a.role, a.is_active, a.pin_hash, e.badge_id, e.name, e.is_active AS employee_active FROM accounts a "
+            "SELECT a.role, a.is_root, a.is_active, a.pin_hash, e.badge_id, e.name, e.is_active AS employee_active FROM accounts a "
             "JOIN employees e ON e.id = a.employee_id WHERE a.id = %s", (account_id,)).fetchone()
     if (row is None or not row["is_active"] or not row["employee_active"]
             or row["role"] not in ALLOWED_ROLES.get(area, ())
             or not hmac.compare_digest(str(claims.get("pf", "")), security.pin_fingerprint(row["pin_hash"]))):
         raise _fail(401, "Your account changed. Sign in again.")   # switched off, demoted, or the PIN was changed
-    return Session(account_id=account_id, badge_id=row["badge_id"], name=row["name"], role=row["role"], area=area)
+    return Session(account_id=account_id, badge_id=row["badge_id"], name=row["name"], role=row["role"], area=area,
+                   is_root=bool(row["is_root"]))
 
 
 @router.get("/me")
 def me(session: Session = Depends(current_session)) -> dict:
-    return {"badge_id": session.badge_id, "name": session.name, "role": session.role, "area": session.area}
+    return {"badge_id": session.badge_id, "name": session.name, "role": session.role, "area": session.area,
+            "is_root": session.is_root}

@@ -463,6 +463,8 @@ CREATE TABLE IF NOT EXISTS accounts (
     role             TEXT NOT NULL CHECK (role IN ('admin', 'depot_manager', 'cashier')),
     pin_hash         TEXT NOT NULL,
     is_active        INTEGER NOT NULL DEFAULT 1 CHECK (is_active IN (0, 1)),
+    -- v13: the root user (set at first set-up). Exactly one; only root manages accounts.
+    is_root          INTEGER NOT NULL DEFAULT 0 CHECK (is_root IN (0, 1)),
     failed_attempts  INTEGER NOT NULL DEFAULT 0,
     locked_until     TEXT,
     last_sign_in_at  TEXT,

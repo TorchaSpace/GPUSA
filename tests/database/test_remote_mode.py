@@ -898,7 +898,7 @@ def test_recovery_in_server_mode(db_connection, monkeypatch):
             accounts.reset_with_security_answer("fistik", "b-001", "753159", "Till 1")
 
     on({("POST", "/recovery/code"): {"code": "AAAA-BBBB-CCCC-DDDD"}, ("PUT", "/recovery/question"): None})
-    admin = Session(account_id=1, badge_id="B-001", name="Ali", role="admin", signed_in_at="2026-11-02T10:00:00.000Z",
+    admin = Session(account_id=1, badge_id="B-001", name="Ali", role="admin", is_root=True, signed_in_at="2026-11-02T10:00:00.000Z",
                     area="admin", terminal="Admin")
     assert accounts.create_recovery_code(admin) == "AAAA-BBBB-CCCC-DDDD"
     accounts.set_security_question(admin, "753159", "Name of my first pet?", "Fistik")

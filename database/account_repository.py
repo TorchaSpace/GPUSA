@@ -47,7 +47,7 @@ from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_tim
 from shared.models import Account
 
 _SELECT = (
-    "SELECT a.id, a.role, a.pin_hash, a.is_active, a.failed_attempts, a.locked_until, a.last_sign_in_at, "
+    "SELECT a.id, a.role, a.is_root, a.pin_hash, a.is_active, a.failed_attempts, a.locked_until, a.last_sign_in_at, "
     "e.id AS employee_id, e.badge_id, e.name, e.is_active AS employee_active, e.location_type, e.location_name "
     "FROM accounts a JOIN employees e ON e.id = a.employee_id"
 )
@@ -63,6 +63,7 @@ def _row_to_account(row: sqlite3.Row) -> Account:
         badge_id=row["badge_id"],
         name=row["name"],
         role=row["role"],
+        is_root=bool(row["is_root"]),
         is_active=bool(row["is_active"]),
         employee_active=bool(row["employee_active"]),
         location_type=row["location_type"],
@@ -107,12 +108,12 @@ def _fetch_by_id(conn, account_id: int) -> sqlite3.Row | None:
 
 
 def _live_admin(conn, badge_id: str) -> sqlite3.Row:
-    """The CURRENT row of the administrator doing something sensitive -
+    """The CURRENT row of the ROOT user doing something sensitive (managing accounts) -
     re-read from the database, never trusted from a Session/Actor object
     that may be hours old. SessionInvalidError if they are gone, switched
-    off, or no longer an administrator."""
+    off, or no longer root."""
     row = _fetch(conn, badge_id)
-    if row is None or not row["is_active"] or not row["employee_active"] or row["role"] != "admin":
+    if row is None or not row["is_active"] or not row["employee_active"] or not row["is_root"]:
         raise SessionInvalidError()
     return row
 
@@ -219,6 +220,8 @@ def guard_last_admin(conn, employee_id: int) -> None:
     administrator. For employee_repository's deactivate/delete too."""
     if _active_admin_employee_ids(conn) == {employee_id}:
         raise LastAdminError()
+    if conn.execute("SELECT 1 FROM accounts WHERE employee_id = ? AND is_root = 1", (employee_id,)).fetchone():
+        raise LastAdminError()  # the root user is never demoted, switched off or deleted
 
 
 # --- reads -------------------------------------------------------------------
@@ -305,8 +308,6 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) 
     def run(conn):
         nonlocal badge_id
         _check_actor(conn, by, badge_id)
-        if by is not None and auth.is_root(role):
-            raise UserError("err.root_is_unique")
         employee = employee_repository.find_row(conn, badge_id)
         if employee is None:
             raise EmployeeNotFoundError(badge_id)
@@ -366,12 +367,12 @@ def create_first_admin(badge_id: str, name: str, pin: str, terminal: str = "Admi
             conn.execute("UPDATE employees SET is_active = 1 WHERE id = ?", (employee_id,))
         existing = conn.execute("SELECT id FROM accounts WHERE employee_id = ?", (employee_id,)).fetchone()
         if existing:
-            conn.execute("UPDATE accounts SET role = 'admin', pin_hash = ?, is_active = 1, failed_attempts = 0, "
-                         "locked_until = NULL WHERE id = ?", (pin_hash, existing["id"]))
+            conn.execute("UPDATE accounts SET role = 'admin', is_root = 1, pin_hash = ?, is_active = 1, "
+                         "failed_attempts = 0, locked_until = NULL WHERE id = ?", (pin_hash, existing["id"]))
         else:
-            conn.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (?, 'admin', ?)",
+            conn.execute("INSERT INTO accounts (employee_id, role, is_root, pin_hash) VALUES (?, 'admin', 1, ?)",
                          (employee_id, pin_hash))
-        _log(conn, "account_created", badge_id, auth.AREA_ADMIN, terminal, "First administrator")
+        _log(conn, "account_created", badge_id, auth.AREA_ADMIN, terminal, "Root account")
 
     _write(run)
     return authenticate(badge_id, pin, auth.AREA_ADMIN, terminal)
@@ -477,12 +478,12 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
     def ok(conn):
         conn.execute("UPDATE accounts SET failed_attempts = 0, locked_until = NULL, last_sign_in_at = ? WHERE id = ?",
                      (signed_in_at, account.id))
-        _log(conn, auth.success_event(account.role, event), badge_id, area, terminal,
-             "root" if auth.is_root(account.role) else None)
+        _log(conn, auth.success_event(account.is_root, event), badge_id, area, terminal,
+             "root" if account.is_root else None)
 
     _write(ok)
     return Session(account_id=account.id, badge_id=account.badge_id, name=account.name, role=account.role,
-                   signed_in_at=signed_in_at, area=area, terminal=terminal)
+                   signed_in_at=signed_in_at, area=area, terminal=terminal, is_root=account.is_root)
 
 
 def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, terminal: str, event: str) -> Session:
@@ -504,7 +505,8 @@ def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, termin
     with connection_scope() as conn:
         row = _fetch(conn, who["badge_id"])
     return Session(account_id=int(row["id"]) if row is not None else 0, badge_id=who["badge_id"], name=who["name"],
-                   role=who["role"], signed_in_at=to_db_timestamp(_now()), area=area, terminal=terminal)
+                   role=who["role"], signed_in_at=to_db_timestamp(_now()), area=area, terminal=terminal,
+                   is_root=bool(who.get("is_root")))
 
 
 def _remember_server_sign_in(url: str, who: dict, pin: str) -> None:
@@ -634,7 +636,7 @@ def has_recovery_code() -> bool:
 def create_recovery_code(by: Session) -> str:
     """Make (or replace) the recovery code and return it - the only time it
     can be read. Administrators only; the old code stops working."""
-    if by.role != "admin":
+    if not by.is_root:
         raise localized_auth("err.recovery_admin_only")
     if remote.active():
         return remote_recovery.make_code()
@@ -644,7 +646,7 @@ def create_recovery_code(by: Session) -> str:
 
     def run(conn):
         live = _fetch_by_id(conn, by.account_id)  # the session may be stale: ask the database
-        if live is None or not live["is_active"] or not live["employee_active"] or live["role"] != "admin":
+        if live is None or not live["is_active"] or not live["employee_active"] or not live["is_root"]:
             raise SessionInvalidError()
         for key, value in ((_RC_HASH, code_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
             conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
@@ -699,7 +701,7 @@ def validate_security_answer(question: str, answer: str) -> tuple[str, str]:
 def set_security_question(session: Session, current_pin: str, question: str, answer: str) -> None:
     """An administrator sets (or replaces) the installation's security
     question. Needs their current PIN, so a walk-up can't swap it."""
-    if session.role != "admin":
+    if not session.is_root:
         raise localized_auth("err.question_admin_only")
     question, answer = validate_security_answer(question, answer)
     if remote.active():
@@ -709,7 +711,7 @@ def set_security_question(session: Session, current_pin: str, question: str, ans
 
     def run(conn):
         live = _fetch_by_id(conn, session.account_id)
-        if live is None or not live["is_active"] or not live["employee_active"] or live["role"] != "admin":
+        if live is None or not live["is_active"] or not live["employee_active"] or not live["is_root"]:
             raise SessionInvalidError()
         for key, value in ((_SQ_QUESTION, question), (_SQ_HASH, answer_hash), (_RC_FAILED, "0"), (_RC_LOCKED, "")):
             conn.execute("INSERT INTO app_settings (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE "
@@ -813,8 +815,6 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
         raise ValueError(f"Unknown role {role!r}")
     current = get(badge_id)
     promoting = role == "admin" and current.role != "admin"
-    if promoting and by is not None:
-        raise UserError("err.root_is_unique")
     pin_hash = None
     if promoting:
         if not new_pin:
@@ -833,8 +833,8 @@ def set_role(badge_id: str, role: str, by: Actor | None = None, new_pin: str | N
             return
         if same:
             raise SelfActionError("change the role of")
-        if by is not None and auth.is_root(role):
-            raise UserError("err.root_is_unique")
+        if row["is_root"]:
+            raise LastAdminError()  # the root user is never demoted
         if role == "admin" and pin_hash is None:  # became non-admin while we were checking
             raise UserError("err.promote_try_again")
         if row["role"] == "admin":
