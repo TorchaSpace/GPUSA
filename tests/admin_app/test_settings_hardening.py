@@ -84,19 +84,24 @@ def _patch_pin_popup(monkeypatch, pin, accept=True):
     monkeypatch.setattr(PinPopup, "exec", fake_exec)
 
 
-def test_role_dialog_offers_only_iam_roles_so_nobody_becomes_a_second_root(settings, silent_boxes, monkeypatch):
-    seen = {}
-
-    def fake_get_item(parent, title, label, items, current, editable):
-        seen["items"] = list(items)
-        return items[0], True
-
-    from PySide6.QtWidgets import QInputDialog
-    monkeypatch.setattr(QInputDialog, "getItem", staticmethod(fake_get_item))
+def test_promoting_to_admin_asks_for_a_new_pin_and_sets_it(settings, silent_boxes, monkeypatch):
     settings.select("B-2")
+    _patch_role_choice(monkeypatch, auth.role_label("admin"))
+    _patch_pin_popup(monkeypatch, "739184")
     settings.change_role()
-    assert seen["items"] == [auth.role_label(r) for r in auth.IAM_ROLES]
-    assert auth.role_label("admin") not in seen["items"]
+    assert account_repository.get("B-2").role == "admin"
+    assert account_repository.authenticate("B-2", "739184", auth.AREA_ADMIN, "Admin").role == "admin"
+    with pytest.raises(Exception):  # the old cashier PIN is no key to Admin
+        account_repository.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
+
+
+def test_cancelling_the_promotion_pin_changes_nothing(settings, silent_boxes, monkeypatch):
+    settings.select("B-2")
+    _patch_role_choice(monkeypatch, auth.role_label("admin"))
+    _patch_pin_popup(monkeypatch, "739184", accept=False)
+    settings.change_role()
+    assert account_repository.get("B-2").role == "cashier"
+    assert account_repository.authenticate("B-2", "135702", auth.AREA_POS, "POS").role == "cashier"
 
 
 def test_a_weak_promotion_pin_is_refused_by_the_popup_itself(qapp):
@@ -265,3 +270,27 @@ def test_reset_pin_on_your_own_row_goes_through_change_my_pin(settings, monkeypa
 
     settings.reset_pin()
     assert calls == ["change_my_pin"]  # the flow that asks for the current PIN, never a bare reset
+
+
+def test_add_account_popup_asks_type_badge_and_pin_only(qapp):
+    from admin_app.gui.components.account_form_popup import AddAccountPopup
+
+    popup = AddAccountPopup([("B-9", "Selin")])
+    assert [popup.role.itemData(i) for i in range(popup.role.count())] == list(auth.IAM_ROLES)
+    popup.role.setCurrentIndex(popup.role.findData("depot_manager"))
+    popup.badge.setText(" b-9 ")
+    popup.pin.setText("739184")
+    popup.pin_again.setText("739184")
+    popup._try_accept()
+    assert popup.result() == 1
+    assert popup.values() == ("B-9", "depot_manager", "739184")
+
+
+def test_add_account_popup_needs_a_badge(qapp):
+    from admin_app.gui.components.account_form_popup import AddAccountPopup
+
+    popup = AddAccountPopup([])
+    popup.pin.setText("739184")
+    popup.pin_again.setText("739184")
+    popup._try_accept()
+    assert popup.result() == 0 and popup.error.text()

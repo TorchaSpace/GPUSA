@@ -225,11 +225,11 @@ def test_age_and_dates_in_turkish(turkish):
 def test_role_and_area_labels_follow_the_language(turkish):
     from shared import auth
 
-    assert auth.ROLE_LABELS["admin"] == "Root" and auth.role_label("cashier") == "Kasiyer"
+    assert auth.ROLE_LABELS["admin"] == "Admin" and auth.role_label("cashier") == "Kasiyer"
     assert auth.AREA_LABELS.get("pos") == "kasay\u0131" and auth.AREA_LABELS.get("nope") is None
     assert auth.pin_problem("12", "cashier") == "Bu PIN, kasiyer hesaplar\u0131 i\u00e7in en az 6 haneli olmal\u0131."
     i18n.set_language("en")
-    assert auth.ROLE_LABELS == {"admin": "Root", "depot_manager": "Depot manager", "cashier": "Cashier"}
+    assert auth.ROLE_LABELS == {"admin": "Admin", "depot_manager": "Depot manager", "cashier": "Cashier", "root": "Root"}
     assert auth.pin_problem("12", "cashier") == "A cashier PIN needs at least 6 digits."
 
 

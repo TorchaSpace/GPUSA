@@ -13,7 +13,7 @@ import psycopg
 from fastapi import FastAPI, Request, Response, status
 from fastapi.responses import JSONResponse
 
-from . import __version__, db, discovery
+from . import __version__, db, discovery, migrate
 from .activity_routes import changes_router, router as activity_router
 from .auth_routes import router as auth_router
 from .config import Settings, load_settings
@@ -40,6 +40,8 @@ def create_app(settings: Settings | None = None) -> FastAPI:
 
     @asynccontextmanager
     async def lifespan(_: FastAPI):
+        if migrate.enabled(settings):
+            migrate.upgrade_to_head(settings)  # new code, new columns: the schema follows on every start
         responder = discovery.start_from_environment()  # lets new PCs on the network find this server
         try:
             yield

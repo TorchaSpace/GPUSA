@@ -12,6 +12,7 @@ from database.exceptions import (
     AccountLockedError,
     AuthError,
     SelfActionError,
+    LastAdminError,
     SessionInvalidError,
     SignInFailedError,
 )
@@ -35,15 +36,15 @@ def people():
 
 # --- 1. promotion to administrator ------------------------------------------------
 
-def test_nobody_can_be_made_a_second_root(people):
-    from shared.i18n import UserError
-
-    accounts.create_account("B-2", "cashier", "135702")
-    with pytest.raises(UserError):
-        accounts.set_role("B-2", "admin", by=people.actor, new_pin="739184")
-    with pytest.raises(UserError):
-        accounts.create_account("B-3", "admin", "739184", by=people.actor)
-    assert accounts.get("B-2").role == "cashier"
+def test_admins_can_be_added_but_only_the_first_one_is_root(people):
+    accounts.create_account("B-3", "admin", "739184", by=people.actor)
+    assert accounts.get("B-1").is_root and not accounts.get("B-3").is_root
+    assert people.is_root
+    admin = accounts.authenticate("B-3", "739184", auth.AREA_ADMIN, "Admin")
+    assert admin.role == "admin" and not admin.is_root and admin.role_label == "Admin"
+    assert people.role_label == "Root"
+    with pytest.raises(LastAdminError):  # the root account is never demoted
+        accounts.set_role("B-1", "cashier")
 
 
 def test_iam_user_cannot_manage_accounts(people):
@@ -79,9 +80,10 @@ def test_an_admin_cannot_demote_switch_off_or_remove_themselves(people):
     with pytest.raises(SelfActionError):
         employee_repository.delete("B-1", by=people.actor)
     assert accounts.get("B-1").role == "admin" and accounts.get("B-1").is_active
-    # another administrator may
-    accounts.set_active("B-1", False, by=Actor("B-3", "Murat Yılmaz"))
-    assert not accounts.get("B-1").is_active
+    # another Admin cannot manage accounts at all - only root does - and root is never switched off
+    with pytest.raises(SessionInvalidError):
+        accounts.set_active("B-1", False, by=Actor("B-3", "Murat Yılmaz"))
+    assert accounts.get("B-1").is_active
 
 
 def test_the_actor_is_rechecked_in_the_database(people):
@@ -114,10 +116,9 @@ def test_a_switched_off_actor_cannot_act(people):
 def test_recovery_code_and_question_recheck_the_session(people):
     accounts.create_account("B-3", "admin", "739184")
     other = accounts.authenticate("B-3", "739184", auth.AREA_ADMIN, "Admin")
-    accounts.set_role("B-3", "cashier", by=people.actor)  # `other` still claims admin
-    with pytest.raises(SessionInvalidError):
+    with pytest.raises(AuthError):  # an Admin who is not root has no say over recovery
         accounts.create_recovery_code(other)
-    with pytest.raises(SessionInvalidError):
+    with pytest.raises(AuthError):
         accounts.set_security_question(other, "739184", "Name of my first pet?", "Pamuk")
     assert not accounts.has_recovery_code() and accounts.get_security_question() is None
 
@@ -196,14 +197,14 @@ def test_security_answer_needs_four_characters_after_normalising(people):
 def test_recovery_cannot_reset_an_admin_whose_employee_is_inactive(people):
     accounts.create_account("B-3", "admin", "739184")
     accounts.set_security_question(people, "482913", "Name of my first pet?", "Pamuk")
-    gone = employee_repository.get_by_badge_id("B-1")
+    gone = employee_repository.get_by_badge_id("B-3")
     gone.is_active = False
-    employee_repository.update(gone)  # B-3 is still an active admin, so allowed
+    employee_repository.update(gone)  # root B-1 is still active, so allowed
     with pytest.raises(AuthError) as info:
-        accounts.reset_with_security_answer("Pamuk", "B-1", "615243")
+        accounts.reset_with_security_answer("Pamuk", "B-3", "615243")
     assert "not an active administrator" in str(info.value)
     with pytest.raises(SignInFailedError):  # the PIN was not changed
-        accounts.authenticate("B-1", "615243", auth.AREA_ADMIN, "Admin")
+        accounts.authenticate("B-3", "615243", auth.AREA_ADMIN, "Admin")
 
 
 def test_recovery_failures_and_successes_share_one_counter_by_design(people):

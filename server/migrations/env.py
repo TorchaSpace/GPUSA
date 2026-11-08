@@ -24,7 +24,7 @@ target_metadata = None
 
 
 def run_migrations_online() -> None:
-    settings = load_settings()
+    settings = config.attributes.get("settings") or load_settings()  # the API passes its own when it self-migrates
     # The URL is a placeholder; ``creator`` hands SQLAlchemy a psycopg 3
     # connection built by the same code the API uses (including the AWS
     # Secrets Manager password lookup).

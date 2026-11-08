@@ -22,12 +22,21 @@ def require(session: Session, *, roles: frozenset[str], areas: frozenset[str]) -
         raise HTTPException(status_code=403, detail=f"Sign in to {' or '.join(sorted(areas))} to do this.")
 
 
-def require_live(conn, session: Session, *, roles: frozenset[str]) -> None:
+def require_root(session: Session) -> None:
+    """403 unless the person is the root user, signed in to Admin. Account management, the sign-in log,
+    recovery codes and the server address are root-only."""
+    if not session.is_root:
+        raise HTTPException(status_code=403, detail="Only the root user can do this.")
+    if session.area != "admin":
+        raise HTTPException(status_code=403, detail="Sign in to admin to do this.")
+
+
+def require_live(conn, session: Session, *, roles: frozenset[str], root: bool = False) -> None:
     """401 unless the account is still switched on, its employee is active, and
     its CURRENT role is in `roles` and may still open the token's area.
     Locks the account row until the transaction ends. Needs a dict_row connection."""
     row = conn.execute(
-        "SELECT a.role, a.is_active, e.is_active AS employee_active "
+        "SELECT a.role, a.is_root, a.is_active, e.is_active AS employee_active "
         "FROM accounts a JOIN employees e ON e.id = a.employee_id WHERE a.id = %s FOR SHARE OF a",
         (session.account_id,),
     ).fetchone()
@@ -35,7 +44,7 @@ def require_live(conn, session: Session, *, roles: frozenset[str]) -> None:
         raise HTTPException(status_code=401, detail="Sign in again.")
     role = row["role"]
     if (not row["is_active"] or not row["employee_active"] or role not in roles
-            or role not in ALLOWED_ROLES.get(session.area, ())):
+            or role not in ALLOWED_ROLES.get(session.area, ()) or (root and not row["is_root"])):
         raise HTTPException(status_code=401, detail="Your account changed. Sign in again.")
 
 

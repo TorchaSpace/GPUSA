@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-LATEST_VERSION = 12
+LATEST_VERSION = 13
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -434,8 +434,18 @@ def _to_v12(conn: sqlite3.Connection) -> None:
         conn.execute("ALTER TABLE employees ADD COLUMN national_id TEXT")
 
 
+def _to_v13(conn: sqlite3.Connection) -> None:
+    """Version 13 - accounts.is_root: the root user is a flag, not the admin role, so root can add other
+    administrators (IAM admins) who cannot manage accounts. The oldest active administrator becomes root."""
+    if "is_root" not in _columns(conn, "accounts"):
+        conn.execute("ALTER TABLE accounts ADD COLUMN is_root INTEGER NOT NULL DEFAULT 0")
+    if not conn.execute("SELECT 1 FROM accounts WHERE is_root = 1").fetchone():
+        conn.execute("UPDATE accounts SET is_root = 1 WHERE id = (SELECT id FROM accounts WHERE role = 'admin' "
+                     "ORDER BY is_active DESC, id LIMIT 1)")
+
+
 _STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9,
-          10: _to_v10, 11: _to_v11, 12: _to_v12}
+          10: _to_v10, 11: _to_v11, 12: _to_v12, 13: _to_v13}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

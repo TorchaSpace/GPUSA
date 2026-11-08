@@ -155,7 +155,7 @@ def _account(data: dict) -> Account:
                    location_type=data["location_type"], location_name=data["location_name"],
                    failed_attempts=int(data.get("failed_attempts") or 0),
                    locked_until=db_timestamp(data.get("locked_until")),
-                   last_sign_in_at=db_timestamp(data.get("last_sign_in_at")))
+                   last_sign_in_at=db_timestamp(data.get("last_sign_in_at")), is_root=bool(data.get("is_root")))
 
 
 def list_accounts() -> list[Account]:

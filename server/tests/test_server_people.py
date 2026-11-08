@@ -222,7 +222,7 @@ def test_create_account_and_sign_in_with_it(client):
 
 
 @pytest.mark.parametrize("pin,role", [("12", "cashier"), ("1111", "cashier"), ("1234", "cashier"), ("12ab", "cashier"),
-                                      ("1" * 13, "cashier")])
+                                      ("123456", "admin"), ("1" * 13, "cashier")])
 def test_weak_pins_are_refused(client, pin, role):
     h = login(client)
     make(client, h)
@@ -268,10 +268,10 @@ def test_role_changes_and_promotion_needs_a_new_pin(client):
     h = login(client)
     make(client, h)
     client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
-    # There is one root: nobody is promoted to it, whatever PIN comes along.
-    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin"}).status_code == 409
-    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "135792"}).status_code == 409
-    assert client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "admin", "pin": "135792"}).status_code in (409,)
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin"}).status_code == 422
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "2468"}).status_code == 422
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "135792"}).status_code == 204
+    assert client.post("/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"}).status_code == 200
     moved = client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Operations",
                                                                 "location_type": "Dealership", "location_name": "CST-04"})
     assert moved.status_code == 200, moved.text
@@ -283,20 +283,20 @@ def test_role_changes_and_promotion_needs_a_new_pin(client):
     assert client.post("/accounts/E-100/role", headers=h, json={"role": "wizard"}).status_code == 422
 
 
-def test_the_last_admin_is_protected(client):
+def test_root_is_protected_and_a_second_admin_is_not_root(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "135792"})
-    # an administrator from before the root rule
-    sql("UPDATE accounts SET role = 'admin' WHERE employee_id = (SELECT id FROM employees WHERE badge_id = 'E-100')")
-    second = {"Authorization": "Bearer " + client.post(
-        "/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"}).json()["token"]}
-    assert client.post("/accounts/B-001/active", headers=second, json={"active": False}).status_code == 204
-    # E-100 is now the only active administrator
-    assert client.post("/accounts/E-100/active", headers=second, json={"active": False}).status_code == 409
-    assert client.delete("/accounts/E-100", headers=second).status_code == 409
-    assert client.post("/accounts/B-001/active", headers=second, json={"active": True}).status_code == 204
-    assert client.post("/accounts/B-001/role", headers=second, json={"role": "cashier"}).status_code == 204
+    assert client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "admin", "pin": "135792"}).status_code == 201
+    r = client.post("/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"})
+    assert r.status_code == 200 and r.json()["is_root"] is False
+    assert client.post("/auth/login", json={"badge_id": "B-001", "pin": PIN, "area": "admin"}).json()["is_root"] is True
+    second = {"Authorization": "Bearer " + r.json()["token"]}
+    # an Admin who is not root cannot manage accounts, root cannot be touched by anyone
+    assert client.post("/accounts/B-001/active", headers=second, json={"active": False}).status_code == 403
+    assert client.get("/accounts", headers=second).status_code == 403
+    assert client.post("/accounts/B-001/role", headers=h, json={"role": "cashier"}).status_code == 409
+    assert client.delete("/accounts/B-001", headers=h).status_code == 409
+    assert client.post("/accounts/E-100/active", headers=h, json={"active": False}).status_code == 204
 
 
 def test_switch_off_and_delete_an_account(client):

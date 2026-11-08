@@ -31,6 +31,9 @@ alembic upgrade head      # creates all tables
 alembic current           # shows the applied version (0001)
 ```
 
+The API also does this itself on every start (`gpusa_server/migrate.py`), so after a
+`git pull` a restart is enough. Set `GPUSA_AUTO_MIGRATE=0` to turn that off.
+
 Never run `alembic downgrade` on a database that holds real data: it drops the
 tables. New columns/tables go in a new file under `migrations/versions/`.
 
