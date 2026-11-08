@@ -43,7 +43,7 @@ def test_first_admin_creates_the_employee_and_signs_in(people):
     with pytest.raises(AuthError):
         accounts.create_first_admin("B-9", "Someone", "482913")
     events = [e["event"] for e in accounts.list_events()]
-    assert events[:2] == ["sign_in", "account_created"]
+    assert events[:2] == ["root_sign_in", "account_created"]
 
 
 def test_first_admin_can_be_an_existing_employee():
@@ -60,8 +60,8 @@ def test_cashier_signs_in_at_the_till_only(people):
     accounts.create_account("B-2", "cashier", "583102")
     session = accounts.authenticate("B-2", "583102", auth.AREA_POS, "POS 001")
     assert session.role == "cashier" and accounts.get("B-2").last_sign_in_at
-    with pytest.raises(NotAllowedError):
-        accounts.authenticate("B-2", "583102", auth.AREA_ADMIN, "Admin")
+    # IAM users open Admin too (root-only parts are hidden / refused inside it), but not the depot console.
+    assert accounts.authenticate("B-2", "583102", auth.AREA_ADMIN, "Admin").role == "cashier"
     with pytest.raises(NotAllowedError):
         accounts.authenticate("B-2", "583102", auth.AREA_DEPOT_CONSOLE, "Depot WH-01")
 

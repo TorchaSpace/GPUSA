@@ -157,7 +157,7 @@ def test_create_account_and_sign_in_with_it(client):
 
 
 @pytest.mark.parametrize("pin,role", [("12", "cashier"), ("1111", "cashier"), ("1234", "cashier"), ("12ab", "cashier"),
-                                      ("123456", "admin"), ("1" * 13, "cashier")])
+                                      ("1" * 13, "cashier")])
 def test_weak_pins_are_refused(client, pin, role):
     h = login(client)
     make(client, h)
@@ -203,10 +203,10 @@ def test_role_changes_and_promotion_needs_a_new_pin(client):
     h = login(client)
     make(client, h)
     client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"})
-    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin"}).status_code == 422
-    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "2468"}).status_code == 422
-    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "135792"}).status_code == 204
-    assert client.post("/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"}).status_code == 200
+    # There is one root: nobody is promoted to it, whatever PIN comes along.
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin"}).status_code == 409
+    assert client.post("/accounts/E-100/role", headers=h, json={"role": "admin", "new_pin": "135792"}).status_code == 409
+    assert client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "admin", "pin": "135792"}).status_code in (409,)
     moved = client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Operations",
                                                                 "location_type": "Dealership", "location_name": "CST-04"})
     assert moved.status_code == 200, moved.text
@@ -221,7 +221,9 @@ def test_role_changes_and_promotion_needs_a_new_pin(client):
 def test_the_last_admin_is_protected(client):
     h = login(client)
     make(client, h)
-    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "admin", "pin": "135792"})
+    client.post("/accounts", headers=h, json={"badge_id": "E-100", "role": "cashier", "pin": "135792"})
+    # an administrator from before the root rule
+    sql("UPDATE accounts SET role = 'admin' WHERE employee_id = (SELECT id FROM employees WHERE badge_id = 'E-100')")
     second = {"Authorization": "Bearer " + client.post(
         "/auth/login", json={"badge_id": "E-100", "pin": "135792", "area": "admin"}).json()["token"]}
     assert client.post("/accounts/B-001/active", headers=second, json={"active": False}).status_code == 204
@@ -291,3 +293,19 @@ def test_a_depot_manager_cannot_be_moved_off_the_warehouse(client):
     r = client.patch("/employees/E-100", headers=h, json={"name": "Ada", "role": "Operations", "location_type": "Dealership",
                                                           "location_name": "CST-04"})
     assert r.status_code == 422, r.text
+
+
+def test_iam_user_opens_admin_but_cannot_manage_accounts(client):
+    root = login(client)
+    make(client, root)
+    assert client.post("/accounts", headers=root, json={"badge_id": "E-100", "role": "cashier", "pin": "246802"}).status_code == 201
+    r = client.post("/auth/login", json={"badge_id": "E-100", "pin": "246802", "area": "admin"})
+    assert r.status_code == 200, r.text
+    iam = {"Authorization": "Bearer " + r.json()["token"]}
+    for call in (lambda: client.get("/accounts", headers=iam),
+                 lambda: client.get("/accounts/events", headers=iam),
+                 lambda: client.post("/accounts", headers=iam, json={"badge_id": "B-001", "role": "cashier", "pin": "246802"}),
+                 lambda: client.post("/accounts/E-100/role", headers=iam, json={"role": "depot_manager"}),
+                 lambda: client.delete("/accounts/B-001", headers=iam)):
+        assert call().status_code == 403
+    assert client.post("/accounts", headers=root, json={"badge_id": "B-001", "role": "cashier", "pin": "246802"}).status_code in (409, 422)

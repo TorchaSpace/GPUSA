@@ -161,7 +161,7 @@ def test_desktop_sign_in_goes_to_the_server(api_url, monkeypatch, tmp_path):
         assert [p.barcode for p in product_repository.list_all()] == ["A1"]
         with psycopg.connect(URL) as conn:
             events = [r[0] for r in conn.execute("SELECT event FROM auth_events ORDER BY id")]
-        assert events == ["failed", "sign_in"]
+        assert events == ["failed", "root_sign_in"]
         account_repository.sign_out(session)
         assert not remote.active()
     finally:

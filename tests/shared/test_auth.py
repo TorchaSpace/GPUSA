@@ -32,7 +32,7 @@ def test_role_areas():
     assert auth.can_open("admin", auth.AREA_ADMIN) and auth.can_open("admin", auth.AREA_POS)
     assert auth.can_open("admin", auth.AREA_DEPOT_CONSOLE)
     assert auth.can_open("depot_manager", auth.AREA_DEPOT_CONSOLE) and not auth.can_open("depot_manager", auth.AREA_POS)
-    assert auth.can_open("cashier", auth.AREA_POS) and not auth.can_open("cashier", auth.AREA_ADMIN)
+    assert auth.can_open("cashier", auth.AREA_POS) and auth.can_open("cashier", auth.AREA_ADMIN)  # IAM users open Admin
 
 
 def test_session_helpers():

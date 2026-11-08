@@ -31,7 +31,7 @@ router = APIRouter(tags=["stock"])
 
 STOCK_ROLES = frozenset({"admin", "depot_manager"})
 STOCK_AREAS = frozenset({"admin", "depot_console"})
-ADMINS = frozenset({"admin"})
+ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 _TABLE_FOR_KIND = {"warehouse": "warehouses", "dealership": "dealerships"}
 Kind = Literal["warehouse", "dealership", "unassigned"]

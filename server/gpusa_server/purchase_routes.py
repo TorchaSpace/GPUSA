@@ -36,7 +36,7 @@ from .stock_routes import _change, _clean, _fail, _log, _lock_product, _require_
 
 router = APIRouter(tags=["purchasing"])
 
-ADMINS = frozenset({"admin"})
+ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 MAX_SUPPLIER = 200
 _CENT = Decimal("0.01")

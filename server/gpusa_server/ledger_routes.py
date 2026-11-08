@@ -32,7 +32,7 @@ from .stock_routes import _fail, _write
 
 router = APIRouter(tags=["ledger"])
 
-ADMINS = frozenset({"admin"})
+ADMINS = frozenset({"admin", "depot_manager", "cashier"})  # Admin area: root + IAM users
 ADMIN_AREA = frozenset({"admin"})
 _CENT = Decimal("0.01")
 _SNAPSHOT = ("direction", "doc_type", "doc_no", "counterparty", "detail", "site", "issue_date", "due_date", "amount",

@@ -35,31 +35,24 @@ def people():
 
 # --- 1. promotion to administrator ------------------------------------------------
 
-def test_promoting_to_admin_needs_a_new_admin_pin_in_the_same_call(people):
-    accounts.create_account("B-2", "cashier", "135702")  # valid for a cashier, too short for an admin
-    with pytest.raises(ValueError):
-        accounts.set_role("B-2", "admin", by=people.actor)  # no PIN given
-    with pytest.raises(ValueError):
-        accounts.set_role("B-2", "admin", by=people.actor, new_pin="1357")  # the old short PIN
-    with pytest.raises(ValueError):
-        accounts.set_role("B-2", "admin", by=people.actor, new_pin="73918")  # 5 digits: still short
-    assert accounts.get("B-2").role == "cashier"
-    # nothing was half-applied: the cashier PIN still works as a cashier PIN
-    assert accounts.authenticate("B-2", "135702", auth.AREA_POS, "POS").role == "cashier"
+def test_nobody_can_be_made_a_second_root(people):
+    from shared.i18n import UserError
 
-    accounts.set_role("B-2", "admin", by=people.actor, new_pin="739184")
-    assert accounts.get("B-2").role == "admin"
-    assert accounts.authenticate("B-2", "739184", auth.AREA_ADMIN, "Admin").role == "admin"
-    with pytest.raises(SignInFailedError):  # the old cashier PIN is gone
-        accounts.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
-
-
-def test_promotion_pin_must_differ_from_the_current_one(people):
-    accounts.create_account("B-2", "depot_manager", "739184")  # a 6-digit PIN a manager may have
-    with pytest.raises(ValueError):
+    accounts.create_account("B-2", "cashier", "135702")
+    with pytest.raises(UserError):
         accounts.set_role("B-2", "admin", by=people.actor, new_pin="739184")
-    accounts.set_role("B-2", "admin", by=people.actor, new_pin="615243")
-    assert accounts.get("B-2").role == "admin"
+    with pytest.raises(UserError):
+        accounts.create_account("B-3", "admin", "739184", by=people.actor)
+    assert accounts.get("B-2").role == "cashier"
+
+
+def test_iam_user_cannot_manage_accounts(people):
+    accounts.create_account("B-2", "cashier", "135702")
+    iam = accounts.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")
+    with pytest.raises(Exception):
+        accounts.create_account("B-1", "cashier", "246801", by=iam.actor)
+    with pytest.raises(Exception):
+        accounts.set_role("B-1", "cashier", by=iam.actor)
 
 
 def test_demoting_or_same_role_needs_no_pin(people):

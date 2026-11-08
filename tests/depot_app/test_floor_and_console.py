@@ -309,8 +309,7 @@ def test_a_depot_manager_cannot_approve_a_switch():
     account_repository.create_first_admin("A-1", "Boss", "482913")
     employee_repository.create(Employee("M-1", "Murat", "Operations", "Warehouse", "WH-01"))
     account_repository.create_account("M-1", "depot_manager", "735102")
-    with pytest.raises(Exception):
-        account_repository.authenticate("M-1", "735102", auth.AREA_ADMIN, "Depot WH-01")
+    assert account_repository.authenticate("M-1", "735102", auth.AREA_ADMIN, "Depot WH-01").role == "depot_manager"
     assert account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "Depot WH-01").role == "admin"
 
 

@@ -74,9 +74,9 @@ def _row_texts(table, row):
 
 
 def test_settings_lists_accounts_and_activity(settings):
-    assert _row_texts(settings._table, 0)[:5] == ["A-1", "Erol", "Administrator", "Admin · depot Console · POS", "Active"]
-    assert settings._events.item(0, 3).text() == "Signed in"
-    assert "Erol · A-1 · Administrator" in settings._me_label.text()
+    assert _row_texts(settings._table, 0)[:5] == ["A-1", "Erol", "Root", "Admin · depot Console · POS", "Active"]
+    assert settings._events.item(0, 3).text() == "Root signed in"
+    assert "Erol · A-1 · Root" in settings._me_label.text()
 
 
 def test_settings_account_actions(settings, monkeypatch):

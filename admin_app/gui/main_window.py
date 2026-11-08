@@ -59,7 +59,7 @@ from admin_app.gui.pages.purchase_requests_page import PurchaseRequestsPage
 from admin_app.gui.pages.treasury_page import TreasuryPage
 from admin_app.gui.pages.workforce_page import WorkforcePage
 from admin_app.gui.sales_reports_tab import SalesReportsTab
-from shared import current_session
+from shared import auth, current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.constants import PURCHASE_REQUEST_POLL_INTERVAL_MS
 from shared.gui_kit.idle_lock import IdleLock
@@ -145,7 +145,7 @@ class MainWindow(QMainWindow):
         self._settings_page = SettingsPage()
         self._settings_page.notifications_changed.connect(self._refresh_pending_display)
         self._register_page("settings", self._settings_page)
-        self._register_page("server_test", ServerTestPage())
+        self._register_page("server_test", ServerTestPage())  # not in the sidebar for IAM users
         self._workforce_page = WorkforcePage()
         self._register_page("workforce", self._workforce_page)
         self._treasury_page = TreasuryPage()
@@ -153,6 +153,7 @@ class MainWindow(QMainWindow):
         self._reports_page = ReportsPage()
         self._register_page("reports", self._reports_page)
         self._add_legacy_reports_button()
+        self._apply_role_visibility()
         self._install_shared_header_controls()
 
         right = QWidget()
@@ -241,6 +242,11 @@ class MainWindow(QMainWindow):
         self._panel.raise_()
         self._panel.activateWindow()
 
+    def _apply_role_visibility(self) -> None:
+        """Root-only parts of Admin: the server address page is hidden from IAM users."""
+        root = self.session is None or auth.is_root(self.session.role)
+        self._sidebar.set_item_visible("server_test", root)
+
     def _register_page(self, key: str, widget: QWidget) -> None:
         self._pages[key] = widget
         self._stack.addWidget(widget)
@@ -285,6 +291,7 @@ class MainWindow(QMainWindow):
             self.session = session
             current_session.set(self.session)
             self._sidebar.set_user(self.session.name, self.session.role_label)
+            self._apply_role_visibility()
             self._center.set_badge(self.session.badge_id)
             self.navigate("overview")  # the next administrator starts at Overview, not where the last one left off
             self._idle_lock.touch()

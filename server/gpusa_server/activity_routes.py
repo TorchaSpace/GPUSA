@@ -37,7 +37,7 @@ class EventOut(BaseModel):
 
 
 def _admin(session: Session) -> None:
-    authz.require(session, roles=frozenset({"admin"}), areas=frozenset({"admin"}))
+    authz.require(session, roles=frozenset({"admin", "depot_manager", "cashier"}), areas=frozenset({"admin"}))
 
 
 def _at_least(severity: str) -> list[str]:

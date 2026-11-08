@@ -26,7 +26,7 @@ MAX_FAILED_ATTEMPTS = 5
 LOCK_MINUTES = 5
 AREAS = ("admin", "depot_console", "pos")
 ALLOWED_ROLES = {
-    "admin": frozenset({"admin"}),
+    "admin": frozenset({"admin", "depot_manager", "cashier"}),
     "depot_console": frozenset({"admin", "depot_manager"}),
     "pos": frozenset({"admin", "cashier"}),
 }
@@ -125,7 +125,9 @@ def check_credentials(settings, badge_text: str, pin: str, area: str, terminal: 
                 "pin_hash = %s, updated_at = %s WHERE id = %s",
                 (now, new_hash, now, row["id"]),
             )
-            _log(conn, event, row["badge_id"], area, terminal)
+            is_root = row["role"] == "admin"  # the root user: its sign-ins are logged under their own event
+            _log(conn, "root_sign_in" if is_root and event == "sign_in" else event, row["badge_id"], area, terminal,
+                 "root" if is_root else None)
             found = {"id": row["id"], "role": row["role"], "badge_id": row["badge_id"], "name": row["name"],
                      "pin_hash": new_hash}
     if error is not None:

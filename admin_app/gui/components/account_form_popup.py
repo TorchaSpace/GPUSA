@@ -61,9 +61,9 @@ class AddAccountPopup(_Base):
         for badge, name in employees:
             self.employee.addItem(f"{name} · {badge}", badge)
         self.role = QComboBox()
-        for role in auth.ROLES:
+        for role in auth.IAM_ROLES:  # IAM users only - there is a single root account
             self.role.addItem(auth.role_label(role), role)
-        self.role.setCurrentIndex(auth.ROLES.index("cashier"))
+        self.role.setCurrentIndex(auth.IAM_ROLES.index("cashier"))
         self.pin = _pin_field()
         self.pin_again = _pin_field()
         hint = QLabel(
