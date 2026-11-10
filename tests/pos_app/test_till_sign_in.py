@@ -223,3 +223,115 @@ def test_a_lower_case_setup_code_still_sells_and_receives(qapp, cashier, monkeyp
     assert stock_repository.quantity_at(shelf, "P1") == 5
     assert_totals_consistent()
     window.close()
+
+
+# --- a till with no setup file follows whoever signs in -----------------------------------------
+
+def _two_shops():
+    from database import dealership_repository
+    from shared.models import Dealership
+
+    dealership_repository.create(Dealership(code="AAA", name="Alsancak", region="Coastal", city="İzmir"))
+    dealership_repository.create(Dealership(code="001", name="Harbor Point", region="Coastal", city="Norfolk"))
+
+
+def test_a_till_without_a_setup_file_opens_at_the_cashiers_own_shop(qapp, cashier):
+    """It used to show the first shop's name over nobody's stock, with everything 'sold out'."""
+    import pos_app.gui.main_window as mw
+    from shared.models import StockLocation
+
+    _two_shops()
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    assert window._dealership_code == "001" and window._home_identity["name"] == "Harbor Point"
+    assert window._sale_page._location == StockLocation.dealership("001")
+    assert window._header._shop_picker.currentData() == "001"
+    window.close()
+
+
+def test_an_administrator_opens_the_first_shop_and_moves_without_asking(qapp, cashier, monkeypatch):
+    import pos_app.gui.main_window as mw
+
+    _two_shops()
+    admin = account_repository.authenticate("A-1", "482913", auth.AREA_POS, "POS")
+    window = mw.MainWindow(admin)
+    window._watcher.stop()
+    first = window._dealership_code
+    assert first in ("AAA", "001") and window._home_identity is None
+    asked = []
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda *a, **k: asked.append(1))
+    other = "001" if first == "AAA" else "AAA"
+    window._switch_checked(other)
+    assert window._dealership_code == other and asked == []  # already an administrator: no second badge
+    window.close()
+
+
+def test_a_cashier_still_needs_an_administrator_to_leave_their_shop(qapp, cashier, monkeypatch):
+    import pos_app.gui.main_window as mw
+
+    _two_shops()
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    asked = []
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda home, name, parent: (asked.append(name), _FakeDialog(None))[1])
+    window._switch_checked("AAA")
+    assert asked == ["Alsancak"] and window._dealership_code == "001"
+    window.close()
+
+
+def test_an_approval_leaves_the_cashier_signed_in(qapp, cashier, monkeypatch):
+    import pos_app.gui.main_window as mw
+
+    _two_shops()
+    session = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
+    window = mw.MainWindow(session)
+    window._watcher.stop()
+    admin = account_repository.authenticate("A-1", "482913", auth.AREA_ADMIN, "POS")
+    signed_out = []
+    monkeypatch.setattr(account_repository, "sign_out", lambda s: signed_out.append(s))
+    monkeypatch.setattr(mw, "switch_dealership_dialog", lambda home, name, parent: _FakeDialog(admin))
+    window._switch_checked("AAA")
+    assert window._dealership_code == "AAA" and signed_out == [] and window.session == session
+    window.close()
+
+
+def test_with_no_shop_to_show_the_picker_says_so_instead_of_naming_one(qapp, cashier):
+    import pos_app.gui.main_window as mw
+    from shared.i18n import tr
+
+    _two_shops()
+    window = mw.MainWindow()  # nobody signed in, no setup file: unassigned stock
+    window._watcher.stop()
+    picker = window._header._shop_picker
+    assert window._dealership_code is None
+    assert picker.currentText() == tr("pos.switch.pick") and picker.count() == 3
+    window.close()
+
+
+def test_the_till_follows_the_next_cashier_to_their_shop(qapp, cashier, monkeypatch):
+    import pos_app.gui.main_window as mw
+
+    _two_shops()
+    admin = account_repository.authenticate("A-1", "482913", auth.AREA_POS, "POS")
+    window = mw.MainWindow(admin)
+    window._watcher.stop()
+    window._idle_lock.stop()
+    window.switch_dealership("AAA")
+    nxt = account_repository.authenticate("B-2", "583102", auth.AREA_POS, "POS")
+    asked = []
+    monkeypatch.setattr(mw, "till_sign_in_dialog", lambda code, name, *a, **k: (asked.append((code, name)), _FakeDialog(nxt))[1])
+    window.switch_cashier()
+    assert asked == [(None, "GPUSA")]
+    assert window._dealership_code == "001" and window._home_identity["code"] == "001"
+    window.close()
+
+
+def test_the_no_accounts_hint_is_only_for_a_computer_with_its_own_data(qapp, monkeypatch):
+    from pos_app.gui import auth_flow
+    from shared.i18n import tr
+
+    assert tr("pos.auth.no_accounts") in auth_flow.till_sign_in_dialog(None, "GPUSA").subtitle_text
+    monkeypatch.setattr(auth_flow.paths, "get_server_url", lambda: "http://10.0.0.5:8000")
+    assert tr("pos.auth.no_accounts") not in auth_flow.till_sign_in_dialog(None, "GPUSA").subtitle_text

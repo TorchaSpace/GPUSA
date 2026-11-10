@@ -90,7 +90,7 @@ def build_nav_sections() -> list[NavSection]:
                 NavItem("reports", tr("nav.reports"), icons.REPORTS),
                 NavItem("treasury", tr("nav.treasury"), icons.TREASURY),
                 NavItem("settings", tr("nav.settings"), icons.SETTINGS),
-                NavItem("server", tr("nav.server"), icons.DISTRIBUTION),
+                NavItem("server", tr("nav.server"), icons.SERVER),
             ],
         ),
     ]
@@ -133,6 +133,7 @@ class MainWindow(QMainWindow):
         self._pages: dict[str, QWidget] = {}
         self._overview_page = OverviewPage()
         self._overview_page.open_purchase_requests.connect(lambda: self.navigate("purchase_requests"))
+        self._overview_page.first_steps.go.connect(self.navigate)
         self._register_page("overview", self._overview_page)
         self._register_page("inventory", InventoryPage())
         self._dealerships_page = DealershipsPage()

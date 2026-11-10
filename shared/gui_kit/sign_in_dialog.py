@@ -75,6 +75,7 @@ class SignInDialog(QDialog):
         heading = QLabel(title)
         heading.setStyleSheet(f"font-family: '{p.get('font_heading', '')}'; font-size: 24px; color: {p['text_primary']};")
         layout.addWidget(heading)
+        self.subtitle_text = subtitle
         sub = QLabel(subtitle)
         sub.setWordWrap(True)
         sub.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")

@@ -7,7 +7,7 @@ from __future__ import annotations
 
 from database import account_repository, dealership_repository
 from database.exceptions import DATABASE_ERRORS, DealershipInactiveError, DealershipNotFoundError
-from shared import auth
+from shared import auth, paths
 from shared.i18n import tr
 from shared.gui_kit.sign_in_dialog import SignInDialog
 from pos_app.theme import ORGANIC_PALETTE
@@ -52,7 +52,8 @@ def till_sign_in_dialog(dealership_code: str | None, dealership_name: str, paren
                         cancel_text: str | None = None) -> SignInDialog:
     subtitle = tr("pos.auth.subtitle").format(name=dealership_name)
     try:
-        if not account_repository.list_accounts():
+        # (On a server install the accounts are on the server: this computer's empty list says nothing.)
+        if not paths.get_server_url() and not account_repository.list_accounts():
             subtitle += " " + tr("pos.auth.no_accounts")
     except Exception:
         pass
@@ -75,7 +76,7 @@ def switch_dealership_dialog(home_code: str | None, target_name: str, parent=Non
     return SignInDialog(
         tr("pos.switch.title"),
         tr("pos.switch.subtitle").format(name=target_name),
-        lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name(home_code)),
+        lambda badge, pin: account_repository.approve(badge, pin, auth.AREA_ADMIN, terminal_name(home_code)),
         palette=ORGANIC_PALETTE,
         parent=parent,
     )

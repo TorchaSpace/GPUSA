@@ -170,3 +170,68 @@ def test_product_name_column_keeps_a_readable_width(page):
     """In a normal-sized window the name column must not be squeezed to '...'."""
     page.resize(900, 700)
     assert page._stock_table.columnWidth(1) >= 200
+
+
+# --- First steps on a new installation --------------------------------------------------------
+
+def _root_signed_in():
+    from database import account_repository
+    from shared import auth, current_session
+
+    account_repository.create_first_admin("B-001", "Ali", "482913")
+    session = account_repository.authenticate("B-001", "482913", auth.AREA_ADMIN, "Admin")
+    current_session.set(session)
+    return session
+
+
+def test_a_new_installation_shows_root_the_first_steps(qapp):
+    from admin_app.gui.pages.overview_page import OverviewPage
+
+    _root_signed_in()
+    page = OverviewPage(today_provider=lambda: TODAY)
+    page.show()
+    pump(qapp)
+    card = page.first_steps
+    assert card.isVisible() and all(button.isVisible() for button in card.buttons.values())
+    went = []
+    card.go.connect(went.append)
+    for step in ("warehouse", "dealership", "product", "accounts"):
+        card.buttons[step].click()
+    assert went == ["warehouses", "dealerships", "inventory", "settings"]
+
+    warehouse_repository.create(WH1)  # a step is ticked as soon as its data exists
+    page.reload()
+    assert card.isVisible() and not card.buttons["warehouse"].isVisible() and card.buttons["product"].isVisible()
+    page.close()
+
+
+def test_the_first_steps_go_away_when_everything_exists(qapp, seeded):
+    from admin_app.gui.pages.overview_page import OverviewPage
+    from database import account_repository, employee_repository
+    from shared.models import Employee
+
+    root = _root_signed_in()
+    page = OverviewPage(today_provider=lambda: TODAY)
+    page.show()
+    pump(qapp)
+    assert page.first_steps.isVisible()  # only the accounts are missing
+    employee_repository.create(Employee("K-1", "Selin", "Sales & service", "Dealership", "Harbor Point"))
+    account_repository.create_account("K-1", "cashier", "583102", by=root.actor)
+    page.reload()
+    assert not page.first_steps.isVisible()
+    page.close()
+
+
+def test_only_root_sees_the_first_steps(qapp):
+    from admin_app.gui.pages.overview_page import OverviewPage
+    from shared import current_session
+    from shared.auth import Session
+
+    page = OverviewPage(today_provider=lambda: TODAY)  # nobody signed in
+    page.show()
+    pump(qapp)
+    assert not page.first_steps.isVisible()
+    current_session.set(Session(2, "A-2", "Erol", "admin", "2026-09-24T06:00:00.000Z", "admin", "Admin"))
+    page.reload()
+    assert not page.first_steps.isVisible()
+    page.close()

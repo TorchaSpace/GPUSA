@@ -74,8 +74,10 @@ def _server_mode_off():
     must not send the next test's repository calls to a server."""
     from database import remote
 
+    remote.drop_standing()
     remote.use_server(None)
     yield
+    remote.drop_standing()
     remote.use_server(None)
 
 

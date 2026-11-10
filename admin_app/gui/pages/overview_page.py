@@ -47,6 +47,7 @@ from admin_app.gui.components.animated_checkbox import AnimatedCheckBox
 from admin_app.gui.components.notification_center import activity_table, fill_activity_table
 from admin_app.gui.components.admin_page import AdminPage
 from admin_app.gui.components.compact_button import CompactButton
+from admin_app.gui.components.first_steps import FirstStepsCard
 from admin_app.gui.components.section import Section
 from admin_app.gui.components.segment_button import SegmentButton
 from admin_app.gui.components.stat_card import StatCard, stat_breakdown_item
@@ -54,6 +55,7 @@ from admin_app.gui.components.styled_table import cell, styled_table
 from shared.i18n import enum_label, plural, region_label, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import (
+    account_repository,
     activity_repository,
     attendance_repository,
     dealership_repository,
@@ -64,7 +66,7 @@ from database import (
     warehouse_repository,
 )
 from database.exceptions import DATABASE_ERRORS
-from shared import analytics, overview
+from shared import analytics, current_session, overview
 from shared.formatting import format_int, local_time_text, month_abbr
 from shared.currency import format_money
 
@@ -116,6 +118,8 @@ class OverviewPage(AdminPage):
         refresh_button.clicked.connect(self.reload)
         self.add_header_action(refresh_button)
 
+        self.first_steps = FirstStepsCard()  # a new installation: where to begin (root only, then gone)
+        self.body_layout().addWidget(self.first_steps)
         self.body_layout().addWidget(self._build_metric_row())
         self.body_layout().addWidget(self._build_stock_section(), stretch=1)
         self.body_layout().addWidget(self._build_activity_section())
@@ -232,6 +236,7 @@ class OverviewPage(AdminPage):
             self._products, self._levels, self._warehouses, self._roster = [], [], [], []
             self._stock_footer.setText(tr("admin.overview.load_failed"))
             return
+        self.first_steps.set_done(self._set_up_so_far(dealerships))
         self._render_revenue(period, sales, previous, dealerships)
         self._render_warehouses(overview.capacity_summary(self._warehouses, used))
         self._render_dealerships(
@@ -241,6 +246,18 @@ class OverviewPage(AdminPage):
         self._render_stock()
         self._render_activity()
         self._render_attendance()
+
+    def _set_up_so_far(self, dealerships) -> dict | None:
+        """What the First steps card ticks off; None for anyone but root (they see no card)."""
+        session = current_session.get()
+        if session is None or not session.is_root:
+            return None
+        try:
+            accounts = account_repository.list_accounts()
+        except DATABASE_ERRORS:
+            return None
+        return {"warehouse": bool(self._warehouses), "dealership": bool(dealerships),
+                "product": bool(self._products), "accounts": len(accounts) > 1}
 
     # --- rendering ----------------------------------------------------
 

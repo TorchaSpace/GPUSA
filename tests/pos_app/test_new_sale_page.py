@@ -47,6 +47,8 @@ def page(qapp, boxes, monkeypatch):
     monkeypatch.setattr(module, "complete_sale",
                         lambda pending, location, cashier=None: transaction_repository.finalize_transaction(
                             pending, location, cashier))
+    # A finished sale is said in a toast (no box to click away): kept with the "info" texts.
+    monkeypatch.setattr(module, "toast", lambda _widget, text, *a, **k: boxes["info"].append(text))
     widget = module.NewSalePage(SHELF)
     widget.reload()
     widget.show()

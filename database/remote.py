@@ -37,6 +37,10 @@ _client: ServerClient | None = None
 # to the server for real as soon as it answers (kept in memory only, for this
 # sign-in, so the queued sales can be sent without asking again).
 _pending: tuple[str, str, str, str, str] | None = None
+# The Depot's Floor is open to everyone on the depot's PC, so it keeps working with the sign-in of whoever
+# opened the depot (keep_standing). A manager signing out of the Console goes back to it, and so does a
+# token the server no longer takes. Memory only, like _pending.
+_standing: tuple[str, str, str, str, str] | None = None
 
 # After a request finds the server unreachable, the next few seconds' calls fail at once instead of each
 # waiting out the network timeout again - a screen that asks the server five things would otherwise freeze
@@ -115,8 +119,34 @@ def use_server(client: ServerClient | None) -> None:
     global _down_until
     with _lock:
         _client = client
-        _pending = None
+        _pending = _standing if client is None else None  # signed out: back to the standing sign-in, if any
         _down_until = 0.0
+
+
+def keep_standing(url: str, badge_id: str, pin: str, area: str, terminal: str) -> None:
+    """The sign-in this app falls back to whenever nobody else is signed in (the Depot's Floor: whoever
+    opened the depot). ``use_server(None)`` then means "back to that person", not "local data"."""
+    global _standing
+    with _lock:
+        _standing = (url, badge_id, pin, area, terminal)
+
+
+def drop_standing() -> None:
+    global _standing, _pending
+    with _lock:
+        if _pending is not None and _pending == _standing:
+            _pending = None
+        _standing = None
+
+
+def _back_to_standing(failed: ServerClient) -> bool:
+    """The server no longer takes `failed`'s token (it lasts half a day): sign the standing person in again."""
+    global _client, _pending
+    with _lock:
+        if _standing is None or _client is not failed:
+            return False
+        _client, _pending = None, _standing
+        return True
 
 
 def use_server_offline(url: str, badge_id: str, pin: str, area: str, terminal: str) -> None:
@@ -187,6 +217,20 @@ def path(*parts: str) -> str:
     return "/" + "/".join(quote(str(p), safe="") for p in parts)
 
 
+def _send(client: ServerClient, method: str, url_path: str, body: dict | None):
+    if method == "GET":
+        return client.get(url_path)
+    if method == "POST":
+        return client.post(url_path, body or {})
+    if method == "PATCH":
+        return client.patch(url_path, body or {})
+    if method == "PUT":
+        return client.put(url_path, body or {})
+    if method == "DELETE":
+        return client.delete(url_path)
+    raise ValueError(method)
+
+
 def call(method: str, url_path: str, body: dict | None = None, *, errors: dict | None = None):
     """Do one request in server mode and return the decoded JSON.
 
@@ -202,18 +246,12 @@ def call(method: str, url_path: str, body: dict | None = None, *, errors: dict |
         if time.monotonic() < _down_until:
             raise _ServerPaused("It did not answer a moment ago; trying again in a few seconds.")
         client = _current_client()
-        if method == "GET":
-            result = client.get(url_path)
-        elif method == "POST":
-            result = client.post(url_path, body or {})
-        elif method == "PATCH":
-            result = client.patch(url_path, body or {})
-        elif method == "PUT":
-            result = client.put(url_path, body or {})
-        elif method == "DELETE":
-            result = client.delete(url_path)
-        else:
-            raise ValueError(method)
+        try:
+            result = _send(client, method, url_path, body)
+        except ServerError as exc:
+            if exc.status != 401 or not _back_to_standing(client):
+                raise
+            result = _send(_current_client(), method, url_path, body)
     except ServerUnavailableError as exc:
         if not isinstance(exc, _ServerPaused):
             _down_until = time.monotonic() + _RETRY_AFTER_SECONDS

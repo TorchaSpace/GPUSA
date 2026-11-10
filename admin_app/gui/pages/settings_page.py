@@ -36,7 +36,7 @@ from shared.i18n import LazyLabels, tr
 from admin_app.theme import CLASSICAL_PALETTE
 from database import account_repository, employee_repository
 from database.exceptions import DATABASE_ERRORS
-from shared import auth, current_session
+from shared import auth, current_session, paths
 from shared.formatting import local_datetime_text
 from shared.models import Account
 
@@ -46,6 +46,31 @@ _EVENT_TEXT = LazyLabels(
     ("sign_in", "root_sign_in", "sign_out", "failed", "locked", "refused", "pin_confirmed", "pin_changed", "account_created",
      "account_changed", "unlocked", "pin_reset", "recovery_code_created", "recovery_failed", "security_question_set"),
 )
+
+
+_DETAIL_KEYS = {"wrong PIN": "wrong_pin", "unknown badge": "unknown_badge", "locked": "locked",
+                "account switched off": "switched_off"}
+
+
+def detail_text(detail: str | None) -> str:
+    """The sign-in log's detail in the screen's language. The log keeps short English notes
+    ("cashier · by Ali", "wrong PIN"); anything this does not know is shown as written."""
+    parts = []
+    for part in (detail or "").split(" · "):
+        if part == "root":  # the event already says "Root signed in"
+            part = ""
+        elif part in ("admin", "depot_manager", "cashier"):
+            part = auth.role_label(part)
+        elif part in _DETAIL_KEYS:
+            part = tr(f"admin.settings.detail_{_DETAIL_KEYS[part]}")
+        elif part.startswith("by "):
+            part = tr("admin.settings.detail_by").format(name=part[3:])
+        elif part.endswith(" wrong PINs") and part.split()[0].isdigit():
+            part = tr("admin.settings.detail_wrong_pins").format(n=part.split()[0])
+        elif part.endswith(" role") and part[:-5] in (auth.role_label(r) for r in ("admin", "depot_manager", "cashier")):
+            part = part[:-5]
+        parts.append(part)
+    return " · ".join(p for p in parts if p)
 
 
 def account_status(account: Account) -> tuple[str, str]:
@@ -165,8 +190,10 @@ class SettingsPage(AdminPage):
         )
         # Root only: accounts, the sign-in log and where the data / server lives. IAM users see none of it.
         root = session is not None and session.is_root
-        for section in (self._access, self._activity, self._data_location):
+        for section in (self._access, self._activity):
             section.setVisible(root)
+        # The data folder only matters when this computer keeps its own data; with a server it is on the server.
+        self._data_location.setVisible(root and not paths.get_server_url())
         if not root:
             return
         selected = self.selected()
@@ -194,7 +221,7 @@ class SettingsPage(AdminPage):
             where = " · ".join(part for part in (auth.AREA_NAMES.get(event["area"] or "", ""), event["terminal"] or "") if part)
             for c, value in enumerate([
                 local_datetime_text(event["created_at"]), event["badge_id"] or "—", event["name"] or "—",
-                _EVENT_TEXT.get(event["event"], event["event"]), where or "—", event["detail"] or "",
+                _EVENT_TEXT.get(event["event"], event["event"]), where or "—", detail_text(event["detail"]),
             ]):
                 self._events.setItem(r, c, cell(value, color=CLASSICAL_PALETTE["alert_critical"]
                                                 if c == 3 and event["event"] in ("failed", "locked") else None))

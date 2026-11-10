@@ -66,3 +66,8 @@ SETTINGS = (
     '<path d="M12 2v3M12 19v3M4.2 4.2l2.1 2.1M17.7 17.7l2.1 2.1'
     'M2 12h3M19 12h3M4.2 19.8l2.1-2.1M17.7 6.3l2.1-2.1"></path>'
 )
+
+SERVER = (
+    '<rect x="2" y="3" width="20" height="8" rx="2"></rect><rect x="2" y="13" width="20" height="8" rx="2"></rect>'
+    '<path d="M6 7h.01"></path><path d="M6 17h.01"></path>'
+)
