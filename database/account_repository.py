@@ -571,6 +571,13 @@ def confirm_pin(session: Session, pin: str) -> None:
     authenticate(session.badge_id, pin, session.area, session.terminal, event="pin_confirmed")
 
 
+def approve(badge_id: str, pin: str, area: str, terminal: str) -> Session:
+    """Someone else's badge + PIN for a one-off approval (an administrator letting a till look at another
+    shop). Checked and logged like a sign-in, but whoever is signed in at this screen stays signed in:
+    nothing to sign out afterwards."""
+    return authenticate(badge_id, pin, area, terminal, event="pin_confirmed")
+
+
 def _confirm_current_pin(session: Session, pin: str, *, admin: bool = False) -> sqlite3.Row:
     """For actions that ask for "your current PIN" (change PIN, security
     question): re-reads the account from the database (it must still be

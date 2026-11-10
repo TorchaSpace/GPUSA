@@ -74,8 +74,10 @@ def _server_mode_off():
     must not send the next test's repository calls to a server."""
     from database import remote
 
+    remote.drop_standing()
     remote.use_server(None)
     yield
+    remote.drop_standing()
     remote.use_server(None)
 
 
@@ -92,6 +94,8 @@ def _no_server_address(monkeypatch):
     monkeypatch.setattr(paths, "set_server_url", lambda url: saved.__setitem__("url", (url or "").strip() or None))
     monkeypatch.setattr(paths, "get_server_pairing", lambda: saved.get("pairing"))
     monkeypatch.setattr(paths, "set_server_pairing", lambda pairing: saved.__setitem__("pairing", pairing))
+    monkeypatch.setattr(paths, "get_admin_sign_in_kind", lambda: saved.get("kind"))
+    monkeypatch.setattr(paths, "set_admin_sign_in_kind", lambda kind: saved.__setitem__("kind", kind))
 
 
 @pytest.fixture(autouse=True)

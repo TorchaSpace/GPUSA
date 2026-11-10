@@ -12,6 +12,20 @@
 - **Admin** (IAM) opens the Admin dashboard, the depot console and the till with its own badge + PIN and
   sees every place; it has no account management and no server address. Depot managers and cashiers sign in
   to their own place only.
+- **Which shop, which depot.** A till or depot PC set up by the installer knows its place from its setup
+  file. One started without it follows the person: the till opens at the cashier's own dealership and the
+  Depot Floor at the opener's own warehouse (their employee record, `database/own_place.py`). Admin accounts
+  have no place of their own: they see the first one and switch freely; anyone else leaving their place
+  needs an administrator's badge + PIN (a one-off approval, `account_repository.approve`, which never
+  changes who is signed in).
+- **Opening the Depot.** With a server the Depot asks for one sign-in when it starts (depot manager or
+  Admin). The Floor then stays open for everyone and works with that sign-in
+  (`database/remote.keep_standing`): signing out of the Console, or a token older than half a day, goes
+  back to it rather than to the computer's own empty data. Without a server the Floor opens as before.
+- Admin's sign-in screen has two doors, as on AWS: **Root user** and **IAM user**. The badge and PIN are
+  checked as always; the right ones at the wrong door are refused and sent to the other one
+  (`admin_app/gui/auth_flow.sign_in_as`). The screen opens on the door last used on that computer. Nothing
+  is remembered between runs: every app asks for badge + PIN each time it is opened.
 - Every root sign-in is logged as `root_sign_in`.
 - Upgrade: migration v13 / alembic 0003 makes the oldest active administrator root. Existing extra admins
   become IAM Admins.

@@ -366,3 +366,122 @@ def test_movement_log_times_are_shown_in_local_time(floor, monkeypatch):
     finally:
         monkeypatch.undo()
         time.tzset()
+
+
+# --- a depot that works through the server is opened by a sign-in ------------------------------
+
+def test_the_depot_needs_opening_only_with_a_server(monkeypatch):
+    from depot_app import main
+
+    assert not main.needs_opening()
+    monkeypatch.setattr(main.paths, "get_server_url", lambda: "http://10.0.0.5:8000")
+    assert main.needs_opening()
+
+
+def test_opening_the_depot_keeps_that_sign_in_for_the_floor(qapp, monkeypatch):
+    from depot_app.gui import auth_flow
+
+    kept = []
+    monkeypatch.setattr(auth_flow.paths, "get_server_url", lambda: "http://10.0.0.5:8000")
+    monkeypatch.setattr(auth_flow.account_repository, "authenticate", lambda badge, pin, area, terminal: MANAGER)
+    monkeypatch.setattr(auth_flow.remote, "keep_standing", lambda *who: kept.append(who))
+    dialog = auth_flow.open_depot_dialog()
+    dialog.badge_input.setText("m-1")
+    dialog.pin_input.setText("735102")
+    dialog.try_sign_in()
+    assert dialog.session == MANAGER
+    assert kept == [("http://10.0.0.5:8000", "M-1", "735102", "depot_console", "Depot")]
+
+
+def test_a_floor_without_a_setup_file_is_the_openers_own_depot(qapp, monkeypatch):
+    from database import employee_repository
+    from depot_app.gui import main_window as mw
+    from shared.models import Employee
+
+    warehouse_repository.create(Warehouse(code="WH-01", name="İstanbul Merkez"))
+    warehouse_repository.create(Warehouse(code="WH-02", name="Gebze"))
+    employee_repository.create(Employee("M-1", "Test Manager", "Management", "Warehouse", "Gebze"))
+    window = mw.MainWindow(opener=MANAGER)
+    assert window.warehouse.code == "WH-02" and window._home_warehouse.code == "WH-02"
+    asked = []
+    monkeypatch.setattr(mw, "switch_depot_dialog", lambda *a, **k: asked.append(1) or _Declined())
+    window._picked(_Picker("WH-01"))
+    assert asked == [1] and window.warehouse.code == "WH-02"  # a manager stays at their own depot
+    window.close()
+
+
+def test_an_administrator_who_opened_the_depot_moves_between_depots_freely(qapp, monkeypatch):
+    from depot_app.gui import main_window as mw
+
+    warehouse_repository.create(Warehouse(code="WH-01", name="İstanbul Merkez"))
+    warehouse_repository.create(Warehouse(code="WH-02", name="Gebze"))
+    admin = Session(1, "A-1", "Erol", "admin", "2026-09-26T06:00:00.000Z", "depot_console", "Depot")
+    window = mw.MainWindow(opener=admin)
+    monkeypatch.setattr(mw, "switch_depot_dialog", lambda *a, **k: pytest.fail("no second sign-in for an administrator"))
+    other = "WH-02" if window.warehouse.code == "WH-01" else "WH-01"
+    window._picked(_Picker(other))
+    assert window.warehouse.code == other
+    poller = window._low_stock_banner._poller
+    window.close()  # never shown, still stops polling
+    assert not poller.is_running()
+
+
+class _Picker:
+    def __init__(self, code):
+        self._code = code
+
+    def currentData(self):
+        return self._code
+
+    def blockSignals(self, _on):
+        pass
+
+    def clear(self):
+        pass
+
+    def addItem(self, *_a):
+        pass
+
+    def findData(self, _code):
+        return 0
+
+    def setCurrentIndex(self, _i):
+        pass
+
+
+class _Declined:
+    session = None
+
+    def exec(self):
+        return 0
+
+
+def test_the_movement_log_keeps_the_product_readable(floor, qapp):
+    from PySide6.QtCore import Qt
+
+    stock_repository.receive(WH1, "BOX", 5, note="Açılış stoğu, uzun bir açıklama")
+    floor._receive_panel.reload()
+    table = floor._receive_panel._table
+    assert table.item(0, 1).text().startswith("Carton")  # the name first, then the barcode
+    assert table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
+    assert table.item(0, 3).toolTip() == table.item(0, 3).text()
+    assert "Açılış stoğu" in table.item(0, 1).toolTip()  # the reference is also on the product's tooltip
+    floor._receive_panel.resize(450, 600)  # two panels side by side on a small screen
+    floor._receive_panel._fit_log_columns()
+    assert table.isColumnHidden(3) and table.isColumnHidden(4) and not table.isColumnHidden(1)
+    floor._receive_panel.resize(760, 600)
+    floor._receive_panel._fit_log_columns()
+    assert not table.isColumnHidden(3)
+
+
+def test_a_closed_floor_stops_asking_for_stock_levels(floor, qapp):
+    """Its poller once outlived the window and asked whatever server the next test had switched on."""
+    poller = floor._low_stock_banner._poller
+    assert poller.is_running()
+    floor.close()
+    pump(qapp)
+    assert not poller.is_running()
+    floor.show()
+    pump(qapp)
+    assert floor._low_stock_banner._poller.is_running()
+

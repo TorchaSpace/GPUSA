@@ -130,6 +130,19 @@ class LowStockBanner(QWidget):
         self._poller.result_ready.connect(self._render)
         self._poller.start()
 
+    def stop(self) -> None:
+        self._poller.stop()
+
+    def hideEvent(self, event) -> None:
+        # A closed Floor must not keep asking for stock levels for as long as the object happens to live.
+        self._poller.stop()
+        super().hideEvent(event)
+
+    def showEvent(self, event) -> None:
+        super().showEvent(event)
+        if not self._poller.is_running():
+            self._poller.start()
+
     def _start_pulse(self) -> None:
         """The little square beats like the mockup's `wmsPulse` (1.2 s, 100% to 25%)."""
         if not animations_enabled():

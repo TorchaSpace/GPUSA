@@ -21,6 +21,7 @@ from __future__ import annotations
 
 from datetime import date
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QGridLayout, QHBoxLayout, QHeaderView, QVBoxLayout, QWidget
 
 from database import (
@@ -128,6 +129,8 @@ class DashboardPage(QWidget):
         table = industry_table(headers)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.ResizeToContents)
         table.horizontalHeader().setSectionResizeMode(stretch_column, QHeaderView.Stretch)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setTextElideMode(Qt.ElideRight)
         card.body.addWidget(table, stretch=1)
         return card, table
 
@@ -193,6 +196,7 @@ class DashboardPage(QWidget):
         self.recent_table.setRowCount(len(recent))
         for r, m in enumerate(recent):
             sign = "+" if m["movement_type"] == "receive" else "−"
-            for c, cell in enumerate([item(local_time_text(m["created_at"])), item(direction_label(m)), item(m["barcode"]),
+            for c, cell in enumerate([item(local_time_text(m["created_at"])), item(direction_label(m)),
+                                      item(m.get("product_name") or m["barcode"]),
                                       item(f"{sign}{m['quantity']}", right=True), item(reason_label(m))]):
                 self.recent_table.setItem(r, c, cell)

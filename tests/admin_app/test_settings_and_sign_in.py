@@ -347,3 +347,65 @@ def test_forgotten_badge_can_be_replaced_on_a_server_installation(qapp, monkeypa
     assert dialog.save() is True
     assert seen["badge"] == "Ali Emre" and seen["new_badge"] == "yeni-7" and dialog.reset_badge == "YENI-7"
     dialog.deleteLater()
+
+
+# --- Root user / IAM user, as on AWS ------------------------------------------------------------
+
+def _root_and_an_iam_user():
+    from database import employee_repository
+    from shared.models import Employee
+
+    root = account_repository.create_first_admin("B-001", "Ali", "482913")
+    employee_repository.create(Employee("K-1", "Selin", "Sales & service", "Dealership", "Harbor Point"))
+    account_repository.create_account("K-1", "cashier", "583102", by=root.actor)
+
+
+def _try(dialog, badge, pin):
+    dialog.badge_input.setText(badge)
+    dialog.pin_input.setText(pin)
+    dialog.try_sign_in()
+
+
+def test_admin_sign_in_has_a_root_door_and_an_iam_door(qapp):
+    from admin_app.gui.auth_flow import IAM, ROOT, admin_sign_in_dialog
+
+    _root_and_an_iam_user()
+    dialog = admin_sign_in_dialog()
+    assert list(dialog.choice_buttons) == [ROOT, IAM] and dialog.choice == ROOT  # a new computer starts on root
+
+    _try(dialog, "K-1", "583102")  # an IAM user at the root door
+    assert dialog.session is None and "IAM user" in dialog.error_label.text()
+    dialog.choose(IAM)
+    assert not dialog.error_label.isVisible() and dialog.choice_buttons[IAM].isChecked()
+    _try(dialog, "B-001", "482913")  # root at the IAM door
+    assert dialog.session is None and "Root user" in dialog.error_label.text()
+    _try(dialog, "K-1", "583102")
+    assert dialog.session.badge_id == "K-1" and not dialog.session.is_root
+
+    again = admin_sign_in_dialog()  # the screen opens on the door used last on this computer
+    assert again.choice == IAM
+    again.choose(ROOT)
+    _try(again, "B-001", "482913")
+    assert again.session.is_root and admin_sign_in_dialog().choice == ROOT
+
+
+def test_the_wrong_door_signs_nobody_in_and_a_wrong_pin_says_nothing_about_doors(qapp, monkeypatch):
+    from admin_app.gui import auth_flow
+
+    _root_and_an_iam_user()
+    signed_out = []
+    monkeypatch.setattr(auth_flow.account_repository, "sign_out", lambda s: signed_out.append(s.badge_id))
+    dialog = auth_flow.admin_sign_in_dialog()
+    dialog.choose(auth_flow.IAM)
+    _try(dialog, "B-001", "482913")
+    assert signed_out == ["B-001"] and dialog.session is None
+    _try(dialog, "B-001", "000000")
+    assert dialog.error_label.text().startswith("Badge or PIN is wrong.")
+
+
+def test_other_sign_in_screens_have_no_doors(qapp):
+    from pos_app.gui.auth_flow import till_sign_in_dialog
+
+    dialog = till_sign_in_dialog(None, "GPUSA")
+    assert dialog.choice is None and dialog.choice_buttons == {}
+

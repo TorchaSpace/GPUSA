@@ -36,7 +36,7 @@ from PySide6.QtWidgets import (
 )
 
 import depot_app.gui.icons as icons
-from database import account_repository, warehouse_repository
+from database import own_place, warehouse_repository
 from database.exceptions import DATABASE_ERRORS
 from database.stock_repository import critical_at
 from shared.gui_kit.live_updates import DataWatcher
@@ -56,16 +56,20 @@ from shared.auth import Session
 from shared.i18n import tr
 from shared.models import Warehouse
 from shared.shifts import shift_for
-from shared.warehouse_bootstrap import resolve_this_depot_warehouse
+from shared.warehouse_bootstrap import load_warehouse_identity, resolve_this_depot_warehouse
 
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, warehouse: Warehouse | None = None):
+    def __init__(self, warehouse: Warehouse | None = None, opener: Session | None = None):
         super().__init__()
         p = INDUSTRY_PALETTE
         # The warehouse this depot instance runs - its site label is what
         # purchase orders, ledger documents and shipments are stamped with.
+        # `opener`: who opened the depot on a server install. Without a setup file the Floor is THEIR depot.
+        self._opener = opener
+        if warehouse is None and load_warehouse_identity() is None:
+            warehouse = own_place.own_warehouse(opener)
         self.warehouse = warehouse if warehouse is not None else resolve_this_depot_warehouse()
         self.setWindowTitle(tr("depot.floor.window_title").format(site=self.warehouse.site_label))
         self.resize(1360, 860)
@@ -176,7 +180,8 @@ class MainWindow(QMainWindow):
             return
         if not code or code == self.warehouse.code:
             return
-        if code != self._home_warehouse.code and not self._admin_approves_switch(code):
+        if (code != self._home_warehouse.code and not own_place.moves_freely(self._opener)
+                and not self._admin_approves_switch(code)):
             self._fill_picker(picker)  # declined: the picker goes back to the depot on screen
             return
         if not self.switch_warehouse(code):
@@ -193,11 +198,7 @@ class MainWindow(QMainWindow):
         dialog = switch_depot_dialog(self._home_warehouse, target, self)
         if not dialog.exec() or dialog.session is None:
             return False
-        try:
-            account_repository.sign_out(dialog.session)  # this was a one-off approval, not a session
-        except DATABASE_ERRORS:
-            pass
-        return True
+        return True  # a one-off approval, not a session (account_repository.approve)
 
     def switch_warehouse(self, code: str) -> bool:
         """Show another depot: every panel, the banner and the check-in list follow it. A signed-in
@@ -288,6 +289,10 @@ class MainWindow(QMainWindow):
         layout.addWidget(admin_login)
 
         return header
+
+    def closeEvent(self, event) -> None:
+        self._low_stock_banner.stop()  # also for a Floor that was never shown: nothing keeps polling after it
+        super().closeEvent(event)
 
     def changeEvent(self, event) -> None:
         # Back from another window (a barcode reader types into whatever has focus):

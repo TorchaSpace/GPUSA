@@ -230,3 +230,20 @@ def test_clicking_an_open_card_closes_it(dealerships, qapp):
     assert dealerships.selected_dealership().code == "CST-04"
     card.clicked.emit(card.dealership.code)
     assert dealerships.selected_dealership() is None
+
+
+def test_head_office_people_and_account_titles_read_in_the_screens_language(qapp):
+    from shared import i18n
+    from shared.gui_kit import staff_view
+
+    hq = {"location_type": "Warehouse", "location_name": "HQ"}
+    assert staff_view._place_text(hq) == "Head office"
+    assert staff_view._place_text({"location_type": "Warehouse", "location_name": "Merkez Depo"}).endswith("Merkez Depo")
+    assert staff_view._title_text("Driver") == "Driver" and staff_view._title_text(None) == ""
+    i18n.set_language("tr")
+    try:
+        assert staff_view._place_text(hq) == "Merkez"
+        assert staff_view._title_text("Depot manager") == "Depo müdürü"
+        assert staff_view._title_text("Cashier") == "Kasiyer"
+    finally:
+        i18n.set_language("en")

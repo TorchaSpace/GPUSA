@@ -256,3 +256,17 @@ def set_server_pairing(pairing: dict | None) -> None:
     else:
         config.pop("server_pairing", None)
     _save_config(config)
+
+
+def get_admin_sign_in_kind() -> str | None:
+    """"root" or "iam": which sign-in was last used for Admin on this computer (config.json), so the
+    screen opens on it next time. None before the first sign-in."""
+    kind = _load_config().get("admin_sign_in_kind")
+    return kind if kind in ("root", "iam") else None
+
+
+def set_admin_sign_in_kind(kind: str) -> None:
+    config = _load_config()
+    if config.get("admin_sign_in_kind") != kind:
+        config["admin_sign_in_kind"] = kind
+        _save_config(config)

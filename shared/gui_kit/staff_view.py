@@ -49,7 +49,7 @@ from database import attendance_repository, employee_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import current_session
 from shared import national_id as national_ids
-from shared.auth import normalize_badge_id
+from shared.auth import normalize_badge_id, role_label
 from shared.i18n import enum_label, tr
 from shared.models import EMPLOYEE_ROLES, Employee
 from shared.staff import (
@@ -138,9 +138,22 @@ def _role_text(role: str | None) -> str:
     return enum_label("role", role) if role else "—"
 
 
+# Head-office people (root, Admin accounts) are kept as working at "HQ" with the job title the account
+# was made with; both are shown in the screen's language.
+HEAD_OFFICE = "HQ"
+_ACCOUNT_TITLES = {"Administrator": "admin", "Depot manager": "depot_manager", "Cashier": "cashier"}
+
+
+def _title_text(title: str | None) -> str:
+    role = _ACCOUNT_TITLES.get(title or "")
+    return role_label(role) if role else (title or "")
+
+
 def _place_text(entry: dict) -> str:
     name = entry.get("location_name") or ""
     kind = entry.get("location_type")
+    if name == HEAD_OFFICE:
+        return tr("staff.place.head_office")
     return f"{enum_label('location_type', kind)} · {name}" if kind else name
 
 
@@ -453,7 +466,7 @@ class StaffView(QWidget):
             values = {
                 "name": _item(entry["name"], bold=True, data=entry["badge_id"]),
                 "badge": _item(entry["badge_id"]),
-                "title": _item(entry.get("title") or _role_text(entry.get("role"))),
+                "title": _item(_title_text(entry.get("title")) or _role_text(entry.get("role"))),
                 "place": _item(_place_text(entry)),
                 "status": _item(status, color=color, bold=present),
                 "in": _item(clock_on(entry["check_in_at"], today)),
@@ -633,7 +646,7 @@ class StaffView(QWidget):
                 "name": _item(entry["name"], bold=True, data=entry["badge_id"]),
                 "badge": _item(entry["badge_id"]),
                 "national_id": _item(national_ids.mask(entry.get("national_id"))),
-                "title": _item(entry.get("title") or "—"),
+                "title": _item(_title_text(entry.get("title")) or "—"),
                 "role": _item(_role_text(entry.get("role"))),
                 "place": _item(_place_text(entry)),
                 "status": _item(tr("staff.people.active") if active else tr("staff.people.inactive"),

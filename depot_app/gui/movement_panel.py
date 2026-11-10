@@ -28,6 +28,7 @@ from PySide6.QtGui import QBrush, QColor, QFont
 from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
+    QHeaderView,
     QLabel,
     QLineEdit,
     QSpinBox,
@@ -214,7 +215,29 @@ class MovementPanel(QWidget):
             stretch=(1,),
         )
         table.setMinimumHeight(200)
+        # The product is what people look for: it keeps the room, the reference and operator columns
+        # are cut short (full text on hover) and nothing scrolls sideways.
+        header = table.horizontalHeader()
+        for column, width in ((3, 96), (4, 64), (5, 110)):
+            header.setSectionResizeMode(column, QHeaderView.Fixed)
+            table.setColumnWidth(column, width)
+        table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        table.setTextElideMode(Qt.ElideRight)
+        table.setWordWrap(False)
         return table
+
+    # Below this width the reference and shelf/dock columns would squeeze the product out of sight
+    # (two panels side by side on a 1366-wide screen): they move into the row's tooltip instead.
+    NARROW_LOG_PX = 620
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_log_columns()
+
+    def _fit_log_columns(self) -> None:
+        narrow = self.width() < self.NARROW_LOG_PX
+        for column in (3, 4):
+            self._table.setColumnHidden(column, narrow)
 
     def _on_submit(self) -> None:
         barcode = self._sku_input.text().strip().upper()
@@ -346,7 +369,7 @@ class MovementPanel(QWidget):
             when = QTableWidgetItem(local_time_text(movement["created_at"]))  # stored UTC -> this PC's clock
             when.setForeground(QColor(p["text_secondary"]))
             self._table.setItem(row, 0, when)
-            sku = QTableWidgetItem(f"{movement['barcode']}  \u00b7  {movement['product_name']}")
+            sku = QTableWidgetItem(f"{movement['product_name']}  \u00b7  {movement['barcode']}")
             sku.setFont(self._bold())
             self._table.setItem(row, 1, sku)
             qty = QTableWidgetItem(f"{sign}{movement['quantity']}")
@@ -359,8 +382,11 @@ class MovementPanel(QWidget):
             if ref is None and bin_code is None:  # a row from before these had columns: ref and bin sit in the note
                 parts = (movement["note"] or "").split(" \u00b7 ", 1)
                 ref, bin_code = parts[0], (parts[1] if len(parts) > 1 else "")
-            self._table.setItem(row, 3, QTableWidgetItem(ref or ""))
-            self._table.setItem(row, 4, QTableWidgetItem(bin_code or ""))
+            for column, text in ((3, ref or ""), (4, bin_code or "")):
+                cell = QTableWidgetItem(text)
+                cell.setToolTip(text)
+                self._table.setItem(row, column, cell)
+            sku.setToolTip("  \u00b7  ".join(part for part in (sku.text(), ref, bin_code) if part))
             who = (movement.get("handled_by") or "").split(" \u00b7 ")[0]
             operator = QTableWidgetItem(who or "\u2014")
             operator.setForeground(QColor(p["text_secondary"]))

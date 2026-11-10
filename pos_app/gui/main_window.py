@@ -24,7 +24,7 @@ from __future__ import annotations
 from PySide6.QtCore import QEasingCurve, QPoint, QPropertyAnimation, QTimer
 from PySide6.QtWidgets import QApplication, QDialog, QMainWindow, QStackedWidget, QVBoxLayout, QWidget
 
-from database import account_repository, dealership_repository
+from database import account_repository, dealership_repository, own_place
 from database.exceptions import DATABASE_ERRORS
 from pos_app.gui.barcode_keypad import BarcodeKeypad
 from pos_app.gui.auth_flow import switch_dealership_dialog, till_sign_in_dialog
@@ -67,14 +67,16 @@ class MainWindow(QMainWindow):
         self.resize(1280, 800)
         self.setStyleSheet(f"QMainWindow {{ background-color: {ORGANIC_PALETTE['background']}; }}")
 
-        self._home_identity = load_dealership_identity()  # what this install was set up as (None in a dev run)
-        if self._home_identity:
+        # What this install was set up as. A till with no setup file follows whoever signs in instead.
+        self._setup_identity = load_dealership_identity()
+        if self._setup_identity:
             # The code as the database stores it (legacy lower-case rows included).
             try:
-                self._home_identity["code"] = dealership_repository.canonical_code(self._home_identity["code"])
+                self._setup_identity["code"] = dealership_repository.canonical_code(self._setup_identity["code"])
             except DATABASE_ERRORS:
                 pass
-        self._build_shell(self._home_identity)
+        self._home_identity = self._setup_identity or self._own_shop(session)
+        self._build_shell(self._home_identity or self._first_shop(session))
 
         # Manual barcode entry: one overlay over the whole window, kept across shop switches.
         self._keypad = BarcodeKeypad(self)
@@ -148,6 +150,30 @@ class MainWindow(QMainWindow):
         self._fill_dealership_choices()
         self._navigate("home")
 
+    # --- which shop ----------------------------------------------------------
+
+    @staticmethod
+    def _identity_of(shop) -> dict:
+        return {"code": shop.code, "name": shop.name,
+                "location_line": " · ".join(part for part in (shop.city, shop.region) if part)
+                or tr("pos.main.location_line")}
+
+    def _own_shop(self, session: Session | None) -> dict | None:
+        """The shop the signed-in cashier works at (their employee record): this till's home when the
+        installer gave it none, so a cashier never starts on somebody else's shelf."""
+        shop = own_place.own_dealership(session)
+        return self._identity_of(shop) if shop else None
+
+    def _first_shop(self, session: Session | None) -> dict | None:
+        """An administrator has no shop of their own: show the first one (they may move freely)."""
+        if not own_place.moves_freely(session):
+            return None
+        try:
+            shops = [d for d in dealership_repository.list_all() if d.is_active]
+        except DATABASE_ERRORS:
+            return None
+        return self._identity_of(shops[0]) if shops else None
+
     # --- switching shop ------------------------------------------------------
 
     def _fill_dealership_choices(self) -> None:
@@ -157,7 +183,9 @@ class MainWindow(QMainWindow):
             shops = []
         if self._dealership_code and all(code != self._dealership_code for code, _ in shops):
             shops.insert(0, (self._dealership_code, self._dealership_name))
-        self._header.set_dealership_choices(shops, self._dealership_code)
+        if not self._dealership_code and shops:
+            shops.insert(0, ("", tr("pos.switch.pick")))  # no shop yet: say so, never show a shop it isn't at
+        self._header.set_dealership_choices(shops, self._dealership_code or "")
 
     def _on_dealership_picked(self, code: str) -> None:
         QTimer.singleShot(0, lambda: self._switch_checked(code))
@@ -170,7 +198,7 @@ class MainWindow(QMainWindow):
             self._fill_dealership_choices()
             return
         home_code = self._home_identity["code"] if self._home_identity else None
-        if code != home_code and not self._admin_approves_switch(code):
+        if code != home_code and not own_place.moves_freely(self.session) and not self._admin_approves_switch(code):
             self._fill_dealership_choices()
             return
         if not self.switch_dealership(code):
@@ -187,11 +215,7 @@ class MainWindow(QMainWindow):
         dialog = switch_dealership_dialog(home_code, target.name, self)
         if not dialog.exec() or dialog.session is None:
             return False
-        try:
-            account_repository.sign_out(dialog.session)  # a one-off approval, not a session
-        except DATABASE_ERRORS:
-            pass
-        return True
+        return True  # a one-off approval: the cashier stays signed in (account_repository.approve)
 
     def switch_dealership(self, code: str) -> bool:
         """Show another dealership: pages, stock, receive list and sales all follow it."""
@@ -203,9 +227,7 @@ class MainWindow(QMainWindow):
             return False
         self._sale_page.clear_cart()
         self.close_barcode_keypad()
-        self._build_shell({"code": shop.code, "name": shop.name,
-                           "location_line": " · ".join(part for part in (shop.city, shop.region) if part)
-                           or tr("pos.main.location_line")})
+        self._build_shell(self._identity_of(shop))
         return True
 
     def refresh_live(self) -> None:
@@ -280,13 +302,15 @@ class MainWindow(QMainWindow):
         self._sale_page.clear_cart()
         self.hide()
         # The next cashier signs in at this till's OWN shop, even if an administrator was browsing another one.
-        home = self._home_identity
-        dialog = till_sign_in_dialog(home["code"] if home else self._dealership_code,
-                                     home["name"] if home else self._dealership_name)
+        home = self._setup_identity
+        dialog = till_sign_in_dialog(home["code"] if home else None, home["name"] if home else DEALERSHIP_NAME)
         if dialog.exec() and dialog.session is not None:
             self.set_session(dialog.session)
-            if home and self._dealership_code != home["code"]:
-                self.switch_dealership(home["code"])  # back to the home shop (keeps self.session)
+            # Without a setup file the till follows the new cashier to their own shop.
+            home = self._home_identity = home or self._own_shop(dialog.session)
+            target = home or (None if self._dealership_code else self._first_shop(dialog.session))
+            if target and self._dealership_code != target["code"]:
+                self.switch_dealership(target["code"])  # (keeps self.session)
             self._navigate("home")
             self._idle_lock.touch()
             self.show()

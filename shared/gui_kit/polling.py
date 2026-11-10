@@ -58,6 +58,9 @@ class PollingTimer(QObject):
     def stop(self) -> None:
         self._timer.stop()
 
+    def is_running(self) -> bool:
+        return self._timer.isActive()
+
     def set_interval_ms(self, interval_ms: int) -> None:
         self._timer.setInterval(interval_ms)
 

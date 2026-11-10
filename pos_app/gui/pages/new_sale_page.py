@@ -311,7 +311,7 @@ class _CartRow(QWidget):
         layout.addWidget(stepper)
 
         self._total = QLabel(format_money(line.line_total, "$"))
-        self._total.setFixedWidth(78)
+        self._total.setFixedWidth(108)  # room for a five-figure total: it was cut off at the left
         self._total.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
         self._total.setStyleSheet(f"background: transparent; font-weight: 700; font-size: 16px; color: {p['text_primary']};")
         layout.addWidget(self._total)
@@ -465,6 +465,8 @@ class NewSalePage(QWidget):
             if product.is_active and (query in fold(product.name) or query in fold(product.barcode))
         ]
         order = {product.barcode: index for index, product in enumerate(self._all_products)}
+        # What can be sold comes first; sold-out products follow (still shown, so the cashier sees why).
+        visible.sort(key=lambda product: product.stock_quantity <= 0)
 
         for index, product in enumerate(visible):
             card = self._build_product_tile(product, order.get(product.barcode, index))
@@ -989,5 +991,5 @@ class NewSalePage(QWidget):
             id=finalized.id if finalized.id is not None else tr("pos.sale.queued_number"),
             total=format_money(finalized.total, "$"),
         )
-        self._notify(body)
-        QMessageBox.information(self, tr("pos.sale.complete_title"), body)
+        # Said in passing (a toast), not in a box to click away: the next customer is already waiting.
+        self._notify(f"{tr('pos.sale.complete_title')} · {body}")

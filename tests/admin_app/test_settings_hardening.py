@@ -323,3 +323,28 @@ def test_add_account_popup_needs_a_badge(qapp):
     popup.pin_again.setText("739184")
     popup._try_accept()
     assert popup.result() == 0 and popup.error.text()
+
+
+def test_the_data_folder_is_not_offered_when_the_data_is_on_a_server(settings, qapp, monkeypatch):
+    from admin_app.gui.pages import settings_page
+
+    assert settings._data_location.isVisible()
+    monkeypatch.setattr(settings_page.paths, "get_server_url", lambda: "http://10.0.0.5:8000")
+    settings.reload()
+    assert not settings._data_location.isVisible() and settings._access.isVisible()
+
+
+def test_the_sign_in_log_detail_is_shown_in_the_screens_language(qapp):
+    from admin_app.gui.pages.settings_page import detail_text
+    from shared import i18n
+
+    assert detail_text(None) == "" and detail_text("root") == ""  # the event already says "Root signed in"
+    assert detail_text("cashier · by Ali Emre") == "Cashier · by Ali Emre"
+    assert detail_text("something else") == "something else"
+    i18n.set_language("tr")
+    try:
+        assert detail_text("depot_manager · by Ali Emre") == "Depo müdürü · Ali Emre tarafından"
+        assert detail_text("wrong PIN") == "yanlış PIN" and detail_text("5 wrong PINs") == "5 yanlış PIN"
+        assert detail_text("unknown badge") == "bilinmeyen rozet"
+    finally:
+        i18n.set_language("en")

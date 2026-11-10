@@ -8,9 +8,10 @@ from PySide6.QtWidgets import QApplication
 from database import account_repository, server_discovery, settings_repository
 from database.connection import check_database, pin_db_path
 from database.exceptions import DATABASE_ERRORS
+from depot_app.gui.auth_flow import open_depot_dialog
 from depot_app.gui.main_window import MainWindow
 from depot_app.theme import INDUSTRY_PALETTE
-from shared import currency, i18n
+from shared import currency, i18n, paths
 from shared.gui_kit.db_error import show_database_error
 from shared.theme import apply_theme
 from shared.warehouse_bootstrap import register_pending_warehouse
@@ -18,6 +19,12 @@ from database.backups import daily_backup
 
 
 BACKUP_CHECK_MS = 60 * 60 * 1000
+
+
+def needs_opening() -> bool:
+    """With a server the depot is opened by a sign-in (see auth_flow.open_depot_dialog); on its own
+    database the Floor just opens, as before."""
+    return bool(paths.get_server_url() or paths.server_required())
 
 
 def main() -> int:
@@ -34,7 +41,13 @@ def main() -> int:
     try:
         check_database()
         server_discovery.adopt_server()  # find the server on the network by itself
-        window = MainWindow()
+        opener = None
+        if needs_opening():
+            dialog = open_depot_dialog()
+            if not dialog.exec() or dialog.session is None:
+                return 0
+            opener = dialog.session
+        window = MainWindow(opener=opener)
     except DATABASE_ERRORS as exc:  # a damaged or locked file: say so, never crash without a window
         show_database_error(exc)
         return 1
