@@ -60,3 +60,42 @@ def test_a_setup_code_in_the_environment_is_required_for_the_first_administrator
     assert first(client, setup_code="wrong").status_code == 403
     assert sql("SELECT count(*) FROM accounts") == [(0,)]
     assert first(client, setup_code=" k7qd2mxh ").status_code == 201   # case and spaces don't matter
+
+
+def test_without_a_setup_code_only_the_server_pc_creates_root(client, monkeypatch):
+    """A fresh server with no setup code must not hand root to whoever reaches its port first."""
+    from fastapi.testclient import TestClient
+
+    sql("DELETE FROM accounts")
+    monkeypatch.delenv("GPUSA_SETUP_CODE", raising=False)
+    elsewhere = TestClient(client.app, client=("192.168.1.50", 50000))
+    assert elsewhere.get("/setup/status").json() == {"needs_first_admin": True, "needs_setup_code": True}
+    refused = first(elsewhere)
+    assert refused.status_code == 403 and "GPUSA_SETUP_CODE" in refused.json()["detail"]
+    assert first(elsewhere, setup_code="anything").status_code == 403
+    # a proxy on the server PC makes everyone look local: a forwarded request is not "this PC"
+    proxied = client.post("/setup/first-admin", headers={"X-Forwarded-For": "203.0.113.9"},
+                          json={"badge_id": "B-100", "name": "Zed", "pin": "753159"})
+    assert proxied.status_code == 403
+    assert sql("SELECT count(*) FROM accounts") == [(0,)]
+    assert first(client).status_code == 201  # on the server PC itself
+    # with a code, the other PC gets in by typing it
+    sql("DELETE FROM accounts")
+    monkeypatch.setenv("GPUSA_SETUP_CODE", "K7QD2MXH")
+    assert first(elsewhere, badge="B-200", setup_code="k7qd2mxh").status_code == 201
+
+
+def test_the_server_proves_itself_to_a_paired_computer(client):
+    """Only a server holding the secret can answer the question a paired computer asks before it sends a PIN."""
+    import hashlib
+    import hmac
+
+    device, nonce = "ab" * 16, "cd" * 16
+    assert client.get("/auth/pairing", params={"device": device}).status_code == 401  # signed in only
+    key = client.get("/auth/pairing", params={"device": device}, headers=login(client)).json()["key"]
+    proof = client.get("/identity", params={"device": device, "nonce": nonce}).json()["proof"]
+    assert proof == hmac.new(bytes.fromhex(key), bytes.fromhex(nonce), hashlib.sha256).hexdigest()
+    other = client.get("/auth/pairing", params={"device": "ef" * 16}, headers=login(client)).json()["key"]
+    assert other != key  # each computer has its own key
+    for bad in ({"device": "x", "nonce": nonce}, {"device": device, "nonce": "zz" * 16}, {"device": device}):
+        assert client.get("/identity", params=bad).status_code == 422

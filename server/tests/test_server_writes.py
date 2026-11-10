@@ -50,7 +50,7 @@ def client():
     sql("INSERT INTO warehouses (code, name, capacity_units) VALUES ('WH-01', 'Main', 10), ('WH-02', 'Spare', NULL)")
     sql("INSERT INTO products (barcode, name, price) VALUES ('A1', 'Anvil', 5)")
     create_admin.create_admin(settings, "B-001", "Ali", PIN)
-    return TestClient(create_app(settings))
+    return TestClient(create_app(settings), client=("127.0.0.1", 50000))  # like Admin on the server PC
 
 
 def login(client, area="admin"):

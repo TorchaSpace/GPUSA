@@ -24,3 +24,20 @@
 - Admin > Server (root only) needs no second sign-in: it shows the address, whether the server and its
   database answer, the version, who is signed in and how much the server holds, and lets root save another
   address for the computer (used from the next start).
+
+## Guards around the automatic connection
+
+- **Is this our server?** The first sign-in that reaches a server pairs the computer with it (a key only that
+  server can compute, kept in config.json `server_pairing`). Afterwards an address must prove it knows the key
+  before a badge and PIN are sent to it, and before a moved server's new address is adopted. An impostor that
+  merely answers on the network gets nothing ("...not the server this computer was connected to"). After a
+  server reinstall with a new `GPUSA_JWT_SECRET`, confirm it once with "Change the address" on the sign-in
+  screen (typing an address on purpose forgets the pairing). Details: `database/server_identity.py`,
+  `server/gpusa_server/identity_routes.py`.
+- **Root is created on the server PC or with the setup code.** Without `GPUSA_SETUP_CODE` the server lets only
+  itself (127.0.0.1, not through a proxy) create the root user; another computer must type the code.
+- **Plain http only inside a local network.** The apps refuse an `http://` address on the internet (badges,
+  PINs and tokens would travel in the open); private, loopback, Tailscale (100.64/10) and local names are
+  fine, anything else needs `https://`. `GPUSA_ALLOW_HTTP=1` lifts it for a test.
+- Not covered: someone who can sit between a computer and the server on the same network can still read plain
+  http. The answer to that is an https address (planned with the AWS move).

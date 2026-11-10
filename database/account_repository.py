@@ -39,7 +39,7 @@ from database.exceptions import (
 )
 from database import (
     activity_repository, audit_repository, authz, employee_repository, remote, remote_people, remote_recovery,
-    remote_setup,
+    remote_setup, server_identity,
 )
 from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
@@ -518,6 +518,7 @@ def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, termin
     (checked against the hash kept from that sign-in): the app then works from
     its cached data and queues its sales (database/remote_sales.py) until the
     server answers again."""
+    server_identity.require_ours(url)  # an impostor at the server's address gets no PIN
     try:
         client, who = remote.sign_in(url, badge_id, pin, area, terminal)
     except remote.ServerUnavailableError:
@@ -526,6 +527,7 @@ def _authenticate_on_server(url: str, badge_id: str, pin: str, area: str, termin
             remote.use_server_offline(url, who["badge_id"], pin, area, terminal)
     else:
         _remember_server_sign_in(url, who, pin)
+        server_identity.pair(client)
         if event == "sign_in":
             remote.use_server(client)
     with connection_scope() as conn:

@@ -7,10 +7,17 @@ address) and by the Admin "Server" page. Keeps the sign-in token in memory only
 
 from __future__ import annotations
 
+import ipaddress
 import json
+import os
 import socket
 import urllib.error
+import urllib.parse
 import urllib.request
+
+ALLOW_HTTP_ENV = "GPUSA_ALLOW_HTTP"
+_LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa", ".ts.net", ".localhost")
+_SHARED_RANGE = ipaddress.ip_network("100.64.0.0/10")  # carrier-grade NAT; what Tailscale hands out
 
 
 class ServerError(Exception):
@@ -29,6 +36,32 @@ def normalize_url(text: str) -> str:
     return url
 
 
+def insecure_problem(url: str) -> str | None:
+    """Why the apps must not talk to `url`, or None. Badges, PINs and sign-in tokens travel in every request,
+    so plain http is only accepted inside a local network (a private or loopback address, a name without a
+    dot or a local one); anywhere else the address must be https. GPUSA_ALLOW_HTTP=1 lifts this (tests of an
+    internet server before it has a certificate)."""
+    try:
+        parts = urllib.parse.urlsplit(url)
+        host = parts.hostname or ""
+    except ValueError:
+        return "That is not a server address."
+    if parts.scheme not in ("http", "https") or not host:
+        return "A server address starts with http:// or https://."
+    if parts.scheme == "https" or (os.environ.get(ALLOW_HTTP_ENV) or "").strip().lower() in ("1", "true", "yes", "on"):
+        return None
+    try:
+        ip = ipaddress.ip_address(host)
+    except ValueError:
+        local = "." not in host or host.lower().endswith(_LOCAL_SUFFIXES)
+    else:
+        local = ip.is_private or ip.is_loopback or ip.is_link_local or (ip.version == 4 and ip in _SHARED_RANGE)
+    if local:
+        return None
+    return ("That address is on the internet and not encrypted: PINs would travel in the open. "
+            "Use its https:// address.")
+
+
 class ServerClient:
     def __init__(self, base_url: str, timeout: float = 6.0):
         self.base_url = normalize_url(base_url)
@@ -38,6 +71,8 @@ class ServerClient:
     def _request(self, method: str, path: str, body: dict | None = None):
         if not self.base_url:
             raise ServerError("Enter the server address first.")
+        if problem := insecure_problem(self.base_url):
+            raise ServerError(problem)
         data = json.dumps(body).encode("utf-8") if body is not None else None
         request = urllib.request.Request(self.base_url + path, data=data, method=method)
         request.add_header("Accept", "application/json")

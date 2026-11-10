@@ -90,6 +90,8 @@ def _no_server_address(monkeypatch):
     saved: dict = {}
     monkeypatch.setattr(paths, "get_server_url", lambda: saved.get("url"))
     monkeypatch.setattr(paths, "set_server_url", lambda url: saved.__setitem__("url", (url or "").strip() or None))
+    monkeypatch.setattr(paths, "get_server_pairing", lambda: saved.get("pairing"))
+    monkeypatch.setattr(paths, "set_server_pairing", lambda pairing: saved.__setitem__("pairing", pairing))
 
 
 @pytest.fixture(autouse=True)

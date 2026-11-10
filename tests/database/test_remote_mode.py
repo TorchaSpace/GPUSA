@@ -943,6 +943,8 @@ def test_first_administrator_is_made_on_the_server_not_in_the_local_file(monkeyp
             return {"badge_id": body["badge_id"]}
         if path == "/auth/login":
             return {"token": "t", "badge_id": "B-009", "name": "Zed", "role": "admin", "area": "admin"}
+        if path.startswith("/auth/pairing?"):
+            raise ServerError("Not found", 404)  # an older server: the computer simply stays unpaired
         raise AssertionError(path)
 
     monkeypatch.setattr("shared.server_client.ServerClient._request", fake)

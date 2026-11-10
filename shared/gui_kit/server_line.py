@@ -17,7 +17,7 @@ from PySide6.QtWidgets import QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBox
 
 from shared import discovery, paths
 from shared.i18n import tr
-from shared.server_client import normalize_url
+from shared.server_client import insecure_problem, normalize_url
 
 
 class ServerLine(QWidget):
@@ -71,8 +71,6 @@ class ServerLine(QWidget):
         connected = bool(paths.get_server_url())
         self.status.setText(tr("server.line.connected") if connected else tr("server.line.none"))
         self.toggle.setText(tr("server.line.change") if connected else tr("server.line.enter"))
-        # An address given by the environment wins over anything saved here, so there is nothing to change.
-        self.toggle.setVisible(not (os.environ.get(paths.SERVER_URL_ENV) or "").strip())
 
     def _toggle_form(self) -> None:
         self._form.setVisible(not self._form.isVisible())
@@ -97,11 +95,20 @@ class ServerLine(QWidget):
         finally:
             self.connect_button.setEnabled(True)
         if not found:
-            self.message.setText(tr("server.line.no_answer").format(url=url))
+            problem = insecure_problem(url)
+            self.message.setText(tr("server.line.insecure") if problem else tr("server.line.no_answer").format(url=url))
+            self.message.show()
+            self._resize_window()
+            return False
+        fixed = normalize_url(os.environ.get(paths.SERVER_URL_ENV) or "")
+        if fixed and url != fixed:
+            # GPUSA_SERVER_URL wins over anything saved here; only that same server can be confirmed again.
+            self.message.setText(tr("server.line.env_fixed"))
             self.message.show()
             self._resize_window()
             return False
         paths.set_server_url(url)
+        paths.set_server_pairing(None)  # typed on purpose: the next sign-in pairs with this server
         self.address.clear()
         self._form.hide()
         self.message.hide()

@@ -2,9 +2,16 @@
 
 from __future__ import annotations
 
+import hashlib
+import hmac
 import json
 import threading
 from http.server import BaseHTTPRequestHandler, HTTPServer
+from urllib.parse import parse_qsl, urlsplit
+
+
+def pairing_key(secret: str, device: str) -> str:
+    return hmac.new(secret.encode(), b"gpusa-pairing-v1:" + device.encode(), hashlib.sha256).hexdigest()
 
 PRODUCTS = [
     {"barcode": "A1", "name": "Anvil", "price": 9.5, "stock_quantity": 3, "critical_stock_level": 1, "is_active": True},
@@ -15,8 +22,9 @@ PRODUCTS = [
 class FakeServer:
     """Accepts badge B-001 / PIN 482915. `employees_allowed=False` answers 403 on /employees."""
 
-    def __init__(self, employees_allowed: bool = True):
+    def __init__(self, employees_allowed: bool = True, secret: str | None = None):
         self.employees_allowed = employees_allowed
+        self.secret = secret  # with one, the fake proves itself like server/gpusa_server/identity_routes.py
         self.requests: list[tuple[str, str]] = []
         outer = self
 
@@ -48,6 +56,11 @@ class FakeServer:
                     return self._send(200, {"status": "ok", "version": "9.9"})
                 if self.path == "/health/db":
                     return self._send(200, {"status": "ok", "database": "ok"})
+                query = dict(parse_qsl(urlsplit(self.path).query))
+                if outer.secret and self.path.startswith("/identity?"):
+                    key = pairing_key(outer.secret, query["device"])
+                    return self._send(200, {"proof": hmac.new(bytes.fromhex(key), bytes.fromhex(query["nonce"]),
+                                                             hashlib.sha256).hexdigest()})
                 if self.headers.get("Authorization") != "Bearer tok":
                     return self._send(401, {"detail": "Sign in first."})
                 if self.path.split("?")[0] == "/products":
@@ -58,6 +71,8 @@ class FakeServer:
                     if outer.employees_allowed:
                         return self._send(200, [{"badge_id": "B-001"}])
                     return self._send(403, {"detail": "Only administrators and depot managers may list employees."})
+                if outer.secret and self.path.startswith("/auth/pairing?"):
+                    return self._send(200, {"key": pairing_key(outer.secret, query["device"])})
                 if self.path == "/auth/me":
                     return self._send(200, {"badge_id": "B-001", "name": "Ali", "role": "admin", "area": "admin"})
                 self._send(404, {"detail": "Not found"})

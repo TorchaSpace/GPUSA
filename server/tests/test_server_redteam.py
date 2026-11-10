@@ -35,7 +35,7 @@ CASHIER_PIN = "246802"
 # have their own guards and tests, the public store settings).
 PUBLIC = {("get", "/health"), ("get", "/health/db"), ("post", "/auth/login"), ("get", "/setup/status"),
           ("post", "/setup/first-admin"), ("get", "/recovery/status"), ("post", "/recovery/reset"),
-          ("get", "/settings"), ("get", "/changes"), ("get", "/openapi.json"), ("get", "/docs"),
+          ("get", "/settings"), ("get", "/changes"), ("get", "/identity"), ("get", "/openapi.json"), ("get", "/docs"),
           ("get", "/docs/oauth2-redirect"), ("get", "/redoc")}
 
 
