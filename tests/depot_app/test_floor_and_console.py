@@ -462,4 +462,11 @@ def test_the_movement_log_keeps_the_product_readable(floor, qapp):
     table = floor._receive_panel._table
     assert table.item(0, 1).text().startswith("Carton")  # the name first, then the barcode
     assert table.horizontalScrollBarPolicy() == Qt.ScrollBarAlwaysOff
-    assert table.columnWidth(3) <= 100 and table.item(0, 3).toolTip() == table.item(0, 3).text()
+    assert table.item(0, 3).toolTip() == table.item(0, 3).text()
+    assert "Açılış stoğu" in table.item(0, 1).toolTip()  # the reference is also on the product's tooltip
+    floor._receive_panel.resize(450, 600)  # two panels side by side on a small screen
+    floor._receive_panel._fit_log_columns()
+    assert table.isColumnHidden(3) and table.isColumnHidden(4) and not table.isColumnHidden(1)
+    floor._receive_panel.resize(760, 600)
+    floor._receive_panel._fit_log_columns()
+    assert not table.isColumnHidden(3)

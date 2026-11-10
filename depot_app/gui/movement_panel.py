@@ -223,7 +223,21 @@ class MovementPanel(QWidget):
             table.setColumnWidth(column, width)
         table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         table.setTextElideMode(Qt.ElideRight)
+        table.setWordWrap(False)
         return table
+
+    # Below this width the reference and shelf/dock columns would squeeze the product out of sight
+    # (two panels side by side on a 1366-wide screen): they move into the row's tooltip instead.
+    NARROW_LOG_PX = 620
+
+    def resizeEvent(self, event) -> None:
+        super().resizeEvent(event)
+        self._fit_log_columns()
+
+    def _fit_log_columns(self) -> None:
+        narrow = self.width() < self.NARROW_LOG_PX
+        for column in (3, 4):
+            self._table.setColumnHidden(column, narrow)
 
     def _on_submit(self) -> None:
         barcode = self._sku_input.text().strip().upper()
@@ -356,7 +370,6 @@ class MovementPanel(QWidget):
             when.setForeground(QColor(p["text_secondary"]))
             self._table.setItem(row, 0, when)
             sku = QTableWidgetItem(f"{movement['product_name']}  \u00b7  {movement['barcode']}")
-            sku.setToolTip(sku.text())
             sku.setFont(self._bold())
             self._table.setItem(row, 1, sku)
             qty = QTableWidgetItem(f"{sign}{movement['quantity']}")
@@ -373,6 +386,7 @@ class MovementPanel(QWidget):
                 cell = QTableWidgetItem(text)
                 cell.setToolTip(text)
                 self._table.setItem(row, column, cell)
+            sku.setToolTip("  \u00b7  ".join(part for part in (sku.text(), ref, bin_code) if part))
             who = (movement.get("handled_by") or "").split(" \u00b7 ")[0]
             operator = QTableWidgetItem(who or "\u2014")
             operator.setForeground(QColor(p["text_secondary"]))
