@@ -44,6 +44,7 @@ class SignInDialog(QDialog):
         cancel_text: str | None = None,
         parent=None,
         extra_action: tuple[str, Callable[["SignInDialog"], None]] | None = None,
+        server_line: bool = False,
     ):
         super().__init__(parent)
         p = palette
@@ -116,6 +117,16 @@ class SignInDialog(QDialog):
             self.extra_button.clicked.connect(lambda: callback(self))
             layout.addWidget(self.extra_button)
 
+        self.server_line = None
+        if server_line:
+            # The app's main sign-in: says whether this PC works with the server, and takes its address
+            # when it could not be found by itself (shared/gui_kit/server_line.py).
+            from shared.gui_kit.server_line import ServerLine
+
+            self.server_line = ServerLine(p, self)
+            self.server_line.changed.connect(self._server_changed)
+            layout.addWidget(self.server_line)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         self.cancel_button = QPushButton(cancel_text or tr("common.cancel"))
@@ -159,6 +170,11 @@ class SignInDialog(QDialog):
         finally:
             self.sign_in_button.setEnabled(True)
         self.accept()
+
+    def _server_changed(self, _url: str) -> None:
+        self.error_label.hide()
+        self.badge_input.setFocus()
+        self.adjustSize()
 
     def _fail(self, message: str) -> None:
         self.pin_input.clear()

@@ -44,6 +44,10 @@ class FakeServer:
 
             def do_GET(self):
                 outer.requests.append(("GET", self.path))
+                if self.path == "/health":
+                    return self._send(200, {"status": "ok", "version": "9.9"})
+                if self.path == "/health/db":
+                    return self._send(200, {"status": "ok", "database": "ok"})
                 if self.headers.get("Authorization") != "Bearer tok":
                     return self._send(401, {"detail": "Sign in first."})
                 if self.path.split("?")[0] == "/products":
@@ -54,6 +58,8 @@ class FakeServer:
                     if outer.employees_allowed:
                         return self._send(200, [{"badge_id": "B-001"}])
                     return self._send(403, {"detail": "Only administrators and depot managers may list employees."})
+                if self.path == "/auth/me":
+                    return self._send(200, {"badge_id": "B-001", "name": "Ali", "role": "admin", "area": "admin"})
                 self._send(404, {"detail": "Not found"})
 
         self._httpd = HTTPServer(("127.0.0.1", 0), Handler)

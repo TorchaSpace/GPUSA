@@ -31,7 +31,8 @@ def _local_broadcasts() -> list[str]:
     return targets
 
 
-def _is_gpusa(url: str, timeout: float) -> bool:
+def is_gpusa(url: str, timeout: float = 2.0) -> bool:
+    """Whether a GPUSA API answers GET /health at `url`."""
     try:
         with urllib.request.urlopen(url + "/health", timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8")).get("status") == "ok"
@@ -68,10 +69,14 @@ def find_servers(port: int = DEFAULT_PORT, timeout: float = 1.5, targets: list[s
                 found.setdefault(f"http://{ip}:{api_port}", None)
     finally:
         sock.close()
-    return [url for url in found if _is_gpusa(url, 2.0)]
+    return [url for url in found if is_gpusa(url, 2.0)]
 
 
 def find_server(port: int = DEFAULT_PORT, timeout: float = 1.5, targets: list[str] | None = None) -> str | None:
-    """The one server on the network, or None when there is none or there are several."""
+    """The one server on the network, or None when there is none or there are several. A server on this
+    very PC answers both on 127.0.0.1 and on the PC's own network address: that is one server, and it wins."""
     servers = find_servers(port, timeout, targets)
+    local = [url for url in servers if url.startswith("http://127.")]
+    if local:
+        return local[0]
     return servers[0] if len(servers) == 1 else None

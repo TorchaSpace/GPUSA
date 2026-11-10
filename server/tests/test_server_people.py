@@ -374,3 +374,38 @@ def test_iam_user_opens_admin_but_cannot_manage_accounts(client):
                  lambda: client.delete("/accounts/B-001", headers=iam)):
         assert call().status_code == 403
     assert client.post("/accounts", headers=root, json={"badge_id": "B-001", "role": "cashier", "pin": "246802"}).status_code in (409, 422)
+
+
+def test_root_adds_a_new_person_together_with_the_account(client):
+    """A fresh installation has nobody but root: a badge nobody has yet, with a name, adds the person too."""
+    h = login(client)
+    new = {"badge_id": " d-200 ", "role": "depot_manager", "pin": "246802", "name": " Deniz  Ak ", "location_name": "main"}
+    r = client.post("/accounts", headers=h, json=new)
+    assert r.status_code == 201, r.text
+    assert (r.json()["badge_id"], r.json()["name"], r.json()["role"]) == ("D-200", "Deniz Ak", "depot_manager")
+    person_row = client.get("/employees/D-200", headers=h).json()
+    assert (person_row["title"], person_row["location_type"], person_row["location_name"]) == ("Depot manager", "Warehouse", "main")
+    assert client.post("/auth/login", json={"badge_id": "D-200", "pin": "246802", "area": "depot_console"}).status_code == 200
+    # an Admin sits at head office and needs no place; a cashier needs a real dealership
+    admin = client.post("/accounts", headers=h, json={"badge_id": "A-9", "role": "admin", "pin": "73918462", "name": "Ece"})
+    assert admin.status_code == 201, admin.text
+    assert client.get("/employees/A-9", headers=h).json()["location_name"] == "HQ"
+    for place in ("", "Nowhere"):
+        bad = client.post("/accounts", headers=h, json={"badge_id": "C-1", "role": "cashier", "pin": "246802",
+                                                        "name": "Can", "location_name": place})
+        assert bad.status_code == 422, bad.text
+    assert client.get("/employees/C-1", headers=h).status_code == 404  # nothing half-made
+    # without a name an unknown badge is still refused, and a weak PIN adds nobody
+    assert client.post("/accounts", headers=h, json={"badge_id": "C-1", "role": "cashier", "pin": "246802"}).status_code == 404
+    assert client.post("/accounts", headers=h, json={"badge_id": "C-2", "role": "cashier", "pin": "12",
+                                                     "name": "Can", "location_name": "Coast"}).status_code == 422
+    assert client.get("/employees/C-2", headers=h).status_code == 404
+
+
+def test_only_root_adds_a_person_with_an_account(client):
+    h = login(client)
+    client.post("/accounts", headers=h, json={"badge_id": "A-9", "role": "admin", "pin": "73918462", "name": "Ece"})
+    iam = client.post("/auth/login", json={"badge_id": "A-9", "pin": "73918462", "area": "admin"}).json()
+    r = client.post("/accounts", headers={"Authorization": f"Bearer {iam['token']}"},
+                    json={"badge_id": "X-1", "role": "cashier", "pin": "246802", "name": "X", "location_name": "Coast"})
+    assert r.status_code == 403

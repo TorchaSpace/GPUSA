@@ -47,7 +47,7 @@ def main() -> int:
     # the first administrator is created here on a fresh system.
     try:
         check_database()
-        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
+        server_discovery.adopt_server()  # find the server on the network by itself
         session = sign_in()
         if session is None:
             return 0

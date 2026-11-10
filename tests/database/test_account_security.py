@@ -47,6 +47,26 @@ def test_admins_can_be_added_but_only_the_first_one_is_root(people):
         accounts.set_role("B-1", "cashier")
 
 
+def test_root_adds_a_new_person_together_with_the_account(people):
+    """A fresh installation has nobody but root: a badge nobody has yet, with a name, adds the person too."""
+    from database import warehouse_repository
+    from shared.models import Warehouse
+
+    warehouse_repository.create(Warehouse(code="WH-01", name="Main depot"))
+    made = accounts.create_account(" d-7 ", "depot_manager", "583920", by=people.actor, name=" Deniz  Ak ",
+                                   location_name="Main depot")
+    assert (made.badge_id, made.name, made.role, made.location_type) == ("D-7", "Deniz Ak", "depot_manager", "Warehouse")
+    assert accounts.authenticate("D-7", "583920", auth.AREA_DEPOT_CONSOLE, "Depot").role == "depot_manager"
+    assert accounts.create_account("A-9", "admin", "739184", by=people.actor, name="Ece").location_name == "HQ"
+    with pytest.raises(ValueError):  # a cashier belongs to a real dealership
+        accounts.create_account("C-1", "cashier", "583920", by=people.actor, name="Can", location_name="Nowhere")
+    with pytest.raises(Exception):  # no name: an unknown badge is still refused
+        accounts.create_account("C-1", "cashier", "583920", by=people.actor)
+    assert "C-1" not in [e.badge_id for e in employee_repository.list_all()]
+    # an existing badge ignores the name
+    assert accounts.create_account("B-2", "cashier", "135702", by=people.actor, name="Someone Else").name == "Selin Kaya"
+
+
 def test_iam_user_cannot_manage_accounts(people):
     accounts.create_account("B-2", "cashier", "135702")
     iam = accounts.authenticate("B-2", "135702", auth.AREA_ADMIN, "Admin")

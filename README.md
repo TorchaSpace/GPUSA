@@ -67,9 +67,9 @@ env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m pos_app.main
 env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m depot_app.main
 ```
 
-Girişte sunucudaki rozet ve PIN kullanılır. Sunucuda hiç yönetici yoksa Admin ilk açılışta "ilk yöneticiyi oluştur" ekranını gösterir (terminal gerekmez); bir yönetici olunca bu kapı kapanır, sonrakiler Admin içinden (Çalışanlar, Ayarlar) ya da `python -m gpusa_server.create_admin` ile açılır.
-Başka bilgisayarlar aynı adresi PC'nin IP'siyle kullanır (`http://192.168.x.x:8000`, ya da
-Admin > Sunucu (test)). Qt "libEGL / xcb" hatasıyla kapanırsa (CachyOS/Arch):
+Girişte sunucudaki rozet ve PIN kullanılır. Sunucuda hiç yönetici yoksa Admin ilk açılışta "root kullanıcıyı oluştur" ekranını gösterir (rozet B-001 hazır gelir) (terminal gerekmez); bir yönetici olunca bu kapı kapanır, sonrakiler Admin içinden (Çalışanlar, Ayarlar) ya da `python -m gpusa_server.create_admin` ile açılır.
+Başka bilgisayarlar aynı adresi PC'nin IP'siyle kullanır (`http://192.168.x.x:8000`); aynı ağdaki
+uygulamalar sunucuyu açılışta kendisi bulur, bulamazsa giriş ekranındaki "Sunucu adresini gir" kutusuna yazılır. Qt "libEGL / xcb" hatasıyla kapanırsa (CachyOS/Arch):
 `sudo pacman -S --needed xcb-util-cursor libglvnd mesa libxkbcommon-x11`.
 
 Tek komutla aynısı: `bash start_all.sh` (ya da `bash start_all.sh admin pos`). Sunucuyu

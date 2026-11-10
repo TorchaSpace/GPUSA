@@ -1,31 +1,34 @@
-"""A fresh PC finds the server by itself.
+"""The apps find the server by themselves when they start.
 
-Only a PC with no server address AND no administrator in its own database file (a new download, nothing to
-lose) looks for one; an installation that already has local data keeps using it until someone connects it on
-purpose in Admin > Server (test). The address found is saved like a typed one (config.json), so the next start
-does not search again. Opt out with GPUSA_DISCOVERY=0."""
+- No server address saved yet: look for the one server on the network and remember it (config.json), so every
+  app on this PC signs in to it and reads its database from then on. Nobody has to open a "server test" page.
+- An address is saved but nothing answers there any more (the server PC got a new IP): look again and, if the
+  server answers somewhere else, remember the new address.
+
+An address given with the GPUSA_SERVER_URL environment variable is never second-guessed. Opt out of all of
+this with GPUSA_DISCOVERY=0 (a PC that must stay on its own local database file)."""
 
 from __future__ import annotations
 
 import os
-from collections.abc import Callable
 
 from shared import discovery, paths
 
 
-def adopt_server_if_fresh(local_has_administrator: Callable[[], bool]) -> str | None:
-    """Look for a server and remember it. Returns the address saved, or None (nothing changed).
-    `local_has_administrator` is only called when no server address is set yet."""
-    if paths.get_server_url():
-        return None
+def adopt_server() -> str | None:
+    """Look for the server and remember it. Returns the address newly saved, or None (nothing changed)."""
     if os.environ.get("GPUSA_DISCOVERY", "1").strip().lower() in ("0", "false", "no", "off"):
         return None
-    if local_has_administrator():
+    if (os.environ.get(paths.SERVER_URL_ENV) or "").strip():
         return None
+    saved = paths.get_server_url()
     try:
+        if saved and discovery.is_gpusa(saved):
+            return None
         url = discovery.find_server()
     except OSError:
         return None
-    if url:
-        paths.set_server_url(url)
+    if not url or url == saved:
+        return None
+    paths.set_server_url(url)
     return url

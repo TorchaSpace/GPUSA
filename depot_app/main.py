@@ -33,7 +33,7 @@ def main() -> int:
     currency.set_currency(settings_repository.safe_currency())
     try:
         check_database()
-        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
+        server_discovery.adopt_server()  # find the server on the network by itself
         window = MainWindow()
     except DATABASE_ERRORS as exc:  # a damaged or locked file: say so, never crash without a window
         show_database_error(exc)

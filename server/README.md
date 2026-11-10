@@ -46,8 +46,8 @@ bash server/scripts/make_launcher.sh   # once: puts "GPUSA Sunucusu" on the Desk
 Double-clicking it opens a terminal that starts Docker if needed, starts the
 Postgres container (`gpusa-db`), waits until it answers, reads `.env`, checks
 the database connection, runs `alembic upgrade head`, starts the API on port
-8000 and then checks `/health` and `/health/db`, printing the address to type
-into Admin > Server (test). Ctrl+C stops the API. Run `bash server/scripts/start_server.sh`
+8000 and then checks `/health` and `/health/db`, printing the address (the apps on the
+same network find it by themselves; elsewhere it is typed on their sign-in screen). Ctrl+C stops the API. Run `bash server/scripts/start_server.sh`
 directly to see the same thing in an open terminal. Options: `GPUSA_DB_CONTAINER`,
 `GPUSA_PORT`, `GPUSA_VENV`, `GPUSA_SKIP_DOCKER=1`.
 

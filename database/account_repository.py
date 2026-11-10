@@ -44,7 +44,7 @@ from database import (
 from shared import auth, paths, recovery_code, security_question
 from shared.auth import Actor, Session
 from shared.formatting import local_datetime_text, parse_db_timestamp, to_db_timestamp
-from shared.models import Account
+from shared.models import Account, Employee
 
 _SELECT = (
     "SELECT a.id, a.role, a.is_root, a.pin_hash, a.is_active, a.failed_attempts, a.locked_until, a.last_sign_in_at, "
@@ -295,20 +295,46 @@ def _check_pin(pin: str, role: str) -> None:
         raise ValueError(problem)
 
 
-def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None) -> Account:
-    """Give an existing, active employee a sign-in account. Raises
-    ValueError (bad PIN / role, already has an account, inactive employee),
-    EmployeeNotFoundError."""
+# A person added together with their account (root, Settings > Add account): what the employee record
+# says for each account type. Admin sits at head office like root; the others belong to a real place.
+NEW_PERSON = {"admin": ("Administrator", "Management", "Warehouse"),
+              "depot_manager": ("Depot manager", "Management", "Warehouse"),
+              "cashier": ("Cashier", "Sales & service", "Dealership")}
+HEAD_OFFICE = "HQ"
+
+
+def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None, *, name: str | None = None,
+                   location_name: str | None = None) -> Account:
+    """Give an active employee a sign-in account. With `name`, a badge nobody has yet adds the person in the
+    same step (a depot manager at the warehouse `location_name`, a cashier at that dealership, an Admin at
+    head office); an existing badge ignores it. Raises ValueError (bad PIN / role, already has an account,
+    inactive employee, unknown place), EmployeeNotFoundError."""
+    name = " ".join((name or "").split()) or None
+    location_name = " ".join((location_name or "").split())
     if remote.active():
-        return remote_people.create_account(badge_id, role, pin)
+        return remote_people.create_account(badge_id, role, pin, name, location_name)
     badge_id = auth.normalize_badge_id(badge_id)
     _check_pin(pin, role)
     pin_hash = auth.hash_pin(pin)
+    title, employee_role, location_type = NEW_PERSON[role]
+    if role == "admin":
+        location_name = HEAD_OFFICE
+    places = employee_repository.location_choices(include_codes=True) if name and role != "admin" else None
+    if name:
+        employee_repository.validate_fields(Employee(
+            badge_id=badge_id, name=name, title=title, role=employee_role, location_type=location_type,
+            location_name=location_name or "?"))  # a missing place is reported by location_problem below
 
     def run(conn):
         nonlocal badge_id
         _check_actor(conn, by, badge_id)
         employee = employee_repository.find_row(conn, badge_id)
+        if employee is None and name:
+            if places is not None and (problem := employee_repository.location_problem(location_type, location_name, places)):
+                raise ValueError(problem)
+            conn.execute("INSERT INTO employees (badge_id, name, title, role, location_type, location_name) "
+                         "VALUES (?, ?, ?, ?, ?, ?)", (badge_id, name, title, employee_role, location_type, location_name))
+            employee = employee_repository.find_row(conn, badge_id)
         if employee is None:
             raise EmployeeNotFoundError(badge_id)
         badge_id = employee["badge_id"]
@@ -449,7 +475,7 @@ def authenticate(badge_id: str, pin: str, area: str, terminal: str, event: str =
     if paths.server_required():  # no silent fall back to the local file on a server installation
         raise remote.ServerUnavailableError(
             "This installation works through the server, but no server address is set. "
-            "Set it in Admin > Server (test) or with GPUSA_SERVER_URL.")
+            "Type it on the sign-in screen or set GPUSA_SERVER_URL.")
     with connection_scope() as conn:
         row = _fetch(conn, badge_id)
     now = _now()

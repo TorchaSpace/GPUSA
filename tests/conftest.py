@@ -90,3 +90,9 @@ def _no_server_address(monkeypatch):
     saved: dict = {}
     monkeypatch.setattr(paths, "get_server_url", lambda: saved.get("url"))
     monkeypatch.setattr(paths, "set_server_url", lambda url: saved.__setitem__("url", (url or "").strip() or None))
+
+
+@pytest.fixture(autouse=True)
+def _no_network_discovery(monkeypatch):
+    """The apps look for the server on the network when they start; a test run must never adopt one."""
+    monkeypatch.setenv("GPUSA_DISCOVERY", "0")
