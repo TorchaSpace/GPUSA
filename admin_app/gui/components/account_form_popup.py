@@ -56,12 +56,21 @@ class _Base(QDialog):
 
 
 class AddAccountPopup(_Base):
-    """Root adds an IAM user in three steps: the account type (depot manager or cashier), the badge ID and the
-    PIN. The badge must belong to someone already added at the depot / till Staff page (they carry the place and
-    the national ID); the badge box suggests the people who have no account yet."""
+    """Root adds an IAM user: the account type (Admin, depot manager or cashier), the badge ID and the PIN.
+    The badge box suggests the people who have no account yet (added at the depot / till Staff page). A badge
+    nobody has yet is a new person: two more rows appear in place - the name and, for a depot manager or a
+    cashier, the warehouse or dealership they work at - and the person is added together with the account, so
+    a fresh installation needs nothing but root to get its first Admin, depot manager and cashier.
 
-    def __init__(self, employees: list[tuple[str, str]], parent=None):
+    `places` is employee_repository.location_choices(); `taken` the badges that already have an account
+    (typed again they are not "new" - the save then says the account exists)."""
+
+    def __init__(self, employees: list[tuple[str, str]], parent=None, places: dict[str, list[str]] | None = None,
+                 taken: list[str] | None = None):
         super().__init__(tr("admin.settings.add_title"), parent)
+        self._places = places or {}
+        self._known = {auth.normalize_badge_id(badge) for badge, _name in employees}
+        self._known |= {auth.normalize_badge_id(badge) for badge in taken or []}
         self.role = QComboBox()
         for role in auth.IAM_ROLES:  # IAM users only - there is a single root account
             self.role.addItem(auth.role_label(role), role)
@@ -76,22 +85,67 @@ class AddAccountPopup(_Base):
         self.pin_again = _pin_field()
         hint = QLabel(tr("admin.settings.add_hint").format(min=auth.MIN_PIN_LENGTH))
         hint.setWordWrap(True)
+        self.new_note = QLabel(tr("admin.settings.new_person"))
+        self.new_note.setWordWrap(True)
+        self.name = QLineEdit()
+        self.name.setMaxLength(120)
+        self.place = QComboBox()
         self.form.addRow(tr("admin.settings.role"), self.role)
         self.form.addRow(tr("admin.settings.badge"), self.badge)
+        self.form.addRow(self.new_note)
+        self.form.addRow(tr("admin.settings.new_name"), self.name)
+        self.form.addRow(tr("admin.settings.new_place"), self.place)
+        self.badge.textChanged.connect(self._sync_new_person)
+        self.role.currentIndexChanged.connect(self._sync_new_person)
+        self._sync_new_person()
         self.form.addRow(tr("admin.settings.pin"), self.pin)
         self.form.addRow(tr("admin.settings.pin_again"), self.pin_again)
         self.form.addRow(hint)
         self._finish()
 
+    def is_new_person(self) -> bool:
+        badge = auth.normalize_badge_id(self.badge.text())
+        return bool(badge) and badge not in self._known
+
+    def _place_kind(self) -> str | None:
+        """Which kind of place the chosen account type belongs to (None: an Admin, at head office)."""
+        return {"depot_manager": "Warehouse", "cashier": "Dealership"}.get(self.role.currentData())
+
+    def _sync_new_person(self) -> None:
+        new, kind = self.is_new_person(), self._place_kind()
+        self.new_note.setVisible(new)
+        self.form.setRowVisible(self.name, new)
+        self.form.setRowVisible(self.place, new and kind is not None)
+        wanted = self._places.get(kind, []) if kind else []
+        if [self.place.itemText(i) for i in range(self.place.count())] != wanted:
+            self.place.clear()
+            self.place.addItems(wanted)
+        self.adjustSize()
+
     def _try_accept(self) -> None:
         if not self.badge.text().strip():
             self._fail(tr("err.badge_required"))
             return
+        if self.is_new_person():
+            if not self.name.text().strip():
+                self._fail(tr("admin.settings.new_name_required"))
+                return
+            kind = self._place_kind()
+            if kind is not None and not self.place.currentText():
+                self._fail(tr("admin.settings.new_place_required_depot" if kind == "Warehouse"
+                              else "admin.settings.new_place_required_shop"))
+                return
         if self._check_new_pin(self.role.currentData()):
             self.accept()
 
     def values(self) -> tuple[str, str, str]:
         return auth.normalize_badge_id(self.badge.text()), self.role.currentData(), self.pin.text()
+
+    def new_person(self) -> tuple[str, str] | None:
+        """(name, place) when the badge is a new person's, else None."""
+        if not self.is_new_person():
+            return None
+        return " ".join(self.name.text().split()), self.place.currentText() if self._place_kind() else ""
 
 
 class PinPopup(_Base):

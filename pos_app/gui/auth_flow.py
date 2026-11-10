@@ -66,6 +66,7 @@ def till_sign_in_dialog(dealership_code: str | None, dealership_name: str, paren
         palette=ORGANIC_PALETTE,
         cancel_text=cancel_text or tr("pos.auth.close_till"),
         parent=parent,
+        server_line=True,
     )
 
 

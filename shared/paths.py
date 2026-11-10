@@ -207,8 +207,8 @@ SERVER_URL_ENV = "GPUSA_SERVER_URL"
 
 def get_server_url() -> str | None:
     """The cloud API every app on this computer signs in to, or None (the
-    default: everything stays on the local database file). Set from Admin >
-    Server (test) (config.json "server_url") or, for a till with no Admin, with
+    default: everything stays on the local database file). Found on the network
+    at start-up or typed at sign-in / in Admin > Server (config.json "server_url") or given with
     the GPUSA_SERVER_URL environment variable, which wins."""
     url = (os.environ.get(SERVER_URL_ENV) or "").strip() or str(_load_config().get("server_url") or "").strip()
     return url or None

@@ -38,7 +38,7 @@ def main() -> int:
     # A cashier signs in before the till opens (pos_app/gui/auth_flow.py).
     try:
         check_database()
-        server_discovery.adopt_server_if_fresh(account_repository.admin_exists)  # a new PC finds the server
+        server_discovery.adopt_server()  # find the server on the network by itself
         identity = load_dealership_identity()
         code = identity["code"] if identity else None
         if code:

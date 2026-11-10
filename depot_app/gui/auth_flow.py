@@ -27,6 +27,7 @@ def console_sign_in_dialog(warehouse: Warehouse, parent=None) -> SignInDialog:
         lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_DEPOT_CONSOLE, terminal_name(warehouse)),
         palette=INDUSTRY_PALETTE,
         parent=parent,
+        server_line=True,
     )
 
 

@@ -160,7 +160,7 @@ echo
 echo "İlk yönetici henüz yoksa Admin'in sorduğu KURULUM KODU: $GPUSA_SETUP_CODE"
 echo "(Yönetici oluştuktan sonra gerekmez; kimseyle paylaşma.)"
 echo
-echo "Başka bilgisayardaki Admin > Sunucu (test) sayfasına şunlardan birini yaz:"
+echo "Başka bilgisayarlar sunucuyu kendisi bulur; bulamazsa giriş ekranındaki \"Sunucu adresini gir\" kutusuna şunlardan birini yaz:"
 ips="$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"
 if [ -n "$ips" ]; then for ip in $ips; do echo "    $ip:$PORT"; done; else warn "IP bulunamadı (ip -4 addr)"; fi
 

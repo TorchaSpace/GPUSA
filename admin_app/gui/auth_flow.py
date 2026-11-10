@@ -20,7 +20,10 @@ from database.exceptions import DATABASE_ERRORS, DataAccessError
 from shared import auth, paths, security_question
 from shared.i18n import tr
 from shared.auth import Session
+from shared.gui_kit.server_line import ServerLine
 from shared.gui_kit.sign_in_dialog import SignInDialog
+
+ROOT_BADGE = "B-001"  # offered on the first-run screen; the person may type another
 
 
 def terminal_name() -> str:
@@ -46,6 +49,7 @@ class FirstAdminDialog(QDialog):
         super().__init__(parent)
         p = CLASSICAL_PALETTE
         self.session: Session | None = None
+        self.server_changed = False
         self.setWindowTitle(tr("admin.auth.first_title"))
         self.setMinimumWidth(440)
         self.setObjectName("firstAdmin")
@@ -66,7 +70,7 @@ class FirstAdminDialog(QDialog):
 
         form = QFormLayout()
         self.name_input = QLineEdit()
-        self.badge_input = QLineEdit()
+        self.badge_input = QLineEdit(ROOT_BADGE)
         self.pin_input = _pin_field()
         self.pin_again_input = _pin_field()
         self.setup_code_input = QLineEdit()
@@ -102,6 +106,11 @@ class FirstAdminDialog(QDialog):
         self.error_label.hide()
         layout.addWidget(self.error_label)
 
+        # Where root is made: on the server this PC found (or the one typed here), else on this PC alone.
+        self.server_line = ServerLine(p, self)
+        self.server_line.changed.connect(self._server_changed)
+        layout.addWidget(self.server_line)
+
         buttons = QHBoxLayout()
         buttons.addStretch(1)
         quit_button = QPushButton(tr("admin.auth.quit"))
@@ -113,6 +122,12 @@ class FirstAdminDialog(QDialog):
         buttons.addWidget(quit_button)
         buttons.addWidget(create)
         layout.addLayout(buttons)
+
+    def _server_changed(self, _url: str) -> None:
+        """Another database now: it may have its root already (then sign in), or ask for a setup code.
+        sign_in() looks again and shows the right screen."""
+        self.server_changed = True
+        self.reject()
 
     def create(self) -> None:
         if self.pin_input.text() != self.pin_again_input.text():
@@ -476,7 +491,7 @@ def show_new_recovery_code(session: Session, parent=None) -> str | None:
 
 
 def admin_sign_in_dialog(parent=None, cancel_text: str | None = None) -> SignInDialog:
-    return SignInDialog(
+    dialog = SignInDialog(
         tr("admin.auth.sign_in_title"),
         tr("admin.auth.sign_in_sub"),
         lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name()),
@@ -484,20 +499,29 @@ def admin_sign_in_dialog(parent=None, cancel_text: str | None = None) -> SignInD
         cancel_text=cancel_text or tr("admin.auth.quit"),
         parent=parent,
         extra_action=(tr("signin.forgot"), _offer_recovery),
+        server_line=True,
     )
+
+    def server_changed(_url: str) -> None:
+        # The new server may have no root yet: close, so sign_in() shows the first-run screen if so.
+        dialog.server_changed = True
+        dialog.reject()
+
+    dialog.server_line.changed.connect(server_changed)
+    return dialog
 
 
 def sign_in(parent=None, cancel_text: str | None = None) -> Session | None:
     """Run the right dialog and return the Session, or None if cancelled.
     Raises DataAccessError if the database can't be read at all. After a
-    "start over" from Forgot your PIN, the loop comes round to the
-    first-administrator screen."""
+    "start over" from Forgot your PIN, or after a server address was typed on
+    either screen, the loop comes round and shows the screen that fits now."""
     while True:
         if not account_repository.admin_exists():
             dialog = FirstAdminDialog(parent)
         else:
             dialog = admin_sign_in_dialog(parent, cancel_text=cancel_text)
         accepted = dialog.exec() == QDialog.Accepted
-        if not accepted and getattr(dialog, "erased", False):
+        if not accepted and (getattr(dialog, "erased", False) or getattr(dialog, "server_changed", False)):
             continue
         return dialog.session if accepted else None

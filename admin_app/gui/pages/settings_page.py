@@ -34,7 +34,7 @@ from admin_app.gui.components.store_settings_sections import (
 from admin_app.gui.components.styled_table import cell, styled_table
 from shared.i18n import LazyLabels, tr
 from admin_app.theme import CLASSICAL_PALETTE
-from database import account_repository
+from database import account_repository, employee_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import auth, current_session
 from shared.formatting import local_datetime_text
@@ -254,13 +254,16 @@ class SettingsPage(AdminPage):
     def add_account(self) -> None:
         try:
             employees = account_repository.employees_without_account()
+            places = employee_repository.location_choices()
         except DATABASE_ERRORS as exc:
             QMessageBox.warning(self, tr("admin.settings.load_employees_failed"), str(exc))
             return
-        popup = AddAccountPopup(employees, self)
+        popup = AddAccountPopup(employees, self, places=places, taken=[a.badge_id for a in self._accounts])
         if popup.exec():
             badge, role, pin = popup.values()
-            if self._run(lambda: account_repository.create_account(badge, role, pin, by=current_session.actor())):
+            name, place = popup.new_person() or (None, None)
+            if self._run(lambda: account_repository.create_account(
+                    badge, role, pin, by=current_session.actor(), name=name, location_name=place)):
                 self.select(badge)
 
     def reset_pin(self) -> None:

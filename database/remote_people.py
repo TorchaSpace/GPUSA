@@ -179,9 +179,13 @@ def list_events(limit: int) -> list[dict]:
     return [{**row, "created_at": db_timestamp(row["created_at"])} for row in rows]
 
 
-def create_account(badge_id: str, role: str, pin: str) -> Account:
+def create_account(badge_id: str, role: str, pin: str, name: str | None = None,
+                   location_name: str | None = None) -> Account:
     badge = _badge(badge_id)
-    return _account(_call("POST", "/accounts", {"badge_id": badge, "role": role, "pin": pin},
+    body = {"badge_id": badge, "role": role, "pin": pin}
+    if name:  # a badge nobody has yet: the server adds the person with the account
+        body.update(name=name, location_name=location_name or "")
+    return _account(_call("POST", "/accounts", body,
                           errors={404: lambda: EmployeeNotFoundError(badge)}))
 
 

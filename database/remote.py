@@ -1,11 +1,11 @@
 """Server mode: send some repository calls to the cloud API instead of SQLite.
 
-Off by default, so every app works exactly as before on its local
-``shared_backend.db``. Admin > Server (test) switches it on after signing in
-to the server (``use_server(client)``); from then on, in that Admin process
-only, the functions that have a server version (see database/remote_products.py)
-read and write the server, and the rest stay local. Switching it off
-(``use_server(None)``) or restarting the app goes back to local.
+Off while this computer has no server address, so every app then works on its
+local ``shared_backend.db``. With an address (found on the network at start-up,
+see database/server_discovery.py, or typed at sign-in) the sign-in itself goes
+to the server and switches this on (``use_server(client)``); from then on the
+functions that have a server version read and write the server. Signing out
+(``use_server(None)``) switches it off until the next sign-in.
 
 This module is the only place in database/ that talks to the network. Server
 answers come back as the same DataAccessError subclasses the GUI already

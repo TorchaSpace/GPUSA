@@ -286,6 +286,35 @@ def test_add_account_popup_asks_type_badge_and_pin_only(qapp):
     assert popup.values() == ("B-9", "depot_manager", "739184")
 
 
+def test_add_account_popup_adds_a_new_person_in_place(qapp):
+    from admin_app.gui.components.account_form_popup import AddAccountPopup
+
+    popup = AddAccountPopup([("B-9", "Selin")], places={"Warehouse": ["Main"], "Dealership": []}, taken=["A-1"])
+    popup.show()
+    for known in ("b-9", "A-1", ""):
+        popup.badge.setText(known)
+        assert not popup.is_new_person() and popup.name.isHidden() and popup.new_person() is None
+    popup.badge.setText("D-7")  # nobody has this badge: name and place appear in the same popup
+    popup.role.setCurrentIndex(popup.role.findData("depot_manager"))
+    assert not popup.name.isHidden() and not popup.place.isHidden() and popup.place.currentText() == "Main"
+    popup.pin.setText("739184")
+    popup.pin_again.setText("739184")
+    popup._try_accept()
+    assert popup.result() == 0 and "name" in popup.error.text()
+    popup.name.setText(" Deniz  Ak ")
+    popup.role.setCurrentIndex(popup.role.findData("cashier"))  # no dealership exists yet
+    popup._try_accept()
+    assert popup.result() == 0 and "dealership" in popup.error.text().lower()
+    popup.role.setCurrentIndex(popup.role.findData("admin"))  # an Admin needs no place
+    assert popup.place.isHidden()
+    popup.pin.setText("73918462")
+    popup.pin_again.setText("73918462")
+    popup._try_accept()
+    assert popup.result() == 1 and popup.new_person() == ("Deniz Ak", "")
+    popup.close()
+    popup.deleteLater()
+
+
 def test_add_account_popup_needs_a_badge(qapp):
     from admin_app.gui.components.account_form_popup import AddAccountPopup
 

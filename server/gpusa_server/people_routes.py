@@ -582,6 +582,37 @@ class AccountIn(BaseModel):
     badge_id: str = Field(max_length=64)
     role: str = Field(max_length=40)
     pin: str = Field(max_length=64)
+    # With a name, a badge nobody has yet adds the person in the same step (an existing badge ignores both).
+    name: str | None = Field(default=None, max_length=300)
+    location_name: str | None = Field(default=None, max_length=300)
+
+
+# The employee record of a person added together with their account: title, employee role, kind of place.
+# An Admin sits at head office like root; a depot manager / cashier belongs to a real warehouse / dealership.
+NEW_PERSON = {"admin": ("Administrator", "Management", "Warehouse"),
+              "depot_manager": ("Depot manager", "Management", "Warehouse"),
+              "cashier": ("Cashier", "Sales & service", "Dealership")}
+HEAD_OFFICE = "HQ"
+
+
+def _add_person(conn, badge: str, body: AccountIn):
+    title, employee_role, location_type = NEW_PERSON[body.role]
+    name, location = _squash(body.name), _squash(body.location_name)
+    if not badge:
+        raise _fail(422, "A badge ID is required.")
+    if len(badge) > MAX_BADGE:
+        raise _fail(422, f"A badge ID can have at most {MAX_BADGE} characters.")
+    if len(name) > MAX_NAME:
+        raise _fail(422, f"A name can have at most {MAX_NAME} characters.")
+    if body.role == "admin":
+        location = HEAD_OFFICE
+    elif not location:
+        raise _fail(422, "A location is required.")
+    elif problem := _location_problem(conn, location_type, location):
+        raise _fail(422, problem)
+    return conn.execute(
+        "INSERT INTO employees (badge_id, name, title, role, location_type, location_name) "
+        "VALUES (%s, %s, %s, %s, %s, %s) RETURNING *", (badge, name, title, employee_role, location_type, location)).fetchone()
 
 
 class PinIn(BaseModel):
@@ -641,7 +672,11 @@ def create_account(body: AccountIn, request: Request, session: Session = Depends
     pin_hash = security.hash_pin(body.pin)
 
     def work(conn):
-        employee = _need_employee(conn, body.badge_id, lock=True)
+        employee = _find_employee(conn, body.badge_id, lock=True)
+        if employee is None and _squash(body.name):
+            employee = _add_person(conn, _badge(body.badge_id), body)
+        if employee is None:
+            raise _fail(404, f"No employee with badge {_badge(body.badge_id)}.")
         if not employee["is_active"]:
             raise _fail(409, f"{employee['badge_id']} is switched off; switch them on first.")
         if conn.execute("SELECT 1 FROM accounts WHERE employee_id = %s", (employee["id"],)).fetchone():

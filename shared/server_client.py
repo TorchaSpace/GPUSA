@@ -1,7 +1,7 @@
 """A small client for the cloud API (server/), standard library only, no Qt.
 
-Used by the Admin "Server (test)" page, and by database/remote.py when that
-page switches "server mode" on. Keeps the sign-in token in memory only
+Used by database/remote.py (every sign-in on a computer that has a server
+address) and by the Admin "Server" page. Keeps the sign-in token in memory only
 (never on disk).
 """
 
