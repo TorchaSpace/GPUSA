@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 from admin_app.theme import CLASSICAL_PALETTE, FONT_HEADING_CSS
 from database import account_repository
 from database.connection import ERASE_CONFIRM_WORDS, erase_all_data, erase_confirmed
-from database.exceptions import DATABASE_ERRORS, DataAccessError
+from database.exceptions import DATABASE_ERRORS, DataAccessError, localized_auth
 from shared import auth, paths, security_question
 from shared.i18n import tr
 from shared.auth import Session
@@ -490,16 +490,40 @@ def show_new_recovery_code(session: Session, parent=None) -> str | None:
     return code
 
 
+ROOT, IAM = "root", "iam"
+
+
+def sign_in_as(kind: str, badge: str, pin: str) -> Session:
+    """Admin's two doors, as on AWS: the root user signs in as "Root user", everyone else as "IAM user".
+    The badge and PIN are checked as always; the right ones at the wrong door are sent to the other door
+    (and signed out again), so root is never used by habit where an IAM account was meant."""
+    session = account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name())
+    if session.is_root != (kind == ROOT):
+        try:
+            account_repository.sign_out(session)
+        except DATABASE_ERRORS:
+            pass
+        raise localized_auth("err.sign_in_as_root" if session.is_root else "err.sign_in_as_iam")
+    try:
+        paths.set_admin_sign_in_kind(kind)  # the screen opens on this next time
+    except OSError:
+        pass
+    return session
+
+
 def admin_sign_in_dialog(parent=None, cancel_text: str | None = None) -> SignInDialog:
     dialog = SignInDialog(
         tr("admin.auth.sign_in_title"),
         tr("admin.auth.sign_in_sub"),
-        lambda badge, pin: account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name()),
+        lambda badge, pin: sign_in_as(dialog.choice, badge, pin),
         palette={**CLASSICAL_PALETTE, "on_accent": "#161514"},
         cancel_text=cancel_text or tr("admin.auth.quit"),
         parent=parent,
         extra_action=(tr("signin.forgot"), _offer_recovery),
         server_line=True,
+        choices=[(ROOT, tr("admin.auth.kind_root"), tr("admin.auth.kind_root_hint")),
+                 (IAM, tr("admin.auth.kind_iam"), tr("admin.auth.kind_iam_hint"))],
+        choice=paths.get_admin_sign_in_kind(),
     )
 
     def server_changed(_url: str) -> None:

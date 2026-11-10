@@ -45,6 +45,8 @@ class SignInDialog(QDialog):
         parent=None,
         extra_action: tuple[str, Callable[["SignInDialog"], None]] | None = None,
         server_line: bool = False,
+        choices: list[tuple[str, str, str]] | None = None,
+        choice: str | None = None,
     ):
         super().__init__(parent)
         p = palette
@@ -81,6 +83,30 @@ class SignInDialog(QDialog):
         sub.setStyleSheet(f"font-size: 13px; color: {p['text_secondary']};")
         layout.addWidget(sub)
         layout.addSpacing(6)
+
+        # Two kinds of sign-in on one screen (Admin: root user / IAM user). `choices` is
+        # [(key, label, what it is for)]; `self.choice` is the one picked when Sign in is pressed.
+        self.choice: str | None = None
+        self.choice_buttons: dict[str, QPushButton] = {}
+        self._choice_hints = {key: hint for key, _label, hint in choices or []}
+        self._choice_palette = p
+        if choices:
+            row = QHBoxLayout()
+            row.setSpacing(8)
+            for key, label, _hint in choices:
+                button = QPushButton(label)
+                button.setCheckable(True)
+                button.setAutoDefault(False)
+                button.setCursor(Qt.PointingHandCursor)
+                button.clicked.connect(lambda _checked=False, k=key: self.choose(k))
+                row.addWidget(button, stretch=1)
+                self.choice_buttons[key] = button
+            layout.addLayout(row)
+            self._choice_hint = QLabel()
+            self._choice_hint.setWordWrap(True)
+            self._choice_hint.setStyleSheet(f"font-size: 12px; color: {p['text_secondary']};")
+            layout.addWidget(self._choice_hint)
+            self.choose(choice if choice in self.choice_buttons else choices[0][0], focus=False)
 
         self.badge_input = QLineEdit()
         self.badge_input.setPlaceholderText(tr("signin.badge_placeholder"))
@@ -148,6 +174,22 @@ class SignInDialog(QDialog):
         self.badge_input.returnPressed.connect(self.pin_input.setFocus)
         self.pin_input.returnPressed.connect(self.try_sign_in)
         (self.pin_input if fixed_badge else self.badge_input).setFocus()
+
+    def choose(self, key: str, focus: bool = True) -> None:
+        p = self._choice_palette
+        self.choice = key
+        for name, button in self.choice_buttons.items():
+            picked = name == key
+            button.setChecked(picked)
+            button.setStyleSheet(
+                f"QPushButton {{ background-color: {p['accent'] if picked else 'transparent'}; "
+                f"color: {p.get('on_accent', '#ffffff') if picked else p['text_secondary']}; "
+                f"border: 1px solid {p['accent'] if picked else p['border']}; font-weight: {600 if picked else 400}; }}")
+        self._choice_hint.setText(self._choice_hints.get(key, ""))
+        if focus:
+            self.error_label.hide()
+            self.badge_input.setFocus()
+            self.adjustSize()
 
     @staticmethod
     def _caption(text: str, p: dict) -> QLabel:

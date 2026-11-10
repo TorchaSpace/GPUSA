@@ -94,6 +94,8 @@ def _no_server_address(monkeypatch):
     monkeypatch.setattr(paths, "set_server_url", lambda url: saved.__setitem__("url", (url or "").strip() or None))
     monkeypatch.setattr(paths, "get_server_pairing", lambda: saved.get("pairing"))
     monkeypatch.setattr(paths, "set_server_pairing", lambda pairing: saved.__setitem__("pairing", pairing))
+    monkeypatch.setattr(paths, "get_admin_sign_in_kind", lambda: saved.get("kind"))
+    monkeypatch.setattr(paths, "set_admin_sign_in_kind", lambda kind: saved.__setitem__("kind", kind))
 
 
 @pytest.fixture(autouse=True)

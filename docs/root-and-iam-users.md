@@ -22,6 +22,10 @@
   Admin). The Floor then stays open for everyone and works with that sign-in
   (`database/remote.keep_standing`): signing out of the Console, or a token older than half a day, goes
   back to it rather than to the computer's own empty data. Without a server the Floor opens as before.
+- Admin's sign-in screen has two doors, as on AWS: **Root user** and **IAM user**. The badge and PIN are
+  checked as always; the right ones at the wrong door are refused and sent to the other one
+  (`admin_app/gui/auth_flow.sign_in_as`). The screen opens on the door last used on that computer. Nothing
+  is remembered between runs: every app asks for badge + PIN each time it is opened.
 - Every root sign-in is logged as `root_sign_in`.
 - Upgrade: migration v13 / alembic 0003 makes the oldest active administrator root. Existing extra admins
   become IAM Admins.
