@@ -42,12 +42,24 @@ def _setup_code() -> str:
     return (os.environ.get("GPUSA_SETUP_CODE") or "").strip()
 
 
+def _on_this_pc(request: Request) -> bool:
+    """Whether the request comes from the server PC itself (and not through a proxy on it)."""
+    host = request.client.host if request.client else ""
+    forwarded = any(name in request.headers for name in ("x-forwarded-for", "forwarded", "x-real-ip"))
+    return host in ("127.0.0.1", "::1") and not forwarded
+
+
+NO_CODE = ("This server has no setup code, so its root user can only be created on the server PC itself. "
+           "Open Admin there, or put GPUSA_SETUP_CODE=<a code> in the server's .env, restart it and type that code.")
+
+
 @router.get("/status")
 def status(request: Request) -> dict:
     """Whether Admin should offer 'create the first administrator'. Anyone may ask; it says nothing else."""
     with db.connect(request.app.state.settings) as conn:
         needs = conn.execute(_ACTIVE_ADMINS).fetchone() is None
-    return {"needs_first_admin": needs, "needs_setup_code": needs and bool(_setup_code())}
+    return {"needs_first_admin": needs,
+            "needs_setup_code": needs and (bool(_setup_code()) or not _on_this_pc(request))}
 
 
 @router.post("/first-admin", status_code=201)
@@ -59,6 +71,9 @@ def first_admin(body: FirstAdminIn, request: Request) -> dict:
     if problem := pin_problem(body.pin, "admin"):
         raise _fail(422, problem)
     expected = _setup_code()
+    if not expected and not _on_this_pc(request):
+        # Without a code, whoever reaches the port first would own the system: only the server PC may.
+        raise _fail(403, NO_CODE)
     if expected and not hmac.compare_digest(expected.upper().encode(), (body.setup_code or "").strip().upper().encode()):
         raise _fail(403, "The setup code is wrong. It is printed where the server was started (GPUSA_SETUP_CODE in .env).")
     pin_hash = security.hash_pin(body.pin)

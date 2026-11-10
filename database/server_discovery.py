@@ -3,7 +3,9 @@
 - No server address saved yet: look for the one server on the network and remember it (config.json), so every
   app on this PC signs in to it and reads its database from then on. Nobody has to open a "server test" page.
 - An address is saved but nothing answers there any more (the server PC got a new IP): look again and, if the
-  server answers somewhere else, remember the new address.
+  server answers somewhere else AND proves it is the server this computer signed in to before
+  (database/server_identity.py), remember the new address. A computer that never signed in keeps its
+  address: there is nothing to tell the real server from an impostor by.
 
 An address given with the GPUSA_SERVER_URL environment variable is never second-guessed. Opt out of all of
 this with GPUSA_DISCOVERY=0 (a PC that must stay on its own local database file)."""
@@ -12,6 +14,7 @@ from __future__ import annotations
 
 import os
 
+from database import server_identity
 from shared import discovery, paths
 
 
@@ -29,6 +32,8 @@ def adopt_server() -> str | None:
     except OSError:
         return None
     if not url or url == saved:
+        return None
+    if saved and server_identity.proves_itself(url) is not True:
         return None
     paths.set_server_url(url)
     return url

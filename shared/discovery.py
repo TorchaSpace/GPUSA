@@ -32,7 +32,11 @@ def _local_broadcasts() -> list[str]:
 
 
 def is_gpusa(url: str, timeout: float = 2.0) -> bool:
-    """Whether a GPUSA API answers GET /health at `url`."""
+    """Whether a GPUSA API answers GET /health at `url` (never asked of an address the apps may not use)."""
+    from shared.server_client import insecure_problem
+
+    if insecure_problem(url):
+        return False
     try:
         with urllib.request.urlopen(url + "/health", timeout=timeout) as response:
             return json.loads(response.read().decode("utf-8")).get("status") == "ok"

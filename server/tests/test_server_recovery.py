@@ -129,6 +129,6 @@ def test_one_address_locking_itself_out_does_not_lock_the_others(client):
     for _ in range(5):
         reset(client, "code", "AAAA-AAAA-AAAA-AAAA")
     assert reset(client, "code", code).status_code == 423   # this address is locked
-    sql("UPDATE app_settings SET key = 'recovery.locked_until:10.9.9.9' WHERE key = 'recovery.locked_until:testclient'")
+    sql("UPDATE app_settings SET key = 'recovery.locked_until:10.9.9.9' WHERE key = 'recovery.locked_until:127.0.0.1'")
     sql("DELETE FROM app_settings WHERE key LIKE 'recovery.failed%%'")
     assert reset(client, "code", code).status_code == 200   # another address was never locked

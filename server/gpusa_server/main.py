@@ -16,6 +16,7 @@ from fastapi.responses import JSONResponse
 from . import __version__, db, discovery, migrate
 from .activity_routes import changes_router, router as activity_router
 from .auth_routes import router as auth_router
+from .identity_routes import router as identity_router
 from .config import Settings, load_settings
 from .product_routes import router as product_router
 from .read_routes import router as read_router
@@ -64,6 +65,7 @@ def create_app(settings: Settings | None = None) -> FastAPI:
         log.info("Refused a value the database cannot store: %s", type(exc).__name__)
         return JSONResponse(status_code=422, content={"detail": "A value in that request cannot be stored."})
     app.include_router(auth_router)
+    app.include_router(identity_router)
     app.include_router(product_router)
     app.include_router(read_router)
     app.include_router(stock_router)

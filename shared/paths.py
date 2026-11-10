@@ -236,3 +236,23 @@ def set_server_url(url: str | None) -> None:
     else:
         config.pop("server_url", None)
     _save_config(config)
+
+
+def get_server_pairing() -> dict | None:
+    """{"device": id, "key": hex} once this computer has signed in to its server (config.json
+    "server_pairing"), else None. With it the apps ask a server to prove itself before a PIN is sent or a
+    new address is believed (database/server_identity.py)."""
+    pairing = _load_config().get("server_pairing")
+    if isinstance(pairing, dict) and isinstance(pairing.get("device"), str) and isinstance(pairing.get("key"), str):
+        return {"device": pairing["device"], "key": pairing["key"]}
+    return None
+
+
+def set_server_pairing(pairing: dict | None) -> None:
+    """Save the pairing, or with None forget it (the next sign-in trusts the server it reaches afresh)."""
+    config = _load_config()
+    if pairing:
+        config["server_pairing"] = {"device": pairing["device"], "key": pairing["key"]}
+    else:
+        config.pop("server_pairing", None)
+    _save_config(config)

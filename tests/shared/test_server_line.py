@@ -49,14 +49,28 @@ def test_the_line_takes_an_address_only_if_a_server_answers(qapp, server):
     line.close()
 
 
-def test_an_address_from_the_environment_cannot_be_changed_here(qapp, monkeypatch):
+def test_an_address_from_the_environment_cannot_be_changed_here(qapp, server, monkeypatch):
     from shared.gui_kit.server_line import ServerLine
 
     monkeypatch.setenv(paths.SERVER_URL_ENV, "http://10.0.0.5:8000")
+    paths.set_server_pairing({"device": "ab" * 16, "key": "cd" * 32})
     line = ServerLine(PALETTE)
-    line.show()
-    pump(qapp)
-    assert line.toggle.isHidden()
+    line.address.setText(server.url)
+    assert line.connect_to() is False and "GPUSA_SERVER_URL" in line.message.text()
+    assert paths.get_server_pairing() is not None
+    # the same server typed again is "yes, this is our server": the next sign-in pairs afresh
+    monkeypatch.setenv(paths.SERVER_URL_ENV, server.url)
+    line.address.setText(server.url)
+    assert line.connect_to() is True and paths.get_server_pairing() is None
+    line.close()
+
+
+def test_a_public_address_must_be_https(qapp):
+    from shared.gui_kit.server_line import ServerLine
+
+    line = ServerLine(PALETTE)
+    line.address.setText("http://8.8.8.8:8000")
+    assert line.connect_to() is False and "https" in line.message.text() and paths.get_server_url() is None
     line.close()
 
 

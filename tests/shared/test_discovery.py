@@ -126,7 +126,10 @@ def test_any_pc_without_an_address_adopts_the_server(monkeypatch, saved):
 
 
 def test_a_server_that_moved_is_found_again(monkeypatch, saved):
+    from database import server_identity
+
     saved["url"] = "http://10.0.0.5:8000"
+    monkeypatch.setattr(server_identity, "proves_itself", lambda url: True)  # see tests/database/test_server_identity.py
     monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: False)
     monkeypatch.setattr(discovery, "find_server", lambda *a, **k: "http://10.0.0.9:8000")
     assert server_discovery.adopt_server() == "http://10.0.0.9:8000" and saved["url"] == "http://10.0.0.9:8000"
