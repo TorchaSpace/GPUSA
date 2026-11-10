@@ -421,7 +421,9 @@ def test_an_administrator_who_opened_the_depot_moves_between_depots_freely(qapp,
     other = "WH-02" if window.warehouse.code == "WH-01" else "WH-01"
     window._picked(_Picker(other))
     assert window.warehouse.code == other
-    window.close()
+    poller = window._low_stock_banner._poller
+    window.close()  # never shown, still stops polling
+    assert not poller.is_running()
 
 
 class _Picker:
@@ -470,3 +472,16 @@ def test_the_movement_log_keeps_the_product_readable(floor, qapp):
     floor._receive_panel.resize(760, 600)
     floor._receive_panel._fit_log_columns()
     assert not table.isColumnHidden(3)
+
+
+def test_a_closed_floor_stops_asking_for_stock_levels(floor, qapp):
+    """Its poller once outlived the window and asked whatever server the next test had switched on."""
+    poller = floor._low_stock_banner._poller
+    assert poller.is_running()
+    floor.close()
+    pump(qapp)
+    assert not poller.is_running()
+    floor.show()
+    pump(qapp)
+    assert floor._low_stock_banner._poller.is_running()
+

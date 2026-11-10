@@ -290,6 +290,10 @@ class MainWindow(QMainWindow):
 
         return header
 
+    def closeEvent(self, event) -> None:
+        self._low_stock_banner.stop()  # also for a Floor that was never shown: nothing keeps polling after it
+        super().closeEvent(event)
+
     def changeEvent(self, event) -> None:
         # Back from another window (a barcode reader types into whatever has focus):
         # land in the Inbound SKU box unless the person is already typing somewhere.
