@@ -40,6 +40,7 @@ from database import own_place, warehouse_repository
 from database.exceptions import DATABASE_ERRORS
 from database.stock_repository import critical_at
 from shared.gui_kit.live_updates import DataWatcher
+from shared.gui_kit.scan_catcher import ScanCatcher
 from depot_app.gui.components.industry_button import IndustryButton
 from depot_app.gui.checkin_panel import CheckInPanel
 from depot_app.gui.low_stock_banner import LowStockBanner
@@ -121,6 +122,9 @@ class MainWindow(QMainWindow):
         self._receive_panel.movement_logged.connect(self._low_stock_banner.reload)
         self._dispatch_panel.movement_logged.connect(self._low_stock_banner.reload)
         panels.addWidget(self._receive_panel, stretch=1)
+        # A barcode / QR reader works wherever the cursor is: a read typed outside every
+        # text box is received (Inbound), with the quantity / reference already on that form.
+        self._scan_catcher = ScanCatcher(self, self._receive_panel.scan)
         panels.addWidget(self._dispatch_panel, stretch=1)
         panels_widget = QWidget()
         panels_widget.setLayout(panels)

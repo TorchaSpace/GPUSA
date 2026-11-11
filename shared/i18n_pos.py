@@ -146,6 +146,11 @@ EN_POS: dict[str, str] = {
     "pos.receive.failed": "Couldn't complete: {error}",
     "pos.receive.done_report": "{number} received · report sent to the warehouse",
     "pos.receive.done": "{number} received into stock",
+    "pos.receive.scan_ticked": "{name} ticked ({checked} of {total})",
+    "pos.receive.scan_again": "{name} was already ticked ({checked} of {total})",
+    "pos.receive.scan_delivered": "{name} came with {number}, which is already received",
+    "pos.receive.scan_not_left": "{name} is in {number}, which hasn't left the warehouse yet",
+    "pos.receive.scan_unknown": "\"{code}\" isn't in any incoming shipment",
     # Asking the depot for stock (pos_app/gui/stock_requests.py)
     "pos.request.button": "Request stock",
     "pos.request.mine": "My requests ({n})",
@@ -348,6 +353,11 @@ TR_POS: dict[str, str] = {
     "pos.receive.failed": "Tamamlanamadı: {error}",
     "pos.receive.done_report": "{number} teslim alındı · rapor depoya gönderildi",
     "pos.receive.done": "{number} stoka alındı",
+    "pos.receive.scan_ticked": "{name} işaretlendi ({checked}/{total})",
+    "pos.receive.scan_again": "{name} zaten işaretliydi ({checked}/{total})",
+    "pos.receive.scan_delivered": "{name} {number} ile geldi, o sevkiyat zaten teslim alındı",
+    "pos.receive.scan_not_left": "{name} {number} içinde, o sevkiyat henüz depodan çıkmadı",
+    "pos.receive.scan_unknown": "\"{code}\" gelen sevkiyatların hiçbirinde yok",
     # Depodan stok isteme (pos_app/gui/stock_requests.py)
     "pos.request.button": "Stok iste",
     "pos.request.mine": "Taleplerim ({n})",

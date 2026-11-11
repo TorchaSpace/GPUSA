@@ -485,3 +485,24 @@ def test_a_closed_floor_stops_asking_for_stock_levels(floor, qapp):
     pump(qapp)
     assert floor._low_stock_banner._poller.is_running()
 
+
+
+def test_a_reader_scan_outside_the_boxes_is_received_here(floor, qapp):
+    """A barcode / QR read typed while the cursor is on a button lands in Inbound."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    floor._receive_panel._qty_input.setValue(3)
+    button = floor._receive_panel._submit_button
+    button.setFocus()
+    QTest.keyClicks(button, "box")
+    QTest.keyClick(button, Qt.Key_Return)
+    pump(qapp)
+    assert stock_repository.quantity_at(WH1, "BOX") == 3
+
+
+def test_a_gs1_qr_is_received_as_its_product(floor, qapp):
+    product_repository.create(Product("8691234510531", "Olive Oil", 10, 0, 0))
+    floor._receive_panel.scan("https://id.gs1.org/01/08691234510531")
+    pump(qapp)
+    assert stock_repository.quantity_at(WH1, "8691234510531") == 1

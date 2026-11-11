@@ -76,6 +76,7 @@ from pos_app.theme import FONT_HEADING_CSS, ORGANIC_PALETTE
 from shared.currency import format_money
 from shared.gui_kit.motion import Level, animations_enabled, blend, count_up, fade_in, stagger_in, toast
 from shared.i18n import plural, tr
+from shared.scan_code import candidates
 from shared.models import PAYMENT_METHODS, UNASSIGNED, LineItem, Product, StockLocation, Transaction
 from shared.search import fold
 from shared import current_session
@@ -435,11 +436,11 @@ class NewSalePage(QWidget):
 
     def _on_search_enter(self) -> None:
         """A barcode scanner types the code and presses Enter: the exact match goes straight into the sale."""
-        code = fold(self._search_input.text().strip())
-        if not code:
+        codes = {fold(c) for c in candidates(self._search_input.text())}
+        if not codes:
             return
         for product in self._all_products:
-            if product.is_active and fold(product.barcode) == code:
+            if product.is_active and fold(product.barcode) in codes:
                 if product.stock_quantity > 0:
                     self._add_to_cart(product)
                     self._search_input.clear()
@@ -803,14 +804,14 @@ class NewSalePage(QWidget):
         Reads this shelf afresh first (the keypad can be used from any page, before this one was ever
         loaded). Returns (True, "<name> added to sale") or (False, why not): unknown or deactivated
         code, nothing on the shelf, or the sale already holds all there is."""
-        wanted = fold(code.strip())
+        wanted = {fold(c) for c in candidates(code)}  # a QR may carry the code inside a GS1 link
         if not wanted:
             return False, tr("pos.keypad.unknown")
         try:
             self._all_products = stock_repository.products_at(self._location)
         except DATABASE_ERRORS:
             pass  # keep what we had: the lookup still works on the last list
-        product = next((p for p in self._all_products if p.is_active and fold(p.barcode) == wanted), None)
+        product = next((p for p in self._all_products if p.is_active and fold(p.barcode) in wanted), None)
         if product is None:
             return False, tr("pos.keypad.unknown")
         if product.stock_quantity <= 0:

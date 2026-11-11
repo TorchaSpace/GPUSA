@@ -42,6 +42,7 @@ from pos_app.theme import ORGANIC_PALETTE
 from shared import current_session
 from shared.auth import IDLE_LOCK_SECONDS, Session
 from shared.dealership_bootstrap import load_dealership_identity
+from shared.gui_kit.scan_catcher import ScanCatcher
 from shared.gui_kit.idle_lock import IdleLock
 from shared.gui_kit.live_updates import DataWatcher
 from shared.gui_kit.motion import animations_enabled, fade_in, toast
@@ -148,6 +149,8 @@ class MainWindow(QMainWindow):
 
         self._header.page_selected.connect(self._navigate)
         self._fill_dealership_choices()
+        # A barcode / QR reader works wherever the cursor is (not only in the sale's search box).
+        self._scan_catcher = ScanCatcher(self, self._on_scanned, enabled=self._scanning_here)
         self._navigate("home")
 
     # --- which shop ----------------------------------------------------------
@@ -267,6 +270,23 @@ class MainWindow(QMainWindow):
             return
         self._keypad.close_keypad()
         self._navigate("sale")
+        self.notify(message)
+
+    def _scanning_here(self) -> bool:
+        keypad = getattr(self, "_keypad", None)
+        return keypad is None or not keypad.isVisible()  # the open keypad takes the keys itself
+
+    def _on_scanned(self, code: str) -> None:
+        """A reader read `code` while the cursor was not in a text box. On Receive
+        Inventory it ticks that product's line; anywhere else it adds one to the sale."""
+        if self._stack.currentWidget() is self._receive_page:
+            _ok, message = self._receive_page.scan(code)
+            if message:
+                self.notify(message)
+            return
+        added, message = self._sale_page.add_by_barcode(code)
+        if added and self._stack.currentWidget() is not self._sale_page:
+            self._navigate("sale")
         self.notify(message)
 
     def resizeEvent(self, event) -> None:
