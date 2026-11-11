@@ -8,7 +8,7 @@
 #   1. Sunucuyu başlatır (server/scripts/start_server.sh: Docker, Postgres, .env, tablolar, API).
 #      Sunucu zaten açıksa dokunmaz.
 #   2. Masaüstü uygulamaları için Python ortamını hazırlar (<repo>/.venv, ilk seferde kurar).
-#   3. Uygulamaları bu sunucuya bağlı açar (GPUSA_SERVER_URL=http://127.0.0.1:PORT).
+#   3. Uygulamaları bu sunucuya bağlı açar (GPUSA_SERVER_URL=https://127.0.0.1:PORT).
 # Ctrl+C: uygulamaları ve bu pencerenin açtığı sunucuyu kapatır.
 #
 # Ortam değişkenleri (hepsi isteğe bağlı):
@@ -20,7 +20,7 @@
 set -u
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 PORT="${GPUSA_PORT:-8000}"
-URL="http://127.0.0.1:$PORT"
+if [ "${GPUSA_TLS:-1}" = "0" ]; then URL="http://127.0.0.1:$PORT"; else URL="https://127.0.0.1:$PORT"; fi
 APP_VENV="${GPUSA_APP_VENV:-$REPO_DIR/.venv}"
 PY="${GPUSA_PYTHON:-python3}"
 SERVER_LOG="$HOME/gpusa-server-start.log"
@@ -55,7 +55,11 @@ echo "GPUSA hepsi bir arada ($REPO_DIR)"
 
 # --- 1. Sunucu ---------------------------------------------------------------
 step "1/3  Sunucu ($URL)"
-if curl -fsS -m 3 "$URL/health" >/dev/null 2>&1; then
+if [ "${URL#https}" != "$URL" ] && ! curl -kfsS -m 3 "$URL/health" >/dev/null 2>&1 \
+        && curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    die "Eski (https'siz) sunucu açık: onu kapatıp (Ctrl+C) bunu yeniden çalıştır"
+fi
+if curl -kfsS -m 3 "$URL/health" >/dev/null 2>&1; then
     ok "Sunucu zaten çalışıyor, dokunulmadı"
 else
     if [ "${GPUSA_SKIP_DOCKER:-0}" != "1" ] && command -v docker >/dev/null 2>&1 && ! docker info >/dev/null 2>&1; then
@@ -68,7 +72,7 @@ else
     up=0
     # İlk seferde sunucu ortamını kurduğu için birkaç dakika sürebilir: süre sınırı yok, script ölürse durur.
     while kill -0 "$SERVER_PID" 2>/dev/null; do
-        curl -fsS -m 2 "$URL/health" >/dev/null 2>&1 && { up=1; break; }
+        curl -kfsS -m 2 "$URL/health" >/dev/null 2>&1 && { up=1; break; }
         sleep 1
     done
     if [ "$up" != "1" ]; then
@@ -77,7 +81,7 @@ else
     fi
     ok "Sunucu açıldı"
 fi
-dbh="$(curl -sS -m 5 "$URL/health/db" 2>/dev/null)"
+dbh="$(curl -ksS -m 5 "$URL/health/db" 2>/dev/null)"
 case "$dbh" in *'"database":"ok"'*) ok "Veritabanı cevap veriyor" ;; *) die "Veritabanı cevap vermiyor: $dbh" ;; esac
 
 # --- 2. Uygulama ortamı ------------------------------------------------------

@@ -58,7 +58,7 @@ def test_network_discovery_answers_the_question_and_only_that():
         ask.settimeout(2)
         ask.sendto(discovery.QUESTION, ("127.0.0.1", responder.port))
         answer = json.loads(ask.recvfrom(512)[0])
-        assert answer["gpusa"] == 1 and answer["port"] == 8123 and set(answer) == {"gpusa", "port", "version"}
+        assert answer["gpusa"] == 1 and answer["port"] == 8123 and set(answer) == {"gpusa", "port", "version", "tls"}
         ask.sendto(b"something else", ("127.0.0.1", responder.port))
         ask.settimeout(0.5)
         with pytest.raises(socket.timeout):
@@ -73,3 +73,56 @@ def test_discovery_can_be_switched_off(monkeypatch):
 
     monkeypatch.setenv("GPUSA_DISCOVERY", "0")
     assert discovery.start_from_environment() is None
+
+
+def test_the_discovery_reply_says_whether_the_api_speaks_https(monkeypatch):
+    import json
+
+    from gpusa_server import discovery
+
+    monkeypatch.delenv("GPUSA_TLS", raising=False)
+    assert json.loads(discovery.reply(8000))["tls"] == 0  # plain uvicorn: http
+    monkeypatch.setenv("GPUSA_TLS", "1")  # set by python -m gpusa_server.run
+    assert json.loads(discovery.reply(8000))["tls"] == 1
+
+
+def test_the_server_makes_its_own_certificate_once(tmp_path):
+    import os
+    import ssl
+
+    pytest.importorskip("cryptography")
+    from gpusa_server import tls
+
+    cert, key, made = tls.ensure_certificate(tmp_path / "tls")
+    assert made and cert.is_file() and key.is_file()
+    assert (os.stat(key).st_mode & 0o077) == 0  # the key is the owner's alone
+    fingerprint = tls.fingerprint(cert)
+    assert len(fingerprint.split(":")) == 32
+    # kept: a new one on every start would make every computer type the address again
+    assert tls.ensure_certificate(tmp_path / "tls") == (cert, key, False) and tls.fingerprint(cert) == fingerprint
+    # usable as it is for https, and as the one certificate a computer trusts (shared/tls.py)
+    server = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+    server.load_cert_chain(cert, key)
+    client = ssl.create_default_context(cadata=cert.read_text())
+    client.check_hostname = False
+
+
+def test_the_runner_starts_uvicorn_with_the_certificate(tmp_path, monkeypatch):
+    pytest.importorskip("cryptography")
+    import uvicorn
+
+    from gpusa_server import run
+
+    started = {}
+    monkeypatch.setattr(uvicorn, "run", lambda app, **kw: started.update(kw, app=app))
+    monkeypatch.setenv("GPUSA_TLS_DIR", str(tmp_path / "tls"))
+    monkeypatch.delenv("GPUSA_TLS", raising=False)
+    monkeypatch.delenv("GPUSA_PORT", raising=False)
+    run.main([])
+    assert started["app"] == "gpusa_server.main:app" and started["port"] == 8000 and started["host"] == "0.0.0.0"
+    assert started["ssl_certfile"].endswith("cert.pem") and started["ssl_keyfile"].endswith("key.pem")
+    assert os.environ["GPUSA_TLS"] == "1"
+    started.clear()
+    monkeypatch.setenv("GPUSA_TLS", "0")
+    run.main(["--port", "9000"])
+    assert started["port"] == 9000 and "ssl_certfile" not in started and os.environ["GPUSA_TLS"] == "0"

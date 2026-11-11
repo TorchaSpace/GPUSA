@@ -35,5 +35,5 @@ def adopt_server() -> str | None:
         return None
     if saved and server_identity.proves_itself(url) is not True:
         return None
-    paths.set_server_url(url)
+    discovery.save_server(url, typed=False)
     return url

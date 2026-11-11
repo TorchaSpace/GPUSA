@@ -54,7 +54,8 @@ sudo systemctl start docker      # bir kere 'sudo systemctl enable docker' derse
 docker start gpusa-db
 cd server
 env (grep -v '^#' .env) .venv/bin/alembic upgrade head      # bash'te: env $(grep -v '^#' .env) ...
-.venv/bin/uvicorn gpusa_server.main:app --env-file .env --host 0.0.0.0 --port 8000
+.venv/bin/pip install -r requirements.txt     # https için yeni paket (cryptography); bir kere yeter
+.venv/bin/python -m gpusa_server.run --env-file .env      # https, sertifikayı ilk seferde kendisi yapar (server/tls/)
 
 # 2. Uygulama ortamı (sadece ilk sefer)
 cd ~/GPUSA
@@ -62,13 +63,15 @@ python -m venv .venv
 .venv/bin/pip install -r requirements.txt
 
 # 3. Uygulamalar (her biri ayrı sekme)
-env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m admin_app.main
-env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m pos_app.main
-env GPUSA_SERVER_URL=http://127.0.0.1:8000 .venv/bin/python -m depot_app.main
+env GPUSA_SERVER_URL=https://127.0.0.1:8000 .venv/bin/python -m admin_app.main
+env GPUSA_SERVER_URL=https://127.0.0.1:8000 .venv/bin/python -m pos_app.main
+env GPUSA_SERVER_URL=https://127.0.0.1:8000 .venv/bin/python -m depot_app.main
 ```
 
 Girişte sunucudaki rozet ve PIN kullanılır. Sunucuda hiç yönetici yoksa Admin ilk açılışta "root kullanıcıyı oluştur" ekranını gösterir (rozet B-001 hazır gelir) (terminal gerekmez); bir yönetici olunca bu kapı kapanır, sonrakiler Admin içinden (Çalışanlar, Ayarlar) ya da `python -m gpusa_server.create_admin` ile açılır.
-Başka bilgisayarlar aynı adresi PC'nin IP'siyle kullanır (`http://192.168.x.x:8000`); aynı ağdaki
+Başka bilgisayarlar aynı adresi PC'nin IP'siyle kullanır (`https://IP:8000`, okul/iş ağındaki 144.x gibi genel IP'lerde de çalışır).
+Sunucu kendi sertifikasını yapar; her bilgisayar ilk bağlantıda onu hatırlar ve sonra yalnız onu kabul eder.
+`server/tls/` klasörünü silme: silinirse yeni sertifika olur ve her bilgisayarda adresi yeniden yazmak gerekir. Aynı ağdaki
 uygulamalar sunucuyu açılışta kendisi bulur, bulamazsa giriş ekranındaki "Sunucu adresini gir" kutusuna yazılır. Qt "libEGL / xcb" hatasıyla kapanırsa (CachyOS/Arch):
 `sudo pacman -S --needed xcb-util-cursor libglvnd mesa libxkbcommon-x11`.
 

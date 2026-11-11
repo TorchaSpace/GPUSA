@@ -24,7 +24,8 @@ from database import remote
 from database.exceptions import DATABASE_ERRORS
 from shared import auth, current_session, discovery, paths
 from shared.i18n import tr
-from shared.server_client import ServerClient, ServerError, insecure_problem, normalize_url
+from shared.gui_kit.server_line import why_not
+from shared.server_client import ServerClient, ServerError, normalize_url
 
 COUNTS = (("products", "/products"), ("dealerships", "/dealerships"), ("warehouses", "/warehouses"),
           ("employees", "/employees"), ("accounts", "/accounts"))
@@ -204,15 +205,14 @@ class ServerPage(AdminPage):
     def save_address(self) -> bool:
         """Save the typed address for every app on this computer, once a GPUSA server answers there. An
         empty box takes this computer off the server (back to its own data file). Used from the next start."""
-        url = normalize_url(self.address_edit.text())
-        if url and not discovery.is_gpusa(url, 4.0):
-            self._say(tr("server.line.insecure") if insecure_problem(url)
-                      else tr("server.line.no_answer").format(url=url), problem=True)
+        typed = normalize_url(self.address_edit.text())
+        url = discovery.reach(typed, 4.0) if typed else ""
+        if typed and not url:
+            self._say(why_not(typed), problem=True)
             return False
         if not url and not paths.get_server_url():
             return False
-        paths.set_server_url(url or None)
-        paths.set_server_pairing(None)  # typed on purpose: the next sign-in pairs with that server
+        discovery.save_server(url or None, typed=True)  # typed on purpose: the next sign-in pairs with that server
         self.address_edit.clear()
         self._say(tr("admin.server.saved").format(url=url) if url else tr("admin.server.cleared"))
         self.restart_button.show()

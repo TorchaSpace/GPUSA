@@ -22,8 +22,11 @@ DEFAULT_PORT = 47808
 QUESTION = b"GPUSA-DISCOVER?"
 
 
-def reply(http_port: int) -> bytes:
-    return json.dumps({"gpusa": 1, "port": int(http_port), "version": __version__}).encode("utf-8")
+def reply(http_port: int, tls: bool | None = None) -> bytes:
+    """`tls`: the API speaks https (started with gpusa_server.run); None reads GPUSA_TLS."""
+    if tls is None:
+        tls = (os.environ.get("GPUSA_TLS") or "").strip() == "1"
+    return json.dumps({"gpusa": 1, "port": int(http_port), "version": __version__, "tls": 1 if tls else 0}).encode("utf-8")
 
 
 class Responder:

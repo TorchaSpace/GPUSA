@@ -104,3 +104,24 @@ def test_first_run_offers_the_root_badge_and_follows_a_typed_server(qapp, server
     monkeypatch.setattr(auth_flow.QDialog, "exec", run)
     assert auth_flow.sign_in() is None
     assert shown == ["FirstAdminDialog", "SignInDialog"] and paths.get_server_url() == server.url
+
+
+def test_https_typed_for_the_server_pc_connects_over_http(qapp, server):
+    from shared.gui_kit.server_line import ServerLine
+
+    line = ServerLine(PALETTE)
+    line.address.setText(server.url.replace("http://", "https://"))
+    assert line.connect_to() is True and paths.get_server_url() == server.url
+    line.close()
+
+
+def test_an_internet_server_without_https_is_explained(qapp, monkeypatch):
+    from shared import discovery
+    from shared.gui_kit.server_line import ServerLine
+
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout, context=None: url.startswith("http://"))
+    line = ServerLine(PALETTE)
+    line.address.setText("https://8.8.8.8:8000")
+    assert line.connect_to() is False and paths.get_server_url() is None
+    assert "unencrypted" in line.message.text() and "192.168" in line.message.text()
+    line.close()

@@ -21,4 +21,4 @@ if [ "${GPUSA_SKIP_DOCKER:-0}" != "1" ]; then
     bash "$SCRIPT_DIR/backup_db.sh" --daily || echo "Yedek alınamadı (devam ediliyor)"
 fi
 "$VENV/bin/alembic" upgrade head
-exec "$VENV/bin/uvicorn" gpusa_server.main:app --host 0.0.0.0 --port "$PORT"
+exec "$VENV/bin/python" -m gpusa_server.run --host 0.0.0.0 --port "$PORT"   # https (GPUSA_TLS=0: http)

@@ -11,9 +11,12 @@ import ipaddress
 import json
 import os
 import socket
+import ssl
 import urllib.error
 import urllib.parse
 import urllib.request
+
+from shared import tls
 
 ALLOW_HTTP_ENV = "GPUSA_ALLOW_HTTP"
 _LOCAL_SUFFIXES = (".local", ".lan", ".internal", ".home.arpa", ".ts.net", ".localhost")
@@ -81,7 +84,7 @@ class ServerClient:
         if self.token:
             request.add_header("Authorization", f"Bearer {self.token}")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            with urllib.request.urlopen(request, timeout=self.timeout, context=tls.context_for(self.base_url)) as response:
                 raw = response.read().decode("utf-8")
                 return json.loads(raw) if raw.strip() else None  # 204 (deletes, PIN changes) has no body
         except urllib.error.HTTPError as exc:
@@ -95,7 +98,10 @@ class ServerClient:
             raise ServerError(detail, exc.code) from None
         except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
             reason = getattr(exc, "reason", exc)
-            if isinstance(reason, ConnectionRefusedError):  # "[Errno 61] Connection refused" means nothing to a cashier
+            if isinstance(reason, ssl.SSLCertVerificationError):
+                reason = ("the server's certificate is not the one this computer knows - if the server was "
+                          "reinstalled, type its address again")
+            elif isinstance(reason, ConnectionRefusedError):  # "[Errno 61] Connection refused" means nothing to a cashier
                 reason = "nothing answered at that address - is the server running?"
             elif isinstance(reason, (TimeoutError, socket.timeout)):
                 reason = "it did not answer in time - is it on, and on the same network?"
