@@ -4,7 +4,8 @@ name: Build & release
 # Pushing a version tag (git tag v0.1.0 && git push --tags) also builds the
 # Windows, macOS and Linux downloads and publishes them on the Releases page.
 # "Run workflow" on the Actions tab builds them without publishing (pick one
-# platform or all of them); the files are then attached to that run.
+# platform or all of them); the files are then attached to that run. Give it a
+# version (e.g. v0.3.8) and it tags the commit and publishes that release too.
 on:
   push:
     branches: [main]
@@ -17,6 +18,10 @@ on:
         type: choice
         default: all
         options: [all, linux, windows, macos]
+      release:
+        description: "Publish as this version (e.g. v0.3.8; needs platform all). Empty = just build."
+        type: string
+        default: ""
 
 permissions:
   contents: read
@@ -137,7 +142,7 @@ jobs:
   publish:
     name: Publish release
     needs: build
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || startsWith(inputs.release, 'v')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -150,3 +155,6 @@ jobs:
         with:
           files: release/*
           generate_release_notes: true
+          # A manual run with a version creates that tag on the commit it built.
+          tag_name: ${{ inputs.release || github.ref_name }}
+          target_commitish: ${{ github.sha }}
