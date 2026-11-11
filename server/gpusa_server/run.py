@@ -44,7 +44,8 @@ def main(argv: list[str] | None = None) -> None:
         os.environ[TLS_ENV] = "1"  # the discovery reply says https (gpusa_server/discovery.py)
     else:
         os.environ[TLS_ENV] = "0"
-    uvicorn.run("gpusa_server.main:app", host=args.host, port=port, **options)
+    # Apps keep their connection open between requests (no new TLS handshake per click); keep idle ones a while.
+    uvicorn.run("gpusa_server.main:app", host=args.host, port=port, timeout_keep_alive=60, **options)
 
 
 if __name__ == "__main__":
