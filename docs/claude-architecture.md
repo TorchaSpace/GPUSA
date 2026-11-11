@@ -148,7 +148,8 @@ Check-in is scoped to this depot's warehouse. Floor header shows shift A/B/C
   Admin Settings, or a POS sale in progress. Swap this class for a push channel when a server exists.
 - `activity_events` (schema.sql, no migration step): `database/activity_repository.record()` is called INSIDE
   the transaction of the action (sale, refund, day close, stock request, shipment steps, stock movements,
-  PO steps, account lockout) so an event exists iff the action committed; `stock_crossing()` adds low/out
+  PO steps, account lockout, ledger entries `ledger_entry`, hires `employee_added`, staff punches
+  `staff_check_in/out`) so an event exists iff the action committed; `stock_crossing()` adds low/out
   once per crossing. Severity info/notice/warning/critical; kind + `data_json` are rendered at display time by
   `shared/activity.py` with `activity.<kind>.title/.detail` i18n keys (EN+TR). Pruned after 30 days at Admin start.
 - Depot Floor: the header drop-down switches depot (`MainWindow.switch_warehouse` rebuilds the content for it and closes the old Console); `depot_app/gui/slide_alerts.py` slides in one card per new low/out event (max 4 on screen, rest queue).
@@ -165,6 +166,10 @@ admin exists; POS: cashier) → main window. DB errors at sign-in show a dialog 
 exit 1.
 
 ## Tests & CI
+
+- `server/tests/test_server_scenario.py` walks the whole business once (product → band → PO above band →
+  approve → Floor receipt by barcode → shipment → shop receipt 2 short → 3 cash + 3 card → cheque +
+  receivable → hires → punches) against PostgreSQL; extend it when a step of that story changes.
 
 - `python -m pytest -q` (set `QT_QPA_PLATFORM=offscreen` headless). ~100 test files
   under `tests/{database,shared,admin_app,depot_app,pos_app}` + `test_setup_wizards.py`.

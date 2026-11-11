@@ -157,3 +157,30 @@ def test_migration_v13_makes_the_oldest_active_admin_root(tmp_path):
     raw.commit()
     migrations.run_migrations(raw)
     assert raw.execute("SELECT employee_id FROM accounts WHERE is_root = 1").fetchall() == [(2,)]
+
+
+def test_the_shop_manager_gives_their_cashiers_a_till_pin(cashier):
+    from database import activity_repository
+    from database.exceptions import EmployeeNotFoundError
+    from shared.i18n import UserError
+
+    employee_repository.create(person(), place=SHOP)
+    with pytest.raises(UserError):   # a plain cashier (job: Sales & service) gives nobody a PIN
+        account_repository.create_till_account("P-1", "583920", cashier, SHOP)
+    manager = employee_repository.get_by_badge_id("C-1")
+    manager.role = "Management"
+    employee_repository.update(manager)
+    account = account_repository.create_till_account("p-1", "583920", cashier, SHOP)
+    assert (account.badge_id, account.role) == ("P-1", "cashier")
+    assert account_repository.authenticate("P-1", "583920", AREA_POS, "Till 1").role == "cashier"
+    with pytest.raises(UserError):   # once is enough
+        account_repository.create_till_account("P-1", "583920", cashier, SHOP)
+    dealership_repository.create(Dealership(code="MTR-01", name="Metro", region="Metro", city="Ankara"))
+    employee_repository.create(Employee("P-9", "Elsewhere", "Sales & service", "Dealership", "Metro"))
+    with pytest.raises(UserError):   # not this shop's person
+        account_repository.create_till_account("P-9", "583920", cashier, SHOP)
+    with pytest.raises(EmployeeNotFoundError):
+        account_repository.create_till_account("NOPE", "583920", cashier, SHOP)
+    with pytest.raises(ValueError):  # a weak PIN
+        account_repository.create_till_account("P-1", "1234", cashier, SHOP)
+    assert [e.kind for e in activity_repository.list_since(0)].count("till_account_added") == 1

@@ -19,7 +19,7 @@ from __future__ import annotations
 from datetime import date as _date
 from datetime import datetime, time, timedelta, timezone
 
-from database import employee_repository, remote, remote_people
+from database import activity_repository, employee_repository, remote, remote_people
 from database.connection import connection_scope
 from database.exceptions import (
     AlreadyCheckedInError,
@@ -102,6 +102,7 @@ def check_in(badge_id: str, note: str | None = None, *, warehouse_code: str | No
                 (employee_id, note),
             )
             new_id = cursor.lastrowid
+            activity_repository.staff_event(conn, "staff_check_in", employee_row)
         except Exception:
             conn.execute("ROLLBACK")
             raise
@@ -142,6 +143,7 @@ def check_out(badge_id: str, note: str | None = None, *, warehouse_code: str | N
                 (note, open_row["id"]),
             )
             record_id = open_row["id"]
+            activity_repository.staff_event(conn, "staff_check_out", employee_row)
         except Exception:
             conn.execute("ROLLBACK")
             raise

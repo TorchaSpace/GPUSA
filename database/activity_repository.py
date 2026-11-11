@@ -47,6 +47,23 @@ def record(conn: sqlite3.Connection, kind: str, *, severity: str = "info", sourc
         pass
 
 
+def staff_event(conn: sqlite3.Connection, kind: str, employee, *, actor: Actor | None = None,
+                severity: str = "info", **data) -> None:
+    """An event about a person at a depot or a shop (hired, checked in / out), placed at the warehouse or
+    dealership their record names (by code or name, any case)."""
+    location_type, where = employee["location_type"], (employee["location_name"] or "").strip()
+    table, kind_ = ("warehouses", "warehouse") if location_type == "Warehouse" else ("dealerships", "dealership")
+    try:
+        row = conn.execute(f"SELECT code, name FROM {table} WHERE upper(code) = upper(?) OR lower(name) = lower(?) "
+                           "LIMIT 1", (where, where)).fetchone()
+    except sqlite3.Error:
+        row = None
+    location = StockLocation(kind_, row["code"]) if row else None
+    record(conn, kind, severity=severity, source="pos" if location_type == "Dealership" else "depot",
+           location=location, location_name=None if row else (employee["location_name"] or None), actor=actor,
+           name=employee["name"], badge=employee["badge_id"], **data)
+
+
 def _name_of(conn: sqlite3.Connection, location: StockLocation | None) -> str | None:
     if location is None or location.is_unassigned:
         return None

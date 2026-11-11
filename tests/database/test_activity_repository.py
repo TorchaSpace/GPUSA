@@ -77,3 +77,43 @@ def test_old_events_are_pruned_and_new_ones_stay():
         conn.execute("UPDATE activity_events SET at = '2000-01-01 00:00:00' WHERE id = 1")
     assert activity_repository.prune(30) == 1
     assert [e.id for e in activity_repository.list_since(0)] == [2]
+
+
+def test_a_hire_and_the_days_punches_reach_the_feed():
+    """Admin hires nobody but watches: a person added at a shop, then their check-in and check-out."""
+    from database import attendance_repository, dealership_repository, employee_repository
+    from shared.models import Dealership, Employee
+    from shared.staff import DEALERSHIP, StaffPlace
+
+    dealership_repository.create(Dealership(code="CST-04", name="Coast", region="Coastal", city="Izmir"))
+    employee_repository.create(Employee("P-1", "Ayse", "Sales & service", "Dealership", "Coast",
+                                        national_id="10000000146"), place=StaffPlace(DEALERSHIP, "CST-04", "Coast"))
+    attendance_repository.check_in("p-1")
+    attendance_repository.check_out("P-1")
+    events = [e for e in activity_repository.list_since(0) if e.kind.startswith(("employee", "staff"))]
+    assert [e.kind for e in events] == ["employee_added", "staff_check_in", "staff_check_out"]
+    assert {(e.location_code, e.data["badge"]) for e in events} == {("CST-04", "P-1")}
+    assert events[0].severity == "notice"   # a hire rings Admin's bell; punches are in the feed only
+
+
+def test_a_cheque_and_a_receivable_reach_the_feed():
+    from datetime import date, timedelta
+
+    from database import ledger_repository, warehouse_repository
+    from shared.activity import describe
+    from shared.models import LedgerEntry, Warehouse
+    from tests.ledger_support import ACTOR, SignedIn
+
+    warehouse_repository.create(Warehouse(code="WH-01", name="Merkez"))
+    ledger = SignedIn(ledger_repository)
+    today = date.today()
+    ledger.create(LedgerEntry("out", "check", "CEK-1", "Vestel", today, today + timedelta(days=30), 20000,
+                              site="WH-01 · Merkez"))
+    ledger.create(LedgerEntry("in", "invoice", "FTR-1", "Bayi", today, today + timedelta(days=60), 50000,
+                              site="WH-01 · Merkez"))
+    events = [e for e in activity_repository.list_since(0) if e.kind == "ledger_entry"]
+    assert [(e.data["flow"], e.data["doc_type"], e.data["total"]) for e in events] == [
+        ("out", "check", 20000.0), ("in", "invoice", 50000.0)]
+    assert all(e.location_code == "WH-01" and e.severity == "notice" and ACTOR.badge_id in e.actor for e in events)
+    title, _detail = describe(events[0])
+    assert "CEK-1" in title and "Merkez" in title

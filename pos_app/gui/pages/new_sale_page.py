@@ -386,6 +386,9 @@ class NewSalePage(QWidget):
         self._rows: dict[str, _CartRow] = {}  # barcode -> its cart row widget
         self._last_total: float | None = None
         self._stagger_pending = False
+        # A card sale is recorded only once the card terminal (the POS device beside the till) has taken
+        # the money: the cashier says so here. Tests swap this for a plain answer.
+        self.card_terminal_approves = self._ask_card_terminal
 
         layout = QHBoxLayout(self)
         layout.setContentsMargins(20, 12, 0, 0)
@@ -904,6 +907,21 @@ class NewSalePage(QWidget):
             str(exc) + "\n\n" + tr_or("pos.cart_changed_body", "Nothing was charged. Check the updated cart and try again."),
         )
 
+    def _ask_card_terminal(self, total: float) -> bool:
+        """Charge `total` on the card terminal, then confirm here that it went through."""
+        box = QMessageBox(self)
+        box.setIcon(QMessageBox.Question)
+        box.setWindowTitle(tr("pos.sale.card_title"))
+        box.setText(tr("pos.sale.card_body").format(total=format_money(total, "$")))
+        approved = box.addButton(tr("pos.sale.card_approved"), QMessageBox.AcceptRole)
+        box.addButton(tr("pos.sale.card_declined"), QMessageBox.RejectRole)
+        box.setDefaultButton(approved)
+        box.exec()
+        answer = box.clickedButton() is approved
+        box.close()
+        box.deleteLater()
+        return answer
+
     def _checkout(self, payment_label: str) -> None:
         if not self._cart:
             QMessageBox.information(self, tr("pos.cart_empty"), tr("pos.sale.empty_body"))
@@ -963,6 +981,10 @@ class NewSalePage(QWidget):
             if problem:
                 QMessageBox.warning(self, tr_or("pos.till_off_title", "Till switched off"), problem)
                 return
+
+        if method == "card" and not self.card_terminal_approves(pending.total):
+            self._notify(tr("pos.sale.card_not_taken"))  # nothing recorded; the cart stays for another try
+            return
 
         try:
             finalized = complete_sale(pending, self._location, current_session.actor())

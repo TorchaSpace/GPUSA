@@ -31,7 +31,7 @@ import sqlite3
 from datetime import date
 
 from shared.i18n import UserError
-from database import authz, remote, remote_ledger
+from database import activity_repository, authz, remote, remote_ledger
 from database.connection import connection_scope
 from database.exceptions import (
     DataAccessError,
@@ -41,7 +41,7 @@ from database.exceptions import (
 )
 from shared.auth import AREA_ADMIN, AREA_DEPOT_CONSOLE, Actor, actor_label
 from shared.formatting import round_money
-from shared.models import LEDGER_DIRECTIONS, LEDGER_DOC_TYPES, LedgerAuditRecord, LedgerEntry
+from shared.models import LEDGER_DIRECTIONS, LEDGER_DOC_TYPES, LedgerAuditRecord, LedgerEntry, StockLocation
 from shared.warehousing import site_code
 
 
@@ -245,6 +245,12 @@ def create(entry: LedgerEntry, actor: Actor | None = None) -> LedgerEntry:
             raise
         row = _row(conn, cursor.lastrowid)
         _write_audit(conn, row["id"], actor, "created", None, _snapshot(row))
+        code = site_code(row["site"])
+        activity_repository.record(
+            conn, "ledger_entry", severity="notice", source="depot" if code else "admin",
+            location=StockLocation.warehouse(code) if code else None, actor=actor, doc_type=row["doc_type"],
+            flow=row["direction"], doc_no=row["doc_no"], counterparty=row["counterparty"],
+            total=float(row["amount"]), due=str(row["due_date"]))
         return row
 
     return _row_to_entry(_in_transaction(work))

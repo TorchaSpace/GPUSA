@@ -134,13 +134,23 @@ def _change(conn, kind: str, code: str, barcode: str, delta: int, *, change_tota
     return new
 
 
+_FEED_KINDS = {"receive": "stock_in", "dispatch": "stock_written_out", "count": "stock_count"}
+
+
 def _log(conn, kind: str, code: str, barcode: str, direction: str, quantity: int, *, reason: str,
          actor: str, note: str | None = None, reference: str | None = None, bin_code: str | None = None) -> dict:
-    return conn.execute(
+    row = conn.execute(
         "INSERT INTO stock_movements (product_barcode, movement_type, quantity, note, location_kind, "
         "location_code, reason, reference, handled_by, bin_code) "
         "VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s) RETURNING *",
         (barcode, direction, quantity, note, kind, code, reason, reference, actor, bin_code)).fetchone()
+    if reason in _FEED_KINDS:  # the depot's own in / out / count (not shipment legs): Admin's live feed, like the desktop
+        product = conn.execute("SELECT name FROM products WHERE barcode = %s", (barcode,)).fetchone()
+        activity.record(conn, _FEED_KINDS[reason], severity="info" if reason == "receive" else "notice",
+                        source="depot" if kind == "warehouse" else "admin", place=(kind, code), actor=actor,
+                        product=product["name"] if product else barcode, barcode=barcode, quantity=quantity,
+                        direction=direction, reference=reference or "")
+    return row
 
 
 def _write(request: Request, session: Session, roles: frozenset[str], work):

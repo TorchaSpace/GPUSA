@@ -43,6 +43,8 @@ def page(qapp, boxes, monkeypatch):
     stock_repository.transfer(UNASSIGNED, SHELF, "RICE", 10)
     import pos_app.gui.pages.new_sale_page as module
 
+    # The card terminal says yes unless a test says otherwise.
+    monkeypatch.setattr(module.NewSalePage, "_ask_card_terminal", lambda self, total: True)
     # No receipt printer in a test: finalize through the repository directly.
     monkeypatch.setattr(module, "complete_sale",
                         lambda pending, location, cashier=None: transaction_repository.finalize_transaction(
@@ -148,6 +150,28 @@ def test_the_payment_button_pressed_is_recorded_on_the_sale(page, button, stored
     with connection.connection_scope() as conn:
         latest = conn.execute("SELECT payment_method FROM transactions ORDER BY id DESC LIMIT 1").fetchone()
     assert latest["payment_method"] == stored
+
+
+def test_a_card_sale_is_recorded_only_once_the_terminal_approves(page, boxes):
+    asked = []
+    page._add_to_cart(_tile_for(page, "RICE"))
+    page.card_terminal_approves = lambda total: asked.append(total) or False
+    page._checkout("Card")
+    assert asked == [4.0]
+    assert transaction_repository.list_between(datetime(2000, 1, 1), datetime(2100, 1, 1)) == []
+    assert list(page._cart) == ["RICE"]  # still there for another try
+    page.card_terminal_approves = lambda total: True
+    page._checkout("Card")
+    assert page._cart == {}
+    with connection.connection_scope() as conn:
+        assert conn.execute("SELECT payment_method FROM transactions").fetchall()[0][0] == "card"
+
+
+def test_cash_never_asks_the_card_terminal(page):
+    page._add_to_cart(_tile_for(page, "RICE"))
+    page.card_terminal_approves = lambda total: pytest.fail("cash asked the card terminal")
+    page._checkout("Cash")
+    assert page._cart == {}
 
 
 # --- the database has the last word (finalize_transaction re-checks) ------------

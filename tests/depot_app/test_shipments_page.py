@@ -11,6 +11,7 @@ from tests.gui_support import pump, qapp  # noqa: F401  (qapp is a fixture)
 import database.connection as connection
 from database import dealership_repository, product_repository, shipment_repository as ships
 from database import stock_repository, warehouse_repository
+from shared.i18n import tr
 from shared.models import Dealership, Product, StockLocation, Warehouse
 
 WH = StockLocation.warehouse("WH-01")
@@ -44,6 +45,17 @@ def page(qapp):
 def test_only_active_dealerships_are_offered(page):
     codes = [page._dest_input.itemData(i) for i in range(page._dest_input.count())]
     assert codes == ["001"]
+
+
+def test_the_form_says_what_the_chosen_shop_has(page, qapp):
+    """The depot sees a dealership has none of a product before it sends some."""
+    page._product_input.setCurrentIndex(page._product_input.findData("BOX-2218"))
+    pump(qapp)
+    assert page.at_shop_label.text() == tr("depot.ship.at_shop_none").format(shop="001", qty=0)
+    stock_repository.transfer(WH, StockLocation.dealership("001"), "BOX-2218", 7)
+    page._product_input.setCurrentIndex(page._product_input.findData("PLT-4410"))
+    page._product_input.setCurrentIndex(page._product_input.findData("BOX-2218"))
+    assert page.at_shop_label.text() == tr("depot.ship.at_shop").format(shop="001", qty=7)
 
 
 def test_create_and_dispatch_from_the_form(page):

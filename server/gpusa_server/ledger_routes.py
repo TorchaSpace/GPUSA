@@ -24,7 +24,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
-from . import authz, db
+from . import activity, authz, db
 from .auth_routes import Session, current_session
 from .product_routes import MAX_AMOUNT
 from .shipment_routes import DEPOT_AREAS, DEPOT_ROLES
@@ -258,6 +258,11 @@ def create_entry(body: EntryIn, request: Request, session: Session = Depends(cur
         except psycopg.errors.UniqueViolation:
             raise _duplicate(f["doc_no"]) from None
         _audit(conn, session, row["id"], "created", None, _snapshot(row))
+        code = site_code(row["site"])
+        activity.record(conn, "ledger_entry", severity="notice", source="depot" if code else "admin",
+                        place=("warehouse", code) if code else None, actor=label, doc_type=row["doc_type"],
+                        flow=row["direction"], doc_no=row["doc_no"], counterparty=row["counterparty"],
+                        total=float(row["amount"]), due=str(row["due_date"]))
         return _out(row)
 
     return _write(request, session, DEPOT_ROLES, work)
