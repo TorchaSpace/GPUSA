@@ -8,7 +8,7 @@ from __future__ import annotations
 from datetime import datetime
 
 from shared.currency import format_money
-from shared.i18n import tr
+from shared.i18n import enum_label, tr
 from shared.models import ACTIVITY_SEVERITIES, ActivityEvent
 
 _MONEY_FIELDS = ("total", "expected", "counted", "difference")
@@ -33,6 +33,11 @@ def _values(event: ActivityEvent) -> _Safe:
     reference = event.data.get("reference")
     values["reference"] = reference or tr("activity.manual")
     values["direction"] = "+" if event.data.get("direction") == "receive" else "−"
+    if "doc_type" in event.data:  # a ledger entry: "Çek" / "Fatura", and which way the money goes
+        values["doc"] = enum_label("doc_type", event.data.get("doc_type"))
+        values["flow"] = tr("activity.flow.in" if event.data.get("flow") == "in" else "activity.flow.out")
+    if "job" in event.data:
+        values["job"] = enum_label("role", event.data.get("job"))
     return values
 
 

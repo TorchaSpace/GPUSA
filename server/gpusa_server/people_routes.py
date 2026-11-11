@@ -32,7 +32,7 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from psycopg.rows import dict_row
 from pydantic import BaseModel, Field
 
-from . import authz, db, security
+from . import activity, authz, db, security
 from .auth_routes import LOCK_MINUTES, MAX_FAILED_ATTEMPTS, Session, _log as _auth_log, current_session
 from .stock_routes import _clean, _fail, _write
 
@@ -231,6 +231,22 @@ def _location_problem(conn, location_type: str, location_name: str) -> str | Non
     return f"There is no {location_type.lower()} called {location_name!r}."
 
 
+def _feed_place(conn, location_type: str | None, location_name: str | None) -> tuple[str, str] | None:
+    """(kind, code) of the place an employee works at, for Admin's live feed; None when it isn't one we know."""
+    wanted = _loose(location_name)
+    for place in _places(conn).get(location_type or "", []):
+        if wanted in {_loose(place["code"]), _loose(place["name"]), _loose(f"{place['code']} · {place['name']}")}:
+            return ("warehouse" if location_type == "Warehouse" else "dealership", place["code"])
+    return None
+
+
+def _tell_admin(conn, session: Session, kind: str, employee, *, severity: str = "info", **data) -> None:
+    """One line in Admin's live feed about a person at a depot or a shop ("notice" also rings the bell)."""
+    activity.record(conn, kind, severity=severity, source="pos" if employee["location_type"] == "Dealership" else "depot",
+                    place=_feed_place(conn, employee["location_type"], employee["location_name"]),
+                    actor=authz.actor_label(session), name=employee["name"], badge=employee["badge_id"], **data)
+
+
 def _find_employee(conn, badge: str, *, lock: bool = False):
     return conn.execute(
         "SELECT * FROM employees WHERE upper(badge_id) = %s ORDER BY (badge_id = %s) DESC, id LIMIT 1"
@@ -296,7 +312,7 @@ def create_employee(body: EmployeeIn, request: Request, session: Session = Depen
         if problem := _location_problem(conn, body.location_type, fields["location_name"]):
             raise _fail(422, problem)
         try:
-            return conn.execute(
+            row = conn.execute(
                 "INSERT INTO employees (badge_id, name, title, role, location_type, location_name, is_active, "
                 f"national_id) VALUES (%s, %s, %s, %s, %s, %s, %s, %s) RETURNING {_EMPLOYEE_COLUMNS}",
                 (badge, fields["name"], fields["title"], body.role, body.location_type, fields["location_name"],
@@ -305,6 +321,8 @@ def create_employee(body: EmployeeIn, request: Request, session: Session = Depen
             if "national_id" in str(exc):
                 raise _fail(409, "This national ID is already recorded for another employee.") from None
             raise _fail(409, f"An employee with badge {badge} exists already.") from None
+        _tell_admin(conn, session, "employee_added", row, severity="notice", job=body.role)
+        return row
 
     return _write(request, session, STAFF_ROLES, work)
 
@@ -441,6 +459,7 @@ def check_in(body: PunchIn, request: Request, session: Session = Depends(current
             raise _fail(409, f"{employee['badge_id']} is already checked in.")
         row = conn.execute("INSERT INTO attendance_records (employee_id, note) VALUES (%s, %s) RETURNING id",
                            (employee["id"], _clean(body.note))).fetchone()
+        _tell_admin(conn, session, "staff_check_in", employee)
         return {"id": row["id"]}
 
     return _write(request, session, PUNCH_ROLES, work)
@@ -459,6 +478,7 @@ def check_out(body: PunchIn, request: Request, session: Session = Depends(curren
             raise _fail(409, f"{employee['badge_id']} is not checked in.")
         conn.execute("UPDATE attendance_records SET check_out_at = now(), note = COALESCE(%s, note) WHERE id = %s",
                      (_clean(body.note), open_row["id"]))
+        _tell_admin(conn, session, "staff_check_out", employee)
         return {"id": open_row["id"]}
 
     return _write(request, session, PUNCH_ROLES, work)
@@ -689,6 +709,43 @@ def create_account(body: AccountIn, request: Request, session: Session = Depends
         return _need_account(conn, employee["badge_id"])
 
     return _write_root(request, session, work)
+
+
+class TillAccountIn(BaseModel):
+    badge_id: str = Field(max_length=64)
+    pin: str = Field(max_length=64)
+
+
+SHOP_MANAGER_JOB = "Management"  # a till account whose employee record has this job runs the shop
+
+
+@router.post("/accounts/till", response_model=AccountOut, status_code=201)
+def create_till_account(body: TillAccountIn, request: Request, session: Session = Depends(current_session)) -> dict:
+    """The shop's manager (a cashier account whose job is Management) gives one of their own shop's people a
+    till sign-in (a cashier account). Admin hires nobody: it names the manager and watches this in its feed."""
+    authz.require(session, roles=frozenset({"cashier"}), areas=frozenset({"pos"}))
+    if problem := pin_problem(body.pin, "cashier"):
+        raise _fail(422, problem)
+    pin_hash = security.hash_pin(body.pin)
+
+    def work(conn):
+        me = _need_employee(conn, session.badge_id)
+        if me["role"] != SHOP_MANAGER_JOB:
+            raise _fail(403, "Only the shop's manager can give till PINs.")
+        employee = _need_employee(conn, body.badge_id, lock=True)
+        if not at_place(employee["location_type"], employee["location_name"], own_place(conn, session)):
+            raise _fail(403, f"{employee['badge_id']} is not one of this shop's staff.")
+        if not employee["is_active"]:
+            raise _fail(409, f"{employee['badge_id']} is switched off; switch them on first.")
+        if conn.execute("SELECT 1 FROM accounts WHERE employee_id = %s", (employee["id"],)).fetchone():
+            raise _fail(409, f"{employee['badge_id']} has an account already.")
+        conn.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (%s, 'cashier', %s)",
+                     (employee["id"], pin_hash))
+        _event(conn, session, "account_created", employee["badge_id"], "cashier")
+        _tell_admin(conn, session, "till_account_added", employee, severity="notice")
+        return _need_account(conn, employee["badge_id"])
+
+    return _write(request, session, frozenset({"cashier"}), work)
 
 
 def _set_pin(conn, row, pin_hash: str, session: Session, detail: str | None = None) -> None:

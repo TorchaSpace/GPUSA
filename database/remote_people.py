@@ -189,6 +189,12 @@ def create_account(badge_id: str, role: str, pin: str, name: str | None = None,
                           errors={404: lambda: EmployeeNotFoundError(badge)}))
 
 
+def create_till_account(badge_id: str, pin: str) -> Account:
+    badge = _badge(badge_id)
+    return _account(_call("POST", "/accounts/till", {"badge_id": badge, "pin": pin},
+                          errors={404: lambda: EmployeeNotFoundError(badge)}))
+
+
 def set_pin(badge_id: str, new_pin: str) -> None:
     badge = _badge(badge_id)
     _call("POST", remote.path("accounts", badge, "pin"), {"pin": new_pin},

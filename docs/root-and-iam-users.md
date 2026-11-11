@@ -12,6 +12,10 @@
 - **Admin** (IAM) opens the Admin dashboard, the depot console and the till with its own badge + PIN and
   sees every place; it has no account management and no server address. Depot managers and cashiers sign in
   to their own place only.
+- **The shop's manager gives till PINs.** A cashier account whose employee job is *Management* (the shop
+  manager root named) can give one of its own shop's people a cashier sign-in: till > Staff > "Give a till PIN"
+  (`POST /accounts/till`, `account_repository.create_till_account`). Nothing else about accounts; Admin sees it
+  in the live feed (`till_account_added`).
 - **Which shop, which depot.** A till or depot PC set up by the installer knows its place from its setup
   file. One started without it follows the person: the till opens at the cashier's own dealership and the
   Depot Floor at the opener's own warehouse (their employee record, `database/own_place.py`). Admin accounts

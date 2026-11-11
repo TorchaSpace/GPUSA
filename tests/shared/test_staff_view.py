@@ -154,3 +154,31 @@ def test_till_has_a_staff_page_for_its_dealership(qapp, monkeypatch):
     bare._watcher.stop()
     assert bare._staff_page.view is None
     bare.close()
+
+
+def test_the_shop_manager_gives_a_till_pin_from_the_staff_list(qapp):
+    from shared.auth import AREA_POS
+    from shared.gui_kit.staff_view import StaffView
+    from shared.staff import DEALERSHIP
+
+    shop = StaffPlace(DEALERSHIP, "CST-04", "Coast")
+    dealership_repository.create(Dealership(code="CST-04", name="Coast", region="Coastal", city="Izmir"))
+    employee_repository.create(Employee("S-1", "Ayse", "Management", "Dealership", "CST-04"))
+    employee_repository.create(Employee("S-2", "Cem", "Sales & service", "Dealership", "CST-04"))
+    account_repository.create_account("S-1", "cashier", "583920")
+    current_session.set(Session(1, "S-1", "Ayse", "cashier", "2026-11-11T06:00:00.000Z", "pos", "Till 1"))
+    try:
+        widget = StaffView(INDUSTRY_PALETTE, place=shop, can_manage=True, area=AREA_POS)
+        widget.show_tab(2)
+        assert widget.till_pin_button is not None
+        assert widget.give_till_pin("S-2", "1111") is False  # too easy: said, not raised
+        assert widget.people_message.text()
+        assert widget.give_till_pin("S-2", "694205") is True
+        assert account_repository.get("S-2").role == "cashier"
+        widget.close()
+    finally:
+        current_session.clear()
+
+
+def test_the_depot_has_no_till_pin_button(view):
+    assert view.till_pin_button is None

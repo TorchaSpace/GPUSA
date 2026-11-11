@@ -350,6 +350,41 @@ def create_account(badge_id: str, role: str, pin: str, by: Actor | None = None, 
     return get(badge_id)
 
 
+SHOP_MANAGER_JOB = "Management"  # a till account whose employee record has this job runs the shop
+
+
+def create_till_account(badge_id: str, pin: str, by: Actor, place) -> Account:
+    """The shop's manager (`by`: a cashier whose job is Management) gives one of their own shop's people
+    (`place`, a shared.staff.StaffPlace) a till sign-in. Admin names the manager and only watches this."""
+    if remote.active():
+        return remote_people.create_till_account(badge_id, pin)
+    badge_id = auth.normalize_badge_id(badge_id)
+    _check_pin(pin, "cashier")
+    pin_hash = auth.hash_pin(pin)
+
+    def run(conn):
+        authz.require_live_role(conn, by, auth.AREA_POS)
+        me = employee_repository.find_row(conn, by.badge_id)
+        if me is None or me["role"] != SHOP_MANAGER_JOB:
+            raise UserError("err.till_pin_manager_only")
+        employee = employee_repository.find_row(conn, badge_id)
+        if employee is None:
+            raise EmployeeNotFoundError(badge_id)
+        if not place.has(employee["location_type"], employee["location_name"]):
+            raise UserError("err.till_pin_other_shop", badge=employee["badge_id"])
+        if not employee["is_active"]:
+            raise UserError("err.account_employee_inactive", badge=employee["badge_id"])
+        if conn.execute("SELECT 1 FROM accounts WHERE employee_id = ?", (employee["id"],)).fetchone():
+            raise UserError("err.account_exists", badge=employee["badge_id"])
+        conn.execute("INSERT INTO accounts (employee_id, role, pin_hash) VALUES (?, 'cashier', ?)",
+                     (employee["id"], pin_hash))
+        _log(conn, "account_created", employee["badge_id"], detail=f"{auth.role_label('cashier')} · by {by.label}")
+        activity_repository.staff_event(conn, "till_account_added", employee, actor=by, severity="notice")
+        return employee["badge_id"]
+
+    return get(_write(run))
+
+
 def needs_setup_code() -> bool:
     """True when the server asks for its setup code before the first administrator can be made."""
     return bool(paths.get_server_url()) and remote_setup.needs_setup_code()

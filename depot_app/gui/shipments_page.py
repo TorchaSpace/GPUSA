@@ -203,7 +203,12 @@ class ShipmentsPage(QWidget):
             grid.addWidget(_kicker(caption), 1, column)
             grid.addWidget(widget, 2, column)
 
-        grid.addWidget(_kicker(tr("depot.ship.add_product")), 3, 0, 1, 4)
+        grid.addWidget(_kicker(tr("depot.ship.add_product")), 3, 0, 1, 2)
+        # What the chosen dealership has of the chosen product right now (0 = it has none: send some).
+        self.at_shop_label = QLabel()
+        self.at_shop_label.setObjectName("atShop")
+        self.at_shop_label.setStyleSheet(f"#atShop {{ color: {p['text_primary']}; font-size: 12px; font-weight: 600; }}")
+        grid.addWidget(self.at_shop_label, 3, 2, 1, 2, alignment=Qt.AlignRight | Qt.AlignVCenter)
         self._product_input = QComboBox()
         self._product_input.setStyleSheet(_input_style())
         self._qty_input = QSpinBox()
@@ -212,6 +217,8 @@ class ShipmentsPage(QWidget):
         add = IndustryButton(tr("depot.ship.add_line"), variant="ghost")
         add.clicked.connect(self._add_line)
         grid.addWidget(self._product_input, 4, 0, 1, 2)
+        self._dest_input.currentIndexChanged.connect(self._show_at_shop)
+        self._product_input.currentIndexChanged.connect(self._show_at_shop)
         grid.addWidget(self._qty_input, 4, 2)
         grid.addWidget(add, 4, 3)
 
@@ -257,6 +264,8 @@ class ShipmentsPage(QWidget):
         except DATABASE_ERRORS:
             return
         current_dest, current_product = self._dest_input.currentData(), self._product_input.currentData()
+        self._dest_input.blockSignals(True)
+        self._product_input.blockSignals(True)
         self._dest_input.clear()
         for dealership in dealerships:
             self._dest_input.addItem(f"{dealership.code} · {dealership.name} ({dealership.city})", dealership.code)
@@ -268,6 +277,9 @@ class ShipmentsPage(QWidget):
             index = combo.findData(value) if value is not None else -1
             if index >= 0:
                 combo.setCurrentIndex(index)
+        self._dest_input.blockSignals(False)
+        self._product_input.blockSignals(False)
+        self._show_at_shop()
         completer = QCompleter(carriers, self._carrier_input)
         completer.setCaseSensitivity(Qt.CaseInsensitive)
         self._carrier_input.setCompleter(completer)
@@ -276,6 +288,20 @@ class ShipmentsPage(QWidget):
         self._create_button.setEnabled(bool(dealerships and products))
         if not dealerships:
             self._show_form_error(tr("depot.ship.no_dealerships"))
+
+    def _show_at_shop(self, *_args) -> None:
+        """"At <shop> now: N" for the chosen destination and product, so the depot sees a shop that has none."""
+        code, barcode = self._dest_input.currentData(), self._product_input.currentData()
+        if code is None or barcode is None:
+            self.at_shop_label.setText("")
+            return
+        try:
+            have = stock_repository.quantity_at(StockLocation.dealership(code), barcode)
+        except DATABASE_ERRORS:
+            self.at_shop_label.setText("")
+            return
+        self.at_shop_label.setText(tr("depot.ship.at_shop_none" if have <= 0 else "depot.ship.at_shop").format(
+            shop=code, qty=have))
 
     def _add_line(self) -> None:
         barcode = self._product_input.currentData()

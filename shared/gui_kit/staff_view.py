@@ -35,6 +35,7 @@ from PySide6.QtWidgets import (
     QFormLayout,
     QHBoxLayout,
     QHeaderView,
+    QInputDialog,
     QLabel,
     QLineEdit,
     QPushButton,
@@ -45,11 +46,11 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
-from database import attendance_repository, employee_repository
+from database import account_repository, attendance_repository, employee_repository
 from database.exceptions import DATABASE_ERRORS
 from shared import current_session
 from shared import national_id as national_ids
-from shared.auth import normalize_badge_id, role_label
+from shared.auth import AREA_POS, normalize_badge_id, role_label
 from shared.i18n import enum_label, tr
 from shared.models import EMPLOYEE_ROLES, Employee
 from shared.staff import (
@@ -606,7 +607,11 @@ class StaffView(QWidget):
         self.people_count.setStyleSheet(self._css["strong"])
         bar.addWidget(self.people_count)
         bar.addStretch(1)
-        self.add_button = self.edit_button = None
+        self.add_button = self.edit_button = self.till_pin_button = None
+        if self._can_manage and self._area == AREA_POS:  # the shop's manager gives their cashiers a till PIN
+            self.till_pin_button = _button(tr("staff.people.till_pin"), self._css["ghost"])
+            self.till_pin_button.clicked.connect(self.till_pin_for_selected)
+            bar.addWidget(self.till_pin_button)
         if self._can_manage:
             self.edit_button = _button(tr("staff.people.edit"), self._css["ghost"])
             self.edit_button.clicked.connect(self.edit_selected)
@@ -702,6 +707,49 @@ class StaffView(QWidget):
             self.people_message.show()
             return
         self._run_form(self.form(employee))
+
+    def _ask_till_pin(self, name: str) -> str | None:
+        """The new PIN, typed twice; None when cancelled or the two differ (said in the message)."""
+        pin, ok = QInputDialog.getText(self, tr("staff.till_pin.title"), tr("staff.till_pin.ask").format(name=name),
+                                       QLineEdit.Password)
+        if not ok or not pin:
+            return None
+        again, ok = QInputDialog.getText(self, tr("staff.till_pin.title"), tr("staff.till_pin.again"),
+                                         QLineEdit.Password)
+        if not ok:
+            return None
+        if again != pin:
+            self._people_say(tr("staff.till_pin.mismatch"), ok=False)
+            return None
+        return pin
+
+    def _people_say(self, text: str, ok: bool) -> None:
+        p = self._p
+        color = p.get("alert_success", p["accent"]) if ok else p.get("alert_critical", "#b3261e")
+        self.people_message.setStyleSheet(f"color: {color}; font-size: 14px;")
+        self.people_message.setText(text)
+        self.people_message.show()
+
+    def give_till_pin(self, badge: str, pin: str) -> bool:
+        """Give `badge` (one of this shop's people) a cashier sign-in with `pin`. True when it worked."""
+        try:
+            account = account_repository.create_till_account(badge, pin, current_session.actor(), self._place)
+        except (ValueError, *DATABASE_ERRORS) as exc:
+            self._people_say(str(exc), ok=False)
+            return False
+        self._people_say(tr("staff.till_pin.done").format(name=account.name, badge=account.badge_id), ok=True)
+        self.changed.emit()
+        return True
+
+    def till_pin_for_selected(self) -> None:
+        row = self.people_table.currentRow()
+        if row < 0 or row >= len(self._people):
+            self._people_say(tr("staff.people.select_first"), ok=False)
+            return
+        person = self._people[row]
+        pin = self._ask_till_pin(person["name"])
+        if pin is not None:
+            self.give_till_pin(person["badge_id"], pin)
 
     # -- navigation / data ----------------------------------------------------------------
 

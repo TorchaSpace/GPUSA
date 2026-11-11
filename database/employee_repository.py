@@ -20,7 +20,7 @@ from __future__ import annotations
 import sqlite3
 
 from shared.i18n import UserError, enum_label, tr
-from database import audit_repository, authz, remote, remote_people
+from database import activity_repository, audit_repository, authz, remote, remote_people
 from database.connection import connection_scope
 from database.exceptions import (
     DuplicateBadgeIdError,
@@ -257,6 +257,9 @@ def create(employee: Employee, *, check_location: bool = False, place: StaffPlac
                 )
             except sqlite3.IntegrityError as exc:
                 raise DuplicateBadgeIdError(employee.badge_id) from exc
+            if place is not None:  # hired at a depot or a till: Admin watches it in the live feed
+                activity_repository.staff_event(conn, "employee_added", find_row(conn, employee.badge_id),
+                                                actor=by, severity="notice", job=employee.role)
         except Exception:
             conn.execute("ROLLBACK")
             raise
