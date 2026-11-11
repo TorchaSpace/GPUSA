@@ -37,6 +37,10 @@ Categories=Office;
 DESKTOP
 chmod +x "$ALL"
 gio set "$ALL" metadata::trusted true 2>/dev/null || true
+# Uygulamalar menüsüne de koy (masaüstü simgeleri silinse bile menüden "GPUSA" aranarak açılır).
+MENU="$HOME/.local/share/applications"
+mkdir -p "$MENU"
+cp "$FILE" "$ALL" "$MENU/" 2>/dev/null || true
 echo "Hazır: $FILE"
 echo "Hazır: $ALL"
 echo "İlk çift tıklamada 'Çalıştırmaya izin ver / Trust and Launch' sorarsa onayla."
