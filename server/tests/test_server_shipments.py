@@ -35,6 +35,7 @@ def stocked(client, h, qty=8):
 def test_plan_moves_nothing_and_merges_lines(client):
     h = login(client)
     stocked(client, h)
+    sql("DELETE FROM activity_events")  # the stock-in that set this up is in the feed too; watch only the plan
     r = plan(client, h, lines=(("a1", 2), ("A1", 1)))
     assert r.status_code == 201, r.text
     s = r.json()
