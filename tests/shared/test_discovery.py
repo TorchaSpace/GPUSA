@@ -46,7 +46,7 @@ class FakeServer:
 
 @pytest.fixture()
 def server(monkeypatch):
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: True)
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: True)
     s = FakeServer(8123)
     yield s
     s.close()
@@ -69,7 +69,7 @@ def test_nothing_answers_means_no_server():
 def test_a_reply_is_believed_only_if_health_agrees(monkeypatch):
     s = FakeServer(8123)
     try:
-        monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: False)
+        monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: False)
         assert discovery.find_servers(s.port, 0.6, ["127.0.0.1"]) == []
     finally:
         s.close()
@@ -78,7 +78,7 @@ def test_a_reply_is_believed_only_if_health_agrees(monkeypatch):
 @pytest.mark.parametrize("junk", [b"hello", b'{"gpusa": 1}', b'{"gpusa": 2, "port": 8000}',
                                   b'{"gpusa": 1, "port": 0}', b'{"gpusa": 1, "port": "x"}'])
 def test_garbage_answers_are_ignored(monkeypatch, junk):
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: True)
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: True)
     s = FakeServer(answer=junk)
     try:
         assert discovery.find_servers(s.port, 0.5, ["127.0.0.1"]) == []
@@ -87,7 +87,7 @@ def test_garbage_answers_are_ignored(monkeypatch, junk):
 
 
 def test_two_servers_are_not_guessed(monkeypatch):
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: True)
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: True)
     monkeypatch.setattr(discovery, "find_servers", lambda *a, **k: ["http://10.0.0.5:8000", "http://10.0.0.9:8000"])
     assert discovery.find_server() is None
 
@@ -116,7 +116,7 @@ def test_any_pc_without_an_address_adopts_the_server(monkeypatch, saved):
     # found: saved, and not searched again while that address answers
     assert server_discovery.adopt_server() == "http://10.0.0.5:8000"
     assert saved["url"] == "http://10.0.0.5:8000"
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: True)
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: True)
     monkeypatch.setattr(discovery, "find_server", lambda *a, **k: pytest.fail("searched again"))
     assert server_discovery.adopt_server() is None
     # nothing found: nothing saved
@@ -130,7 +130,7 @@ def test_a_server_that_moved_is_found_again(monkeypatch, saved):
 
     saved["url"] = "http://10.0.0.5:8000"
     monkeypatch.setattr(server_identity, "proves_itself", lambda url: True)  # see tests/database/test_server_identity.py
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: False)
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: False)
     monkeypatch.setattr(discovery, "find_server", lambda *a, **k: "http://10.0.0.9:8000")
     assert server_discovery.adopt_server() == "http://10.0.0.9:8000" and saved["url"] == "http://10.0.0.9:8000"
     # the server is simply off: the saved address stays
@@ -140,7 +140,7 @@ def test_a_server_that_moved_is_found_again(monkeypatch, saved):
 
 def test_an_address_from_the_environment_is_never_second_guessed(monkeypatch, saved):
     monkeypatch.setenv(paths.SERVER_URL_ENV, "http://10.0.0.5:8000")
-    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: pytest.fail("checked"))
+    monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0, **kw: pytest.fail("checked"))
     monkeypatch.setattr(discovery, "find_server", lambda *a, **k: pytest.fail("searched"))
     assert server_discovery.adopt_server() is None
 
@@ -181,14 +181,14 @@ def test_nothing_answering_reaches_nothing():
 
 def test_an_internet_https_address_is_never_turned_into_http(monkeypatch):
     asked = []
-    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout: asked.append(url) or False)
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout, context=None: asked.append(url) or False)
     assert discovery.reach("https://8.8.8.8:8000", 1.0) is None
     assert asked == ["https://8.8.8.8:8000"]
 
 
 def test_an_internet_server_on_plain_http_is_told_apart_from_no_server(monkeypatch):
     asked = []
-    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout: asked.append(url) or True)
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout, context=None: asked.append(url) or True)
     assert discovery.only_plain_http_on_internet("https://8.8.8.8:8000") is True
     assert discovery.only_plain_http_on_internet("8.8.8.8") is True
     assert asked == ["http://8.8.8.8:8000", "http://8.8.8.8:8000"]

@@ -119,7 +119,7 @@ def test_an_internet_server_without_https_is_explained(qapp, monkeypatch):
     from shared import discovery
     from shared.gui_kit.server_line import ServerLine
 
-    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout: url.startswith("http://"))
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout, context=None: url.startswith("http://"))
     line = ServerLine(PALETTE)
     line.address.setText("https://8.8.8.8:8000")
     assert line.connect_to() is False and paths.get_server_url() is None

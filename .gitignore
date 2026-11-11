@@ -60,3 +60,8 @@ Claude outputs/
 *.pem
 *.key
 secrets*
+
+# The server PC's own https certificate and key (server/gpusa_server/tls.py) - never committed.
+server/tls/
+# Throwaway self-signed certificates for the https tests (tests/server_support.py), not real secrets.
+!tests/data/tls/*/*.pem

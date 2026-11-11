@@ -20,7 +20,7 @@ if [ "${1:-}" = "remove" ]; then
 fi
 [ -f "$SERVER_DIR/.env" ] || { echo "$SERVER_DIR/.env yok; önce bash server/scripts/start_server.sh ile bir kez kur"; exit 1; }
 [ -x "$SERVER_DIR/.venv/bin/uvicorn" ] || { echo "$SERVER_DIR/.venv yok; önce bash server/scripts/start_server.sh ile bir kez kur"; exit 1; }
-if pgrep -u "$RUN_USER" -f "uvicorn gpusa_server" >/dev/null 2>&1; then
+if pgrep -u "$RUN_USER" -f "uvicorn gpusa_server|gpusa_server.run" >/dev/null 2>&1; then
     echo "UYARI: elle açılmış bir sunucu çalışıyor; kurulumdan sonra onu kapat (port çakışır)."
 fi
 

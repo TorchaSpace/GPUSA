@@ -115,8 +115,7 @@ class ServerLine(QWidget):
             self.message.show()
             self._resize_window()
             return False
-        paths.set_server_url(url)
-        paths.set_server_pairing(None)  # typed on purpose: the next sign-in pairs with this server
+        discovery.save_server(url, typed=True)  # typed on purpose: the next sign-in pairs with this server
         self.address.clear()
         self._form.hide()
         self.message.hide()

@@ -13,6 +13,8 @@ import time
 import urllib.parse
 import urllib.request
 
+from shared import paths, tls
+
 DEFAULT_PORT = 47808
 DEFAULT_API_PORT = 8000  # what the server scripts start uvicorn on
 QUESTION = b"GPUSA-DISCOVER?"
@@ -33,18 +35,20 @@ def _local_broadcasts() -> list[str]:
     return targets
 
 
-def is_gpusa(url: str, timeout: float = 2.0) -> bool:
-    """Whether a GPUSA API answers GET /health at `url` (never asked of an address the apps may not use)."""
+def is_gpusa(url: str, timeout: float = 2.0, trust_new: bool = False) -> bool:
+    """Whether a GPUSA API answers GET /health at `url` (never asked of an address the apps may not use).
+    An https server must show the certificate this computer remembers (shared/tls.py), unless `trust_new`:
+    looking for a server not remembered yet, where whatever it shows is remembered once it is chosen."""
     from shared.server_client import insecure_problem
 
     if insecure_problem(url):
         return False
-    return _health_ok(url, timeout)
+    return _health_ok(url, timeout, tls.probe_context(url) if trust_new else tls.context_for(url))
 
 
-def _health_ok(url: str, timeout: float) -> bool:
+def _health_ok(url: str, timeout: float, context=None) -> bool:
     try:
-        with urllib.request.urlopen(url + "/health", timeout=timeout) as response:
+        with urllib.request.urlopen(url + "/health", timeout=timeout, context=context) as response:
             return json.loads(response.read().decode("utf-8")).get("status") == "ok"
     except (OSError, ValueError, AttributeError):
         return False
@@ -72,10 +76,11 @@ def only_plain_http_on_internet(text: str, timeout: float = 4.0) -> bool:
 def reach(text: str, timeout: float = 4.0) -> str | None:
     """The address someone typed, as the apps will use it, once a GPUSA server answers there (else None).
 
-    People type what a browser taught them: "https://192.168.1.20:8000" for a server that speaks plain http
-    on the local network (the server PC has no certificate), or the IP without the port. Those are tried as
-    well - but plain http only where it is allowed anyway (a local address, see insecure_problem), so this
-    never turns an internet https address into an unencrypted one."""
+    People type an address without http(s)://, https:// for an older server that speaks plain http, or the
+    IP without the port. Those are tried as well: https first when no scheme was typed, plain http only
+    where it is allowed anyway (a local address, see insecure_problem), so an internet https address is never
+    turned into an unencrypted one. The server is new to this computer, so its certificate is not checked
+    here: save_server() remembers it."""
     from shared.server_client import insecure_problem, normalize_url
 
     url = normalize_url(text)
@@ -87,18 +92,34 @@ def reach(text: str, timeout: float = 4.0) -> str | None:
     except ValueError:
         return None
     candidates = [url]
+    if "://" not in text:
+        candidates.insert(0, urllib.parse.urlunsplit(("https",) + tuple(parts[1:])))
     if parts.scheme == "https":
         candidates.append(urllib.parse.urlunsplit(("http",) + tuple(parts[1:])))
     if not has_port and parts.hostname:
         candidates += [c.replace(parts.netloc, f"{parts.netloc}:{DEFAULT_API_PORT}", 1) for c in list(candidates)]
     for candidate in dict.fromkeys(candidates):
-        if not insecure_problem(candidate) and is_gpusa(candidate, timeout):
+        if not insecure_problem(candidate) and is_gpusa(candidate, timeout, trust_new=True):
             return candidate
     return None
 
 
+def save_server(url: str | None, typed: bool) -> None:
+    """Make `url` this computer's server (None: back to its own data file). typed=True (an address entered
+    on purpose) also forgets the pairing and the remembered certificate, so the next sign-in trusts that
+    server afresh; a server found again at a new address keeps both and must still prove itself."""
+    paths.set_server_url(url or None)
+    if typed:
+        paths.set_server_pairing(None)
+    if url:
+        tls.remember(url, replace=typed)
+    else:
+        paths.set_server_cert(None)
+
+
 def find_servers(port: int = DEFAULT_PORT, timeout: float = 1.5, targets: list[str] | None = None) -> list[str]:
-    """Every GPUSA API that answered, as 'http://ip:port' (empty when none)."""
+    """Every GPUSA API that answered, as 'https://ip:port' ('http://' from a server without a certificate),
+    empty when none."""
     found: dict[str, None] = {}
     sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     try:
@@ -123,17 +144,18 @@ def find_servers(port: int = DEFAULT_PORT, timeout: float = 1.5, targets: list[s
             except (ValueError, KeyError, TypeError):
                 continue
             if info.get("gpusa") == 1 and 0 < api_port < 65536:
-                found.setdefault(f"http://{ip}:{api_port}", None)
+                scheme = "https" if info.get("tls") else "http"
+                found.setdefault(f"{scheme}://{ip}:{api_port}", None)
     finally:
         sock.close()
-    return [url for url in found if is_gpusa(url, 2.0)]
+    return [url for url in found if is_gpusa(url, 2.0, trust_new=True)]
 
 
 def find_server(port: int = DEFAULT_PORT, timeout: float = 1.5, targets: list[str] | None = None) -> str | None:
     """The one server on the network, or None when there is none or there are several. A server on this
     very PC answers both on 127.0.0.1 and on the PC's own network address: that is one server, and it wins."""
     servers = find_servers(port, timeout, targets)
-    local = [url for url in servers if url.startswith("http://127.")]
+    local = [url for url in servers if url.split("://", 1)[-1].startswith("127.")]
     if local:
         return local[0]
     return servers[0] if len(servers) == 1 else None

@@ -212,8 +212,7 @@ class ServerPage(AdminPage):
             return False
         if not url and not paths.get_server_url():
             return False
-        paths.set_server_url(url or None)
-        paths.set_server_pairing(None)  # typed on purpose: the next sign-in pairs with that server
+        discovery.save_server(url or None, typed=True)  # typed on purpose: the next sign-in pairs with that server
         self.address_edit.clear()
         self._say(tr("admin.server.saved").format(url=url) if url else tr("admin.server.cleared"))
         self.restart_button.show()

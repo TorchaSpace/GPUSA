@@ -22,7 +22,8 @@ PRODUCTS = [
 class FakeServer:
     """Accepts badge B-001 / PIN 482915. `employees_allowed=False` answers 403 on /employees."""
 
-    def __init__(self, employees_allowed: bool = True, secret: str | None = None):
+    def __init__(self, employees_allowed: bool = True, secret: str | None = None, tls: str | None = None):
+        """`tls`: "a" or "b" serves https with the test certificate in tests/data/tls/<tls>/."""
         self.employees_allowed = employees_allowed
         self.secret = secret  # with one, the fake proves itself like server/gpusa_server/identity_routes.py
         self.requests: list[tuple[str, str]] = []
@@ -78,7 +79,18 @@ class FakeServer:
                 self._send(404, {"detail": "Not found"})
 
         self._httpd = HTTPServer(("127.0.0.1", 0), Handler)
-        self.url = f"http://127.0.0.1:{self._httpd.server_port}"
+        scheme = "http"
+        if tls:
+            import ssl
+            from pathlib import Path
+
+            folder = Path(__file__).parent / "data" / "tls" / tls
+            context = ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+            context.load_cert_chain(folder / "cert.pem", folder / "key.pem")
+            self._httpd.socket = context.wrap_socket(self._httpd.socket, server_side=True)
+            self.cert_pem = (folder / "cert.pem").read_text()
+            scheme = "https"
+        self.url = f"{scheme}://127.0.0.1:{self._httpd.server_port}"
         threading.Thread(target=self._httpd.serve_forever, daemon=True).start()
 
     def close(self):

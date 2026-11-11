@@ -248,6 +248,22 @@ def get_server_pairing() -> dict | None:
     return None
 
 
+def get_server_cert() -> str | None:
+    """The server certificate (PEM) remembered at the first https connection (config.json "server_cert"),
+    or None. Only that certificate is accepted afterwards (shared/tls.py)."""
+    pem = _load_config().get("server_cert")
+    return pem if isinstance(pem, str) and "BEGIN CERTIFICATE" in pem else None
+
+
+def set_server_cert(pem: str | None) -> None:
+    config = _load_config()
+    if pem:
+        config["server_cert"] = pem
+    else:
+        config.pop("server_cert", None)
+    _save_config(config)
+
+
 def set_server_pairing(pairing: dict | None) -> None:
     """Save the pairing, or with None forget it (the next sign-in trusts the server it reaches afresh)."""
     config = _load_config()

@@ -17,6 +17,8 @@ PORT="${GPUSA_PORT:-8000}"
 export GPUSA_PORT="$PORT"   # the API announces this port to PCs looking for the server
 VENV="${GPUSA_VENV:-$SERVER_DIR/.venv}"
 LOG="$HOME/gpusa-server.log"
+# https with the server's own certificate (gpusa_server/run.py); GPUSA_TLS=0 keeps the old plain http.
+if [ "${GPUSA_TLS:-1}" = "0" ]; then API="http://127.0.0.1:$PORT"; else API="https://127.0.0.1:$PORT"; fi
 UVICORN_PID=""
 FAILS=0
 
@@ -80,7 +82,7 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
-"$VENV/bin/python" -c "import fastapi, uvicorn, psycopg, alembic, jwt" 2>/dev/null || {
+"$VENV/bin/python" -c "import fastapi, uvicorn, psycopg, alembic, jwt, cryptography, dotenv" 2>/dev/null || {
     warn "Eksik paketler kuruluyor..."
     "$VENV/bin/pip" install -q -r "$SERVER_DIR/requirements.txt" || stop_here "pip install başarısız"
 }
@@ -120,17 +122,19 @@ fi
 
 # --- 4. API ------------------------------------------------------------------
 step "4/5  API ($PORT portu)"
-if curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+if curl -kfsS -m 3 "$API/health" >/dev/null 2>&1; then
     warn "API zaten çalışıyor (başka bir pencerede?), tekrar başlatılmadı"
+elif [ "${API#https}" != "$API" ] && curl -fsS -m 3 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1; then
+    stop_here "Eski (https'siz) sunucu açık: o pencerede Ctrl+C ile kapatıp bunu yeniden çalıştır"
 elif ss -tln 2>/dev/null | grep -q ":$PORT "; then
     stop_here "$PORT portunu başka bir program kullanıyor (ss -tlnp | grep $PORT)"
 else
     : > "$LOG"
-    "$VENV/bin/uvicorn" gpusa_server.main:app --host 0.0.0.0 --port "$PORT" >>"$LOG" 2>&1 &
+    "$VENV/bin/python" -m gpusa_server.run --host 0.0.0.0 --port "$PORT" >>"$LOG" 2>&1 &
     UVICORN_PID=$!
     up=0
     for _ in $(seq 1 30); do
-        curl -fsS -m 2 "http://127.0.0.1:$PORT/health" >/dev/null 2>&1 && { up=1; break; }
+        curl -kfsS -m 2 "$API/health" >/dev/null 2>&1 && { up=1; break; }
         kill -0 "$UVICORN_PID" 2>/dev/null || break
         sleep 1
     done
@@ -147,8 +151,8 @@ fi
 
 # --- 5. Kontroller -----------------------------------------------------------
 step "5/5  Kontroller"
-health="$(curl -fsS -m 3 "http://127.0.0.1:$PORT/health" 2>/dev/null)" && ok "/health: $health" || bad "/health cevap vermiyor"
-dbh="$(curl -sS -m 5 "http://127.0.0.1:$PORT/health/db" 2>/dev/null)"
+health="$(curl -kfsS -m 3 "$API/health" 2>/dev/null)" && ok "/health: $health" || bad "/health cevap vermiyor"
+dbh="$(curl -ksS -m 5 "$API/health/db" 2>/dev/null)"
 case "$dbh" in *'"database":"ok"'*) ok "/health/db: veritabanı ok" ;; *) bad "/health/db: $dbh" ;; esac
 if ! command -v ufw >/dev/null 2>&1 || ! ufw status 2>/dev/null | grep -q "Status: active"; then
     :
@@ -162,7 +166,11 @@ echo "(Yönetici oluştuktan sonra gerekmez; kimseyle paylaşma.)"
 echo
 echo "Başka bilgisayarlar sunucuyu kendisi bulur; bulamazsa giriş ekranındaki \"Sunucu adresini gir\" kutusuna şunlardan birini yaz:"
 ips="$(ip -4 -o addr show scope global 2>/dev/null | awk '{split($4,a,"/"); print a[1]}')"
-if [ -n "$ips" ]; then for ip in $ips; do echo "    $ip:$PORT"; done; else warn "IP bulunamadı (ip -4 addr)"; fi
+if [ -n "$ips" ]; then for ip in $ips; do echo "    ${API%%://*}://$ip:$PORT"; done; else warn "IP bulunamadı (ip -4 addr)"; fi
+if [ -f "$SERVER_DIR/tls/cert.pem" ] && [ "${API#https}" != "$API" ]; then
+    echo "Sertifika parmak izi (uygulamalar ilk bağlantıda bunu hatırlar; tls/ klasörünü silme):"
+    echo "    $("$VENV/bin/python" -c "from gpusa_server import tls; print(tls.fingerprint(tls.tls_dir() / 'cert.pem'))")"
+fi
 
 echo
 if [ "$FAILS" -gt 0 ]; then
