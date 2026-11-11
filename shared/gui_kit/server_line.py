@@ -20,6 +20,15 @@ from shared.i18n import tr
 from shared.server_client import insecure_problem, normalize_url
 
 
+def why_not(typed: str) -> str:
+    """What to tell someone whose typed address got no usable answer."""
+    if discovery.only_plain_http_on_internet(typed):
+        return tr("server.line.plain_http_internet")
+    if insecure_problem(typed):
+        return tr("server.line.insecure")
+    return tr("server.line.no_answer").format(url=typed)
+
+
 class ServerLine(QWidget):
     changed = Signal(str)  # the address just saved
 
@@ -86,17 +95,16 @@ class ServerLine(QWidget):
 
     def connect_to(self) -> bool:
         """Check the typed address and save it. False (with the reason shown) when no GPUSA server answers."""
-        url = normalize_url(self.address.text())
-        if not url:
+        typed = normalize_url(self.address.text())
+        if not typed:
             return False
         self.connect_button.setEnabled(False)
         try:
-            found = discovery.is_gpusa(url, 4.0)
+            url = discovery.reach(typed, 4.0)
         finally:
             self.connect_button.setEnabled(True)
-        if not found:
-            problem = insecure_problem(url)
-            self.message.setText(tr("server.line.insecure") if problem else tr("server.line.no_answer").format(url=url))
+        if not url:
+            self.message.setText(why_not(typed))
             self.message.show()
             self._resize_window()
             return False

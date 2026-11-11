@@ -1237,6 +1237,7 @@ EN_ADMIN = {
     "server.line.connect": "Connect",
     "server.line.env_fixed": "This computer's server address is fixed by GPUSA_SERVER_URL; it cannot be changed here.",
     "server.line.insecure": "That address is on the internet and not encrypted: PINs would travel in the open. Use its https:// address.",
+    "server.line.plain_http_internet": "The server at that address answers, but only unencrypted (http) and the address is on the internet, so PINs would travel in the open. On the same network, type the server PC's local address (e.g. 192.168.1.20:8000); from elsewhere it needs https or Tailscale.",
     "err.server_not_ours": "Something answers at the server address, but it is not the server this computer was connected to. No PIN was sent. If the server was reinstalled, the root user can confirm it with \"Change the address\" below.",
     "server.line.no_answer": "No GPUSA server answered at {url}. Check the address and that the server is running.",
     "admin.settings.new_person": "This badge is new: the person is added together with the account.",

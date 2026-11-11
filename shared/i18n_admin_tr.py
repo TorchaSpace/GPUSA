@@ -1292,6 +1292,7 @@ TR_ADMIN = {
     "server.line.connect": "Bağlan",
     "server.line.env_fixed": "Bu bilgisayarın sunucu adresi GPUSA_SERVER_URL ile sabitlenmiş; buradan değiştirilemez.",
     "server.line.insecure": "Bu adres internette ve şifresiz: PIN'ler açıkta gider. https:// adresini kullanın.",
+    "server.line.plain_http_internet": "Bu adresteki sunucu yanıt veriyor ama yalnız şifresiz (http) ve adres internette: PIN'ler açıkta gider. Aynı ağdaysanız sunucu PC'nin yerel adresini yazın (örn. 192.168.1.20:8000); başka yerden bağlanmak için https ya da Tailscale gerekir.",
     "err.server_not_ours": "Sunucu adresinde bir şey yanıt veriyor ama bu bilgisayarın bağlandığı sunucu değil. PIN gönderilmedi. Sunucu yeniden kurulduysa root kullanıcı aşağıdaki \"Adresi değiştir\" ile onaylayabilir.",
     "server.line.no_answer": "{url} adresinde yanıt veren GPUSA sunucusu yok. Adresi ve sunucunun açık olduğunu kontrol edin.",
     "admin.settings.new_person": "Bu rozet yeni: kişi hesapla birlikte eklenir.",

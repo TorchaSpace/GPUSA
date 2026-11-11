@@ -143,3 +143,54 @@ def test_an_address_from_the_environment_is_never_second_guessed(monkeypatch, sa
     monkeypatch.setattr(discovery, "is_gpusa", lambda url, timeout=2.0: pytest.fail("checked"))
     monkeypatch.setattr(discovery, "find_server", lambda *a, **k: pytest.fail("searched"))
     assert server_discovery.adopt_server() is None
+
+
+# --- an address typed by hand ------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def api():
+    from tests.server_support import FakeServer
+
+    s = FakeServer()
+    yield s
+    s.close()
+
+
+def test_https_typed_for_a_local_server_that_speaks_http_still_connects(api):
+    # what a browser teaches: "https://IP:8000". The server PC runs plain http, so the TLS hello only gets
+    # the connection reset; on a local address the apps may use http, so that is what answers and is saved.
+    https = api.url.replace("http://", "https://")
+    assert discovery.is_gpusa(https, 2.0) is False
+    assert discovery.reach(https, 2.0) == api.url
+    assert discovery.reach(api.url, 2.0) == api.url
+    assert discovery.reach(api.url + "/", 2.0) == api.url
+
+
+def test_an_address_without_the_port_gets_the_server_port(api, monkeypatch):
+    port = int(api.url.rsplit(":", 1)[1])
+    monkeypatch.setattr(discovery, "DEFAULT_API_PORT", port)
+    assert discovery.reach("127.0.0.1", 2.0) == api.url
+    assert discovery.reach("https://127.0.0.1", 2.0) == api.url
+
+
+def test_nothing_answering_reaches_nothing():
+    assert discovery.reach("127.0.0.1:1", 1.0) is None
+    assert discovery.reach("", 1.0) is None
+
+
+def test_an_internet_https_address_is_never_turned_into_http(monkeypatch):
+    asked = []
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout: asked.append(url) or False)
+    assert discovery.reach("https://8.8.8.8:8000", 1.0) is None
+    assert asked == ["https://8.8.8.8:8000"]
+
+
+def test_an_internet_server_on_plain_http_is_told_apart_from_no_server(monkeypatch):
+    asked = []
+    monkeypatch.setattr(discovery, "_health_ok", lambda url, timeout: asked.append(url) or True)
+    assert discovery.only_plain_http_on_internet("https://8.8.8.8:8000") is True
+    assert discovery.only_plain_http_on_internet("8.8.8.8") is True
+    assert asked == ["http://8.8.8.8:8000", "http://8.8.8.8:8000"]
+    # a local address is no such case: http is fine there and reach() already tried it
+    assert discovery.only_plain_http_on_internet("https://192.168.1.20:8000") is False
