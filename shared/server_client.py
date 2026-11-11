@@ -7,14 +7,14 @@ address) and by the Admin "Server" page. Keeps the sign-in token in memory only
 
 from __future__ import annotations
 
+import http.client
 import ipaddress
 import json
 import os
 import socket
 import ssl
-import urllib.error
+import threading
 import urllib.parse
-import urllib.request
 
 from shared import tls
 
@@ -66,10 +66,51 @@ def insecure_problem(url: str) -> str | None:
 
 
 class ServerClient:
+    """Keeps one open connection per thread and reuses it: with https every new connection is a full TLS
+    handshake (and a fresh certificate context), which made each screen that asks the server a few things
+    stutter. A connection the server closed while idle is reopened once, transparently."""
+
     def __init__(self, base_url: str, timeout: float = 6.0):
         self.base_url = normalize_url(base_url)
         self.timeout = timeout
         self.token: str | None = None
+        self._local = threading.local()
+
+    def _new_connection(self) -> http.client.HTTPConnection:
+        parts = urllib.parse.urlsplit(self.base_url)
+        if parts.scheme == "https":
+            return http.client.HTTPSConnection(parts.hostname, parts.port, timeout=self.timeout,
+                                               context=tls.context_for(self.base_url))
+        if parts.scheme != "http" or not parts.hostname:
+            raise ValueError(f"unknown url type: {self.base_url!r}")
+        return http.client.HTTPConnection(parts.hostname, parts.port, timeout=self.timeout)
+
+    def close(self) -> None:
+        conn = getattr(self._local, "conn", None)
+        self._local.conn = None
+        if conn is not None:
+            conn.close()
+
+    def _exchange(self, method: str, url: str, data: bytes | None, headers: dict) -> tuple[int, bytes]:
+        for attempt in (1, 2):
+            conn = getattr(self._local, "conn", None)
+            reused = conn is not None
+            if conn is None:
+                conn = self._local.conn = self._new_connection()
+            try:
+                conn.request(method, url, body=data, headers=headers)
+                response = conn.getresponse()
+                raw = response.read()
+            except BaseException as exc:
+                self.close()
+                stale = isinstance(exc, (OSError, http.client.HTTPException)) and not isinstance(exc, TimeoutError)
+                if reused and attempt == 1 and stale:
+                    continue  # the kept connection went stale (the server closed it while idle): open a new one
+                raise
+            if response.will_close:
+                self.close()
+            return response.status, raw
+        raise ConnectionResetError("the server closed the connection")
 
     def _request(self, method: str, path: str, body: dict | None = None):
         if not self.base_url:
@@ -77,27 +118,16 @@ class ServerClient:
         if problem := insecure_problem(self.base_url):
             raise ServerError(problem)
         data = json.dumps(body).encode("utf-8") if body is not None else None
-        request = urllib.request.Request(self.base_url + path, data=data, method=method)
-        request.add_header("Accept", "application/json")
+        headers = {"Accept": "application/json", "Connection": "keep-alive"}
         if data is not None:
-            request.add_header("Content-Type", "application/json")
+            headers["Content-Type"] = "application/json"
         if self.token:
-            request.add_header("Authorization", f"Bearer {self.token}")
+            headers["Authorization"] = f"Bearer {self.token}"
+        prefix = urllib.parse.urlsplit(self.base_url).path.rstrip("/")
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout, context=tls.context_for(self.base_url)) as response:
-                raw = response.read().decode("utf-8")
-                return json.loads(raw) if raw.strip() else None  # 204 (deletes, PIN changes) has no body
-        except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                detail = json.loads(exc.read().decode("utf-8")).get("detail", "")
-            except (ValueError, AttributeError):
-                pass
-            if not isinstance(detail, str) or not detail:
-                detail = f"The server answered {exc.code}."
-            raise ServerError(detail, exc.code) from None
-        except (urllib.error.URLError, TimeoutError, OSError, ValueError) as exc:
-            reason = getattr(exc, "reason", exc)
+            status, raw = self._exchange(method, prefix + path, data, headers)
+        except (TimeoutError, OSError, ValueError, http.client.HTTPException) as exc:
+            reason = exc if isinstance(exc, ssl.SSLError) else getattr(exc, "reason", exc)
             if isinstance(reason, ssl.SSLCertVerificationError):
                 reason = ("the server's certificate is not the one this computer knows - if the server was "
                           "reinstalled, type its address again")
@@ -106,6 +136,17 @@ class ServerClient:
             elif isinstance(reason, (TimeoutError, socket.timeout)):
                 reason = "it did not answer in time - is it on, and on the same network?"
             raise ServerError(f"Cannot reach the server ({reason}).") from None
+        if status >= 400:
+            detail = ""
+            try:
+                detail = json.loads(raw.decode("utf-8")).get("detail", "")
+            except (ValueError, AttributeError):
+                pass
+            if not isinstance(detail, str) or not detail:
+                detail = f"The server answered {status}."
+            raise ServerError(detail, status)
+        text = raw.decode("utf-8")
+        return json.loads(text) if text.strip() else None  # 204 (deletes, PIN changes) has no body
 
     def login(self, badge_id: str, pin: str, area: str = "admin", terminal: str = "admin-test") -> dict:
         """Sign in; keeps the token for later calls. Returns who signed in."""

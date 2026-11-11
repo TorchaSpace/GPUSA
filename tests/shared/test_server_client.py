@@ -50,18 +50,58 @@ def test_empty_address_is_asked_for():
 
 
 def test_a_refused_connection_is_explained_in_plain_words(monkeypatch):
-    import urllib.error
-    import urllib.request
-
     import pytest
 
     from shared.server_client import ServerClient, ServerError
 
-    def refuse(*_a, **_k):
-        raise urllib.error.URLError(ConnectionRefusedError(61, "Connection refused"))
+    import http.client
 
-    monkeypatch.setattr(urllib.request, "urlopen", refuse)
+    def refuse(*_a, **_k):
+        raise ConnectionRefusedError(61, "Connection refused")
+
+    monkeypatch.setattr(http.client.HTTPConnection, "connect", refuse)
     with pytest.raises(ServerError) as info:
         ServerClient("http://127.0.0.1:9").get("/health")
     assert "Cannot reach the server" in str(info.value) and "is the server running" in str(info.value)
     assert "Errno" not in str(info.value)
+
+
+def test_one_connection_is_reused_and_reopened_after_the_server_drops_it(monkeypatch):
+    """With https a new connection per request is a full handshake: the client keeps one open."""
+    import http.client
+    import json
+    import threading
+    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+    from shared.server_client import ServerClient
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"  # keep-alive, like uvicorn
+
+        def log_message(self, *args):
+            pass
+
+        def do_GET(self):
+            body = json.dumps({"path": self.path}).encode()
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self.send_header("Content-Length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    threading.Thread(target=server.serve_forever, daemon=True).start()
+    connects = []
+    real_connect = http.client.HTTPConnection.connect
+    monkeypatch.setattr(http.client.HTTPConnection, "connect",
+                        lambda self: (connects.append(1), real_connect(self))[1])
+    try:
+        client = ServerClient(f"http://127.0.0.1:{server.server_address[1]}")
+        assert [client.get(f"/p{i}")["path"] for i in range(5)] == [f"/p{i}" for i in range(5)]
+        assert len(connects) == 1
+        client._local.conn.sock.close()  # the server's idle timeout closed it meanwhile
+        assert client.get("/again")["path"] == "/again"
+        assert len(connects) == 2
+    finally:
+        server.shutdown()
+        server.server_close()
