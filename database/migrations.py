@@ -64,7 +64,7 @@ from __future__ import annotations
 import re
 import sqlite3
 
-LATEST_VERSION = 13
+LATEST_VERSION = 14
 
 # (table, column, declaration) - declarations match schema.sql exactly.
 _V1_COLUMNS = (
@@ -444,8 +444,17 @@ def _to_v13(conn: sqlite3.Connection) -> None:
                      "ORDER BY is_active DESC, id LIMIT 1)")
 
 
+def _to_v14(conn: sqlite3.Connection) -> None:
+    """Version 14 - server_sign_ins.is_root: whether the person signed in through the server as the root
+    user, so an offline sign-in keeps them root instead of falling back to an IAM user."""
+    for statement in LOCAL_SERVER_TABLES:  # a database that skipped v11 still gets the table
+        conn.execute(statement)
+    if "is_root" not in _columns(conn, "server_sign_ins"):
+        conn.execute("ALTER TABLE server_sign_ins ADD COLUMN is_root INTEGER NOT NULL DEFAULT 0")
+
+
 _STEPS = {1: _to_v1, 2: _to_v2, 3: _to_v3, 4: _to_v4, 5: _to_v5, 6: _to_v6, 7: _to_v7, 8: _to_v8, 9: _to_v9,
-          10: _to_v10, 11: _to_v11, 12: _to_v12, 13: _to_v13}
+          10: _to_v10, 11: _to_v11, 12: _to_v12, 13: _to_v13, 14: _to_v14}
 
 
 def run_migrations(conn: sqlite3.Connection) -> None:

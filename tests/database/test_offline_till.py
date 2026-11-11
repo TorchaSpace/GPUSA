@@ -157,3 +157,16 @@ def test_pin_hash_only_is_kept():
         assert "482915" not in json.dumps(dict(row)) and row["pin_hash"].startswith("pbkdf2_sha256$")
     finally:
         server.close()
+
+
+def test_root_stays_root_offline():
+    """Root signs in through the server as root; with the server gone the same badge is still root, not an IAM user."""
+    server = FakeServer()
+    try:
+        paths.set_server_url(server.url)
+        server.is_root = True
+        assert accounts.authenticate("B-001", "482915", auth.AREA_POS, "Till 1").is_root
+        server.close()
+        assert accounts.authenticate("B-001", "482915", auth.AREA_POS, "Till 1").is_root
+    finally:
+        server.close()
