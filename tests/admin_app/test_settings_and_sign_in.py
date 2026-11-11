@@ -366,41 +366,23 @@ def _try(dialog, badge, pin):
     dialog.try_sign_in()
 
 
-def test_admin_sign_in_has_a_root_door_and_an_iam_door(qapp):
-    from admin_app.gui.auth_flow import IAM, ROOT, admin_sign_in_dialog
+def test_admin_sign_in_is_one_screen_and_the_badge_decides_root_or_iam(qapp):
+    from admin_app.gui.auth_flow import admin_sign_in_dialog
 
     _root_and_an_iam_user()
     dialog = admin_sign_in_dialog()
-    assert list(dialog.choice_buttons) == [ROOT, IAM] and dialog.choice == ROOT  # a new computer starts on root
+    assert dialog.choice is None and dialog.choice_buttons == {}  # no doors to pick
 
-    _try(dialog, "K-1", "583102")  # an IAM user at the root door
-    assert dialog.session is None and "IAM user" in dialog.error_label.text()
-    dialog.choose(IAM)
-    assert not dialog.error_label.isVisible() and dialog.choice_buttons[IAM].isChecked()
-    _try(dialog, "B-001", "482913")  # root at the IAM door
-    assert dialog.session is None and "Root user" in dialog.error_label.text()
-    _try(dialog, "K-1", "583102")
-    assert dialog.session.badge_id == "K-1" and not dialog.session.is_root
+    _try(dialog, "B-001", "482913")  # root always opens as root
+    assert dialog.session.badge_id == "B-001" and dialog.session.is_root
 
-    again = admin_sign_in_dialog()  # the screen opens on the door used last on this computer
-    assert again.choice == IAM
-    again.choose(ROOT)
-    _try(again, "B-001", "482913")
-    assert again.session.is_root and admin_sign_in_dialog().choice == ROOT
+    other = admin_sign_in_dialog()
+    _try(other, "K-1", "583102")  # an IAM user opens as an IAM user
+    assert other.session.badge_id == "K-1" and not other.session.is_root
 
-
-def test_the_wrong_door_signs_nobody_in_and_a_wrong_pin_says_nothing_about_doors(qapp, monkeypatch):
-    from admin_app.gui import auth_flow
-
-    _root_and_an_iam_user()
-    signed_out = []
-    monkeypatch.setattr(auth_flow.account_repository, "sign_out", lambda s: signed_out.append(s.badge_id))
-    dialog = auth_flow.admin_sign_in_dialog()
-    dialog.choose(auth_flow.IAM)
-    _try(dialog, "B-001", "482913")
-    assert signed_out == ["B-001"] and dialog.session is None
-    _try(dialog, "B-001", "000000")
-    assert dialog.error_label.text().startswith("Badge or PIN is wrong.")
+    wrong = admin_sign_in_dialog()
+    _try(wrong, "B-001", "000000")
+    assert wrong.session is None and wrong.error_label.text().startswith("Badge or PIN is wrong.")
 
 
 def test_other_sign_in_screens_have_no_doors(qapp):

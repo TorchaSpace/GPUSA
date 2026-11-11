@@ -542,10 +542,10 @@ def _remember_server_sign_in(url: str, who: dict, pin: str) -> None:
 
     def save(conn):
         conn.execute(
-            "INSERT INTO server_sign_ins (server_url, badge_id, name, role, pin_hash) VALUES (?, ?, ?, ?, ?) "
+            "INSERT INTO server_sign_ins (server_url, badge_id, name, role, pin_hash, is_root) VALUES (?, ?, ?, ?, ?, ?) "
             "ON CONFLICT (server_url, badge_id) DO UPDATE SET name = excluded.name, role = excluded.role, "
-            "pin_hash = excluded.pin_hash, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
-            (url, who["badge_id"], who["name"], who["role"], pin_hash))
+            "pin_hash = excluded.pin_hash, is_root = excluded.is_root, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', 'now')",
+            (url, who["badge_id"], who["name"], who["role"], pin_hash, int(bool(who.get("is_root")))))
 
     _write(save)
 
@@ -562,7 +562,7 @@ def _offline_sign_in(url: str, badge_id: str, pin: str, area: str) -> dict:
         raise SignInFailedError()
     if not auth.can_open(row["role"], area):
         raise NotAllowedError(auth.role_label(row["role"]), auth.AREA_LABELS.get(area, area))
-    return {"badge_id": row["badge_id"], "name": row["name"], "role": row["role"]}
+    return {"badge_id": row["badge_id"], "name": row["name"], "role": row["role"], "is_root": bool(row["is_root"])}
 
 
 def confirm_pin(session: Session, pin: str) -> None:

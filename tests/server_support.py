@@ -24,6 +24,7 @@ class FakeServer:
 
     def __init__(self, employees_allowed: bool = True, secret: str | None = None):
         self.employees_allowed = employees_allowed
+        self.is_root = False  # whether /auth/login says B-001 is the root user
         self.secret = secret  # with one, the fake proves itself like server/gpusa_server/identity_routes.py
         self.requests: list[tuple[str, str]] = []
         outer = self
@@ -46,7 +47,7 @@ class FakeServer:
                 body = json.loads(raw or b"{}")
                 if self.path == "/auth/login" and body.get("badge_id") == "B-001" and body.get("pin") == "482915":
                     self._send(200, {"token": "tok", "badge_id": "B-001", "name": "Ali", "role": "admin",
-                                     "area": body.get("area", "admin")})
+                                     "area": body.get("area", "admin"), "is_root": outer.is_root})
                 else:
                     self._send(401, {"detail": "Badge or PIN is wrong."})
 

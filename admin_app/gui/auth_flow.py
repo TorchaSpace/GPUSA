@@ -490,40 +490,22 @@ def show_new_recovery_code(session: Session, parent=None) -> str | None:
     return code
 
 
-ROOT, IAM = "root", "iam"
-
-
-def sign_in_as(kind: str, badge: str, pin: str) -> Session:
-    """Admin's two doors, as on AWS: the root user signs in as "Root user", everyone else as "IAM user".
-    The badge and PIN are checked as always; the right ones at the wrong door are sent to the other door
-    (and signed out again), so root is never used by habit where an IAM account was meant."""
-    session = account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name())
-    if session.is_root != (kind == ROOT):
-        try:
-            account_repository.sign_out(session)
-        except DATABASE_ERRORS:
-            pass
-        raise localized_auth("err.sign_in_as_root" if session.is_root else "err.sign_in_as_iam")
-    try:
-        paths.set_admin_sign_in_kind(kind)  # the screen opens on this next time
-    except OSError:
-        pass
-    return session
+def sign_in_as(badge: str, pin: str) -> Session:
+    """One door for everyone: the badge and PIN decide who signs in. The root user (B-001 at first set-up)
+    always opens as root; every other account is an IAM user that root created."""
+    return account_repository.authenticate(badge, pin, auth.AREA_ADMIN, terminal_name())
 
 
 def admin_sign_in_dialog(parent=None, cancel_text: str | None = None) -> SignInDialog:
     dialog = SignInDialog(
         tr("admin.auth.sign_in_title"),
         tr("admin.auth.sign_in_sub"),
-        lambda badge, pin: sign_in_as(dialog.choice, badge, pin),
+        sign_in_as,
         palette={**CLASSICAL_PALETTE, "on_accent": "#161514"},
         cancel_text=cancel_text or tr("admin.auth.quit"),
         parent=parent,
         extra_action=(tr("signin.forgot"), _offer_recovery),
         server_line=True,
-        choices=[(ROOT, tr("admin.auth.kind_root"), tr("admin.auth.kind_root_hint")),
-                 (IAM, tr("admin.auth.kind_iam"), tr("admin.auth.kind_iam_hint"))],
-        choice=paths.get_admin_sign_in_kind(),
     )
 
     def server_changed(_url: str) -> None:
