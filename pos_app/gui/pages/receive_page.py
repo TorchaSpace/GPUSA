@@ -72,6 +72,8 @@ from shared.gui_kit.motion import Level, animations_enabled, blend, count_up, fa
 from shared.gui_kit.polling import PollingTimer
 from shared.i18n import plural, tr
 from shared.models import Shipment
+from shared.scan_code import candidates
+from shared.search import fold
 from shared import current_session
 from shared.textcase import upper
 from shared.warehousing import tr_or
@@ -886,6 +888,44 @@ class ReceivePage(QWidget):
         received[barcode] = min(line.expected_qty, max(0, self._received_for(shipment, barcode) + delta))
         self._checked.setdefault(shipment.id, set()).add(barcode)
         self._render()
+
+    def scan(self, code: str) -> tuple[bool, str]:
+        """A barcode / QR reader read `code` on this page: tick that product's line.
+
+        Looks in the shipment on screen first, then in the other ones that can be
+        checked in now (and opens that one). The line counts as arrived in full,
+        just like tapping its tick; -/+ under Report Discrepancy still corrects
+        the count. Returns (True, what was ticked) or (False, why not)."""
+        wanted = {fold(c) for c in candidates(code)}
+        if not wanted:
+            return False, ""
+        selected = self.selected()
+        order = ([selected] if selected is not None else []) + [s for s in self._shipments if s is not selected]
+        not_yet = None
+        for shipment in order:
+            line = next((l for l in shipment.lines if fold(l.product_barcode) in wanted), None)
+            if line is None:
+                continue
+            if not self._can_receive(shipment):
+                not_yet = not_yet or (shipment, line)
+                continue
+            self._selected_id = shipment.id
+            checked = self._checked.setdefault(shipment.id, set())
+            already = line.product_barcode in checked
+            checked.add(line.product_barcode)
+            self._render()
+            done = sum(1 for l in shipment.lines if l.product_barcode in checked)
+            key, english = (("pos.receive.scan_again", "{name} was already ticked ({checked} of {total})") if already
+                            else ("pos.receive.scan_ticked", "{name} ticked ({checked} of {total})"))
+            return True, tr_or(key, english).format(name=line.product_name, checked=done, total=len(shipment.lines))
+        if not_yet is not None:
+            shipment, line = not_yet
+            if shipment.status == "delivered":
+                return False, tr_or("pos.receive.scan_delivered", "{name} came with {number}, which is already received").format(
+                    name=line.product_name, number=shipment.number)
+            return False, tr_or("pos.receive.scan_not_left", "{name} is in {number}, which hasn't left the warehouse yet").format(
+                name=line.product_name, number=shipment.number)
+        return False, tr_or("pos.receive.scan_unknown", "\"{code}\" isn't in any incoming shipment").format(code=code.strip())
 
     def _accept_all(self) -> None:
         shipment = self.selected()

@@ -39,9 +39,10 @@ from PySide6.QtWidgets import (
 )
 
 from database.exceptions import DATABASE_ERRORS, InsufficientStockError, ProductInactiveError, ProductNotFoundError
-from database import attendance_repository
+from database import attendance_repository, product_repository
 from database.inventory_repository import list_recent_movements
 from shared.models import UNASSIGNED, StockLocation
+from shared.scan_code import candidates
 from shared.i18n import tr
 from shared.textcase import upper
 from shared.warehousing import tr_or
@@ -56,6 +57,21 @@ from shared.gui_kit.motion import animations_enabled, blend, fade_in, toast
 # The same SKU, quantity, reference and bin logged again within this many seconds is
 # taken for a scanner double-read and ignored.
 DOUBLE_SCAN_SECONDS = 0.35
+
+def _known_code(code: str) -> str:
+    """`code` as read, unless only a code found inside it (a GS1 QR) is a product."""
+    options = candidates(code)
+    if len(options) < 2:
+        return code
+    for option in options:
+        try:
+            return upper(product_repository.get_by_barcode(option).barcode)
+        except ProductNotFoundError:
+            continue
+        except DATABASE_ERRORS:
+            break  # let the real save report the problem
+    return code
+
 
 # Spec values that are i18n keys are looked up with tr() when widgets are built
 # (never at import time); placeholders and glyphs are literal.
@@ -268,6 +284,7 @@ class MovementPanel(QWidget):
                 self._show_error(str(exc))
                 return
 
+        barcode = _known_code(barcode)  # a QR may carry the code inside a GS1 link
         service = receiving_service if self._direction == "receive" else dispatch_service
         action = service.receive if self._direction == "receive" else service.dispatch
         try:
@@ -301,6 +318,12 @@ class MovementPanel(QWidget):
     def _spec_text(self, name: str) -> str:
         """The translated text of a spec entry (evaluated now, in the current language)."""
         return tr(self._spec[name])
+
+    def scan(self, code: str) -> None:
+        """A barcode / QR reader read `code` while the cursor was elsewhere: log it
+        here with the quantity, reference and operator already on the form."""
+        self._sku_input.setText(code.strip())
+        self._on_submit()
 
     def focus_scan(self) -> None:
         """Put the cursor in the SKU box, ready for the next scan."""
