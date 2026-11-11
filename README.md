@@ -45,7 +45,17 @@ the screen (the POS asks "Who's on the till?" again, as at a shift change).
 
 ## Sunucu PC'de hepsi birlikte (sunucu + Admin + POS + Depo)
 
-Linux sunucu PC'de (fish ya da bash, ikisinde de aynı komutlar) her biri ayrı terminal sekmesinde:
+**Çift tıklamayla (önerilen).** Repo Belgeler'deyse (`~/Belgeler/GitHub/GPUSA`) bir kere şunu yaz:
+
+```
+cd ~/Belgeler/GitHub/GPUSA; git pull; bash server/scripts/make_launcher.sh
+```
+
+Masaüstüne (ve uygulama menüsüne) "GPUSA Sunucusu" ve "GPUSA Hepsi" gelir. Çift tıklayınca Docker'ı,
+veritabanını, eksik Python paketlerini (git pull sonrası), tabloları ve https'li API'yi kendisi açar; `.env`'ye
+kopyalanmış ``` satırlarını da temizler. Her `git pull` sonrası yine sadece çift tıklamak yeter.
+
+Elle, her biri ayrı terminal sekmesinde (fish ya da bash, ikisinde de aynı komutlar):
 
 ```
 # 1. Sunucu

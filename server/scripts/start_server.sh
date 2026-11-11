@@ -82,15 +82,24 @@ if [ ! -x "$VENV/bin/python" ]; then
 fi
 # shellcheck disable=SC1091
 source "$VENV/bin/activate"
-"$VENV/bin/python" -c "import fastapi, uvicorn, psycopg, alembic, jwt, cryptography, dotenv" 2>/dev/null || {
-    warn "Eksik paketler kuruluyor..."
+STAMP="$VENV/.gpusa-requirements"
+if ! "$VENV/bin/python" -c "import fastapi, uvicorn, psycopg, alembic, jwt, cryptography, dotenv" 2>/dev/null \
+        || ! cmp -s "$SERVER_DIR/requirements.txt" "$STAMP"; then
+    # git pull yeni bir paket getirdiyse (ör. https için cryptography) burada kurulur.
+    warn "Paketler güncelleniyor (git pull sonrası ilk açılışta bir dakika sürebilir)..."
     "$VENV/bin/pip" install -q -r "$SERVER_DIR/requirements.txt" || stop_here "pip install başarısız"
-}
+    cp "$SERVER_DIR/requirements.txt" "$STAMP"
+fi
 ok "Python ortamı hazır"
 
 cd "$SERVER_DIR" || stop_here "$SERVER_DIR açılamadı"
 [ -f .env ] && chmod 600 .env 2>/dev/null   # PIN gizli anahtarı ve kurulum kodu başkası tarafından okunmasın
 [ -f .env ] || stop_here ".env dosyası yok ($SERVER_DIR/.env). README'deki 'Sign-in' adımlarına bak"
+if grep -q '`' .env; then
+    # Sohbetten kopyalanan ``` satırları .env'yi bozar (env: '`': Böyle bir dosya yok). Yedeğini alıp temizle.
+    cp .env .env.yedek && sed -i '/`/d' .env && chmod 600 .env.yedek
+    warn ".env içindeki ters tırnaklı satırlar silindi (eski hali: .env.yedek)"
+fi
 set -a; . ./.env; set +a
 [ -n "${DATABASE_URL:-}" ] || stop_here ".env içinde DATABASE_URL yok"
 ok ".env okundu (DATABASE_URL tanımlı)"
